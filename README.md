@@ -1,27 +1,40 @@
-# Lumen PHP Framework
+# Lumic Server Management
 
-[![Build Status](https://travis-ci.org/laravel/lumen-framework.svg)](https://travis-ci.org/laravel/lumen-framework)
-[![Total Downloads](https://img.shields.io/packagist/dt/laravel/lumen-framework)](https://packagist.org/packages/laravel/lumen-framework)
-[![Latest Stable Version](https://img.shields.io/packagist/v/laravel/lumen-framework)](https://packagist.org/packages/laravel/lumen-framework)
-[![License](https://img.shields.io/packagist/l/laravel/lumen)](https://packagist.org/packages/laravel/lumen-framework)
+Lumic is a server management system for web servers. It is designed to be a simple and easy to use system for managing your web servers on a single VPS. Lumic is built on top of the Lumen PHP framework.
+
+## Installation
+
+Install stackscript on Linode. This will install all the necessary packages and dependencies to run Lumic. 
+
+Alternatively run the following command on any Ubuntu 20.04 server to install Lumic.
+```bash
+bash <(curl -s https://raw.githubusercontent.com/bpstr/stackscripts/main/lumic.sh)
+```
+
+## Features
+
+- [x] Create Nginx server blocks and configuration
+- [ ] Manage PHP versions and extensions
+- [x] Create SSL certificates with Let's Encrypt
+- [x] Create MySQL databases and users
+- [ ] Create and manage FTP users
+- [ ] Manage deployments from Git repositories
+- [ ] Manage cron jobs
+- [ ] Manage domain aliases (server names)
+- [ ] List files and folders
+
+## Lumen PHP Framework
 
 Laravel Lumen is a stunningly fast PHP micro-framework for building web applications with expressive, elegant syntax. We believe development must be an enjoyable, creative experience to be truly fulfilling. Lumen attempts to take the pain out of development by easing common tasks used in the majority of web projects, such as routing, database abstraction, queueing, and caching.
 
-> **Note:** In the years since releasing Lumen, PHP has made a variety of wonderful performance improvements. For this reason, along with the availability of [Laravel Octane](https://laravel.com/docs/octane), we no longer recommend that you begin new projects with Lumen. Instead, we recommend always beginning new projects with [Laravel](https://laravel.com).
-
-## Official Documentation
+### Official Documentation
 
 Documentation for the framework can be found on the [Lumen website](https://lumen.laravel.com/docs).
 
-## Contributing
-
-Thank you for considering contributing to Lumen! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Security Vulnerabilities
+### Security Vulnerabilities
 
 If you discover a security vulnerability within Lumen, please send an e-mail to Taylor Otwell at taylor@laravel.com. All security vulnerabilities will be promptly addressed.
 
-## License
+### License
 
 The Lumen framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
-# lumic

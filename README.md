@@ -8,7 +8,7 @@ Install stackscript on Linode. This will install all the necessary packages and 
 
 Alternatively run the following command on any Ubuntu 20.04 server to install Lumic.
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/bpstr/stackscripts/main/lumic.sh)
+bash <(curl -s https://raw.githubusercontent.com/bpstr/lumic/main/install.sh)
 ```
 
 ## Features

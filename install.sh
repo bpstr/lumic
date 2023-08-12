@@ -53,6 +53,7 @@ cat <<'END' >/var/www/html/index.html
 END
 chown www-data:www-data /var/www/html/index.html
 chmod 644 /var/www/html/index.html
+sudo systemctl enable nginx.service
 ###########################################################
 # MySQL
 ###########################################################
@@ -111,12 +112,10 @@ COMPOSER_ALLOW_SUPERUSER=1 composer config --global repo.packagist composer http
 # Lumic PHP
 ###########################################################
 echo "Setting up Lumic PHP..." >> /var/www/html/status.txt
-mkdir -p /var/www/lumic \
- && curl -Lo /tmp/lumic.zip 'https://github.com/bpstr/lumic/archive/refs/heads/main.zip' \
- && unzip /tmp/lumic.zip -d /var/www/html \
- && rm -f /tmp/lumic.zip
-mv /var/www/html/lumic-main/* /var/www/html/ \
- && rm -rf /var/www/html/lumic-main
+mkdir -p /var/git && cd /var/git \
+ && git clone 'https://github.com/bpstr/lumic/'
+rsync -av --exclude-from=/var/git/lumic/resources/lists/default-excluded.lst /var/git/lumic/ /var/www/html/
+
 # Fix permissions
 chown -Rf www-data:www-data /var/www/html
 find /var/www/html/ -type d -exec chmod 755 {} \;

@@ -22,7 +22,7 @@ sudo pam-auth-update --package
 sudo mount -o remount,rw /
 sudo chmod 640 /etc/shadow
 sudo useradd -m -s /bin/bash lumic
-echo "lumic:${ROOT_USER_PASS}"|sudo chpasswd
+echo "${ROOT_USER_NAME}:${ROOT_USER_PASS}"|sudo chpasswd
 ###########################################################
 # Install NGINX
 ###########################################################
@@ -168,30 +168,37 @@ pid        /var/run/nginx.pid;
 # Keeps the logs free of messages about not being able to bind().
 #daemon     off;
 events {
-worker_connections  1024;
+    worker_connections  1024;
 }
 http {
-#   rewrite_log on;
-include mime.types;
-default_type       application/octet-stream;
-access_log         /var/log/nginx/access.log;
-sendfile           on;
-#   tcp_nopush         on;
-keepalive_timeout  64;
-#   tcp_nodelay        on;
-#   gzip               on;
-        #php max upload limit cannot be larger than this
-client_max_body_size 13m;
-index              index.php index.html index.htm;
-# Upstream to abstract backend connection(s) for PHP.
-upstream php {
-        #this should match value of "listen" directive in php-fpm pool
-        server unix:/run/php/php$PHP_VERSION-fpm.sock;
-        server 127.0.0.1:9000;
+    #   rewrite_log on;
+    include mime.types;
+    default_type       application/octet-stream;
+    access_log         /var/log/nginx/access.log;
+    sendfile           on;
+    #   tcp_nopush         on;
+    keepalive_timeout  64;
+    #   tcp_nodelay        on;
+    #   gzip               on;
+            #php max upload limit cannot be larger than this
+    client_max_body_size 13m;
+    index              index.php index.html index.htm;
+    # Upstream to abstract backend connection(s) for PHP.
+    upstream php {
+            #this should match value of "listen" directive in php-fpm pool
+            server unix:/run/php/php8.1-fpm.sock;
+            server 127.0.0.1:9000;
+    }
+
+    include /etc/nginx/sites-enabled/*;
 }
+END
+
+cat << END > /etc/nginx/sites-enabled/home.conf
 server {
         listen 80 default_server;
-        server_name _;
+        server_name lumic.dev.pixel24.hu;
+
         root /var/www/html/public;
         add_header X-Frame-Options "SAMEORIGIN";
         add_header X-XSS-Protection "1; mode=block";
@@ -199,11 +206,11 @@ server {
         index index.html index.htm index.php;
         charset utf-8;
         location / {
-                try_files \$uri \$uri/ /index.php?\$query_string;
+                try_files $uri $uri/ /index.php?$query_string;
         }
 
         location ^~ /livewire/ {
-            try_files $uri $uri/ =404;
+            try_files  / =404;
         }
 
         # Prevent Direct Access To Protected Files
@@ -221,25 +228,25 @@ server {
         error_page 404 /index.php;
         # Pass PHP Scripts To FastCGI Server
         location ~ \.php$ {
-                fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+                fastcgi_split_path_info ^(.+\.php)(/.+)$;
                 fastcgi_pass php;
                 fastcgi_index index.php;
-                fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
                 include fastcgi_params;
         }
         location ~ /\.(?!well-known).* {
                 deny all;
         }
 }
-}
 END
+
 # Remove installation screen
 rm -f /var/www/html/index.html
 sudo service nginx reload
 ###########################################################
 # Firewall
 ###########################################################
-echo "Installing certbot..." >> /var/www/html/status.txt
+echo "Installing firewall..." >> /var/www/html/status.txt
 apt-get install ufw -y
 ufw limit ssh
 ufw allow http
@@ -248,7 +255,7 @@ ufw --force enable
 ###########################################################
 # Certbot
 ###########################################################
-echo "Setting up firewall..." >> /var/www/html/status.txt
+echo "Setting up certbot..." >> /var/www/html/status.txt
 apt-get install snapd -y
 snap install core
 snap refresh core

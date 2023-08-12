@@ -86,8 +86,8 @@ expect eof
     printf "$secure_mysql\n"
 }
 # Set DB root password
-echo "mysql-server mysql-server/root_password password ${$MYSQL_ROOT_PASS}" | debconf-set-selections
-echo "mysql-server mysql-server/root_password_again password ${$MYSQL_ROOT_PASS}" | debconf-set-selections
+echo "mysql-server mysql-server/root_password password ${MYSQL_ROOT_PASS}" | debconf-set-selections
+echo "mysql-server mysql-server/root_password_again password ${MYSQL_ROOT_PASS}" | debconf-set-selections
 mysql_secure_install "$MYSQL_ROOT_PASS"
 ###########################################################
 # Install PHP

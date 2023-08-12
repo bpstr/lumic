@@ -86,18 +86,18 @@ expect eof
     printf "$secure_mysql\n"
 }
 # Set DB root password
-echo "mysql-server mysql-server/root_password password ${DB_PASSWORD}" | debconf-set-selections
-echo "mysql-server mysql-server/root_password_again password ${DB_PASSWORD}" | debconf-set-selections
-mysql_secure_install "$DB_PASSWORD"
+echo "mysql-server mysql-server/root_password password ${$MYSQL_ROOT_PASS}" | debconf-set-selections
+echo "mysql-server mysql-server/root_password_again password ${$MYSQL_ROOT_PASS}" | debconf-set-selections
+mysql_secure_install "$MYSQL_ROOT_PASS"
 ###########################################################
 # Install PHP
 ###########################################################
 echo "Setting up PHP 8.1..." >> /var/www/html/status.txt
-sudo apt-get install -y software-properties-common
-sudo add-apt-repository ppa:ondrej/php -y
-sudo apt-get update
-sudo apt-get install -y zip unzip php8.1-mbstring php8.1-zip php8.1-gd php8.1-cli php8.1-curl php8.1-intl php8.1-imap php8.1-xml php8.1-xsl php8.1-tokenizer php8.1-sqlite3 php8.1-pgsql php8.1-opcache php8.1-simplexml php8.1-fpm php8.1-bcmath php8.1-ctype php8.1-pdo php8.1-mysql php8.1-xml
-sudo service php8.1-fpm restart
+apt-get install -y software-properties-common
+add-apt-repository ppa:ondrej/php -y
+apt-get update
+apt-get install -y zip unzip php8.1-mbstring php8.1-zip php8.1-gd php8.1-cli php8.1-curl php8.1-intl php8.1-imap php8.1-xml php8.1-xsl php8.1-tokenizer php8.1-sqlite3 php8.1-pgsql php8.1-opcache php8.1-simplexml php8.1-fpm php8.1-bcmath php8.1-ctype php8.1-pdo php8.1-mysql php8.1-xml
+service php8.1-fpm restart
 ###########################################################
 # Composer
 ###########################################################
@@ -158,35 +158,25 @@ php /var/www/html/artisan migrate:fresh --force --seed --no-interaction
 echo "Configuring Nginx..." >> /var/www/html/status.txt
 PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;")
 cat << END > /etc/nginx/nginx.conf
-# Generic startup file.
 user www-data;
-#usually equal to number of CPUs you have. run command "grep processor /proc/cpuinfo | wc -l" to find it
 worker_processes  auto;
 worker_cpu_affinity auto;
 error_log  /var/log/nginx/error.log;
 pid        /var/run/nginx.pid;
-# Keeps the logs free of messages about not being able to bind().
-#daemon     off;
 events {
     worker_connections  1024;
 }
 http {
-    #   rewrite_log on;
     include mime.types;
     default_type       application/octet-stream;
     access_log         /var/log/nginx/access.log;
     sendfile           on;
-    #   tcp_nopush         on;
     keepalive_timeout  64;
-    #   tcp_nodelay        on;
-    #   gzip               on;
-            #php max upload limit cannot be larger than this
     client_max_body_size 13m;
     index              index.php index.html index.htm;
-    # Upstream to abstract backend connection(s) for PHP.
     upstream php {
             #this should match value of "listen" directive in php-fpm pool
-            server unix:/run/php/php8.1-fpm.sock;
+            server unix:/run/php/php$PHP_VERSION-fpm.sock;
             server 127.0.0.1:9000;
     }
 
@@ -197,7 +187,7 @@ END
 cat << END > /etc/nginx/sites-enabled/home.conf
 server {
         listen 80 default_server;
-        server_name lumic.dev.pixel24.hu;
+        server_name _;
 
         root /var/www/html/public;
         add_header X-Frame-Options "SAMEORIGIN";
@@ -206,32 +196,26 @@ server {
         index index.html index.htm index.php;
         charset utf-8;
         location / {
-                try_files $uri $uri/ /index.php?$query_string;
+                try_files \$uri \$uri/ /index.php?\$query_string;
         }
-
         location ^~ /livewire/ {
             try_files  / =404;
         }
-
-        # Prevent Direct Access To Protected Files
         location ~ \.(env|log) {
                 deny all;
         }
-        # Prevent Direct Access To Protected Folders
         location ~ ^/(^app$|bootstrap|config|database|overrides|resources|routes|tests|artisan) {
                 deny all;
         }
-        # Prevent Direct Access To modules/vendor Folders Except Assets
         location ~ ^/(modules|vendor|livewire)/(.*)\.((?!ico|gif|jpg|jpeg|png|js\b|css|less|sass|font|woff|woff2|eot|ttf|svg).)*$ {
                 deny all;
         }
         error_page 404 /index.php;
-        # Pass PHP Scripts To FastCGI Server
         location ~ \.php$ {
                 fastcgi_split_path_info ^(.+\.php)(/.+)$;
                 fastcgi_pass php;
                 fastcgi_index index.php;
-                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
                 include fastcgi_params;
         }
         location ~ /\.(?!well-known).* {

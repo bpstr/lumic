@@ -4,31 +4,12 @@
     <section class="nginx py-2">
         <div class="card rounded-0">
             <div class="card-body">
-                <pre class="m-0">
-server {
-    listen 80;
-    listen [::]:80;
-
-    root /var/www/localhost-hu;
-    index index.php index.html index.htm;
-
-    server_name localhost-hu.localhost;
-
-    location / {
-        try_files $uri $uri/ =404;
-    }
-
-    location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
-    }
-
-    location ~ /\.ht {
-        deny all;
-    }
-}</pre>
+                @if(file_exists($server->nginx))
+                    <pre class="m-0">{{ file_get_contents($server->nginx) }}</pre>
+                @else
+                    <pre class="m-0">Config could not be located: {{ ($server->nginx)  }}</pre>
+                @endif
             </div>
         </div>
-
     </section>
 @endsection

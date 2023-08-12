@@ -5,21 +5,21 @@ namespace App\Console\Commands;
 use App\Models\Server;
 use Illuminate\Console\Command;
 
-class NginxConfigCommand extends Command
+class PrepareDirectoriesCommand extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'nginx:config {server}';
+    protected $signature = 'dir:prepare {server}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Manage Nginx configuration files';
+    protected $description = 'Prepare directories for the project';
 
     /**
      * Create a new command instance.
@@ -38,15 +38,13 @@ class NginxConfigCommand extends Command
      */
     public function handle()
     {
-        $server = $this->argument('server');
-        if (!$server instanceof Server) {
-            $server = Server::find($this->argument('server'));
+        $server = Server::find($this->argument('server'))->first();
+        $project_root_path = $server->directory;
+        if (!is_dir($project_root_path)) {
+            mkdir($project_root_path, 0755, true);
         }
 
-        $config = view(sprintf('sample.nginx-%s', $server->template ?? 'default'), compact('server'));
-        file_put_contents(storage_path(sprintf('blocks/%s.conf', $server->name)), $config);
-
-        $this->info('Created configuration: '.$server->nginx);
+        $this->info('Created directory: ' . $project_root_path);
         return 1;
     }
 }

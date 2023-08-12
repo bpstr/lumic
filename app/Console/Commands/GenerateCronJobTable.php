@@ -4,7 +4,9 @@ namespace App\Console\Commands;
 
 use App\Console\CommandBase;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\File;
+use Illuminate\View\View;
 
 class GenerateCronJobTable extends CommandBase
 {
@@ -27,19 +29,11 @@ class GenerateCronJobTable extends CommandBase
         $rawCronJobs = [];
         exec('crontab -l', $rawCronJobs);
 
+        $output_path = resource_path('views/blocks/cronjob.blade.php');
         $cronJobs = $this->parseCronJobs($rawCronJobs);
-
-        // Ensure that the blade template exists
-        $templatePath = resource_path('views/cronjob.blade.php');
-        if (!File::exists($templatePath)) {
-            File::put($templatePath, $this->getCronJobTemplate());
-        }
-
-        $tableContent = view('cronjob-table', ['cronJobs' => $cronJobs])->render();
-
-        $outputPath = resource_path('views/' . $this->argument('outputFile'));
-        if (File::put($outputPath, $tableContent)) {
-            $this->info('HTML table generated successfully at ' . $outputPath);
+        $table_content = view('sample.crontab', ['cronJobs' => $cronJobs]);
+        if (File::put($output_path,$table_content)) {
+            $this->info('HTML table generated successfully at ' . $output_path);
         } else {
             $this->error('Failed to generate the HTML table.');
         }
@@ -65,43 +59,5 @@ class GenerateCronJobTable extends CommandBase
         }
 
         return $parsedCronJobs;
-    }
-
-
-    /**
-     * Get the default content for the cronjob-table blade file.
-     *
-     * @return string
-     */
-    protected function getCronJobTemplate()
-    {
-        return <<<BLADE
-<table class="table">
-  <thead>
-    <tr>
-      <th scope="col">#</th>
-      <th scope="col">Minute</th>
-      <th scope="col">Hour</th>
-      <th scope="col">Day of Month</th>
-      <th scope="col">Month</th>
-      <th scope="col">Day of Week</th>
-      <th scope="col">Command</th>
-    </tr>
-  </thead>
-  <tbody>
-    @foreach(\$cronJobs as \$index => \$job)
-    <tr>
-      <th scope="row">{{ \$index + 1 }}</th>
-      <td>{{ \$job[0] }}</td>
-      <td>{{ \$job[1] }}</td>
-      <td>{{ \$job[2] }}</td>
-      <td>{{ \$job[3] }}</td>
-      <td>{{ \$job[4] }}</td>
-      <td>{{ \$job[5] }}</td>
-    </tr>
-    @endforeach
-  </tbody>
-</table>
-BLADE;
     }
 }

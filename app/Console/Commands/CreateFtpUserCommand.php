@@ -3,22 +3,23 @@
 namespace App\Console\Commands;
 
 use App\Console\CommandBase;
+use Illuminate\Console\Command;
 
-class RestartNginxCommand extends CommandBase
+class CreateFtpUserCommand extends CommandBase
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'nginx:restart';
+    protected $signature = 'ftp:create';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Send restart signal to Nginx';
+    protected $description = 'Create a new ftp user';
 
     /**
      * Create a new command instance.
@@ -37,7 +38,10 @@ class RestartNginxCommand extends CommandBase
      */
     public function handle()
     {
-        $this->info('Restarting nginx...');
-        return static::exec('service nginx restart');
+        static::exec('useradd -m ftp2 -s /bin/bash');
+
+
+        $this->info('create db.');
+        return 1;
     }
 }

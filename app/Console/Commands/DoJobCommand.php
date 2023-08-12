@@ -2,23 +2,26 @@
 
 namespace App\Console\Commands;
 
-use App\Console\CommandBase;
+use App\Jobs\GitDeployJob;
+use App\Jobs\ServerSetupJob;
+use App\Models\Server;
+use Illuminate\Console\Command;
 
-class RestartNginxCommand extends CommandBase
+class DoJobCommand extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'nginx:restart';
+    protected $signature = 'do:job';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Send restart signal to Nginx';
+    protected $description = 'Do the job.';
 
     /**
      * Create a new command instance.
@@ -31,13 +34,17 @@ class RestartNginxCommand extends CommandBase
     }
 
     /**
-     * Execute the console command.
+     * Execute the console command.s
      *
      * @return mixed
      */
     public function handle()
     {
-        $this->info('Restarting nginx...');
-        return static::exec('service nginx restart');
+        $job = new GitDeployJob();
+        $job->handle();
+
+
+        $this->info('do job.');
+        return 1;
     }
 }

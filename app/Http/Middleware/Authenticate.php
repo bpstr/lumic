@@ -35,15 +35,23 @@ class Authenticate
      */
     public function handle($request, Closure $next, $guard = null)
     {
-
         $pers = hash('sha256', getenv('ROOT_USER_NAME') . ':' . getenv('ROOT_USER_PASS'), true, ['salt' => getenv('APP_KEY')]);
-        if(request()->cookies->get('auth') !== $pers) {
-            return redirect('/', 302, [
-                'Cache-Control' => 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0',
-                'Pragma' => 'no-cache'
-            ]);
+        if(request()->cookies->get('auth') === $pers) {
+            return $next($request);
         }
 
-        return $next($request);
+        var_dump(request()->headers->all());
+        if (request()->wantsJson() || request()->segment(1) === 'api') {
+
+            return response()->json([
+                'message' => 'Unauthorized'
+            ], 401);
+        }
+
+        return redirect('/', 302, [
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0',
+            'Pragma' => 'no-cache'
+        ]);
+
     }
 }

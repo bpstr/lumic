@@ -2,9 +2,11 @@
 
 /** @var \Laravel\Lumen\Routing\Router $router */
 
+use App\Jobs\ServerSetupJob;
 use App\Models\Database;
 use App\Models\Server;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Cookie;
 
@@ -33,10 +35,6 @@ $router->get('/', function () use ($router) {
     return view('login');
 });
 
-$router->get('/yo', function () use ($router) {
-    return view('sample.index');
-});
-
 $router->post('/login', function () use ($router) {
     $credentials = request()->only(['name', 'pass']);
     if ($credentials['name'] === getenv('ROOT_USER_NAME') &&
@@ -56,8 +54,16 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
         return view('dashboard', [
             'servers' => Server::all(),
             'database_count' => Database::count(),
-            'free_storage' => human_file_size( disk_free_space('/')),
-            'total_storage' => human_file_size( disk_total_space('/'))
+            'storage_usage' => round((disk_total_space('/') - disk_free_space('/')) /  disk_total_space('/') * 100),
+            'total_storage' => human_file_size( disk_total_space('/')),
+            'ftp_count' => 0,
+        ]);
+    });
+
+    $router->get('/settings', function () use ($router) {
+        return view('settings', [
+            'servers' => Server::all(),
+            'deploy_token' => 'asd',
         ]);
     });
 
@@ -86,21 +92,27 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
 
 
         // Run artisan commands (later move this to queue)
+        Artisan::call('dir:prepare', compact('server'));
         Artisan::call('nginx:config', compact('server'));
-        Artisan::call('nginx:restart');
+
+        // add scheduled job
+//        dispatch(new ServerSetupJob($server))->onQueue('default');
+
+        Queue::push(new ServerSetupJob());
+
+//        Artisan::call('nginx:restart'); // todo test live
 //            Artisan::call('php:config');
 //            Artisan::call('php:restart');
-        if (request()->input('crate_certificate')) {
-            Artisan::call('ssl:certificate', compact('server'));
-        }
-        if (request()->input('create_db_user')) {
-            Artisan::call('db:user', compact('database'));
-        }
-        if (request()->input('create_database')) {
-            Artisan::call('db:create', compact('database'));
-        }
+//        if (request()->input('crate_certificate')) {
+//            Artisan::call('ssl:certificate', compact('server'));
+//        }
+//        if (request()->input('create_db_user')) {
+//            Artisan::call('db:user', compact('database'));
+//        }
+//        if (request()->input('create_database')) {
+//            Artisan::call('db:create', compact('database'));
+//        }
 
-        Artisan::call('html:templates', compact('server'));
 
 
 
@@ -111,6 +123,12 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
     $router->get('/servers/{id}', function ($id) {
         $server = Server::find($id);
         return view('servers.view', compact('server') +  ['servers' => Server::all()]);
+    });
+
+    $router->post('/servers/{id}/update', function ($id) {
+        $server = Server::find($id);
+        $server->update(request()->all());
+        return redirect('/servers/' . $server->id . '/deploy');
     });
 
     $router->get('/servers/{id}/db', function ($id) {
@@ -138,10 +156,36 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
 
     $router->get('/servers/{id}/deploy', function ($id) {
         $server = Server::find($id);
-        return view('servers.deploy', compact('server') +  ['servers' => Server::all()]);
+        $username = hash('sha256', getenv('ROOT_USER_NAME'), true, ['salt' => getenv('APP_KEY')]);
+        $password = hash('sha256', getenv('ROOT_USER_PASS'), true, ['salt' => getenv('APP_KEY')]);
+        $deploy_token = base64_encode($username . ':' . $password);
+        return view('servers.deploy', compact('server', 'deploy_token') +  ['servers' => Server::all()]);
     });
 
-    /** INTERNAL API ENDPOINTS  */
+    $router->get('/servers/{id}/deploy/trigger', function ($id) {
+        $server = Server::find($id);
+        file_put_contents($server->deploy_log, 'User triggered deploy at ' . date('Y-m-d H:i:s') . PHP_EOL);
+        return redirect('/servers/' . $server->id . '/deploy');
+    });
+
+    $router->get('/servers/{id}/deploy/logs', function ($id) {
+        $server = Server::find($id);
+        $contents = 'No logs yet';
+        if (is_file($server->deploy_log)) {
+            $contents = file_get_contents($server->deploy_log) ?? 'Logs not readable';
+        }
+
+        return sprintf('<pre>%s</pre>', $contents);
+    });
+
+
+
+
+
+});
+
+/** INTERNAL API ENDPOINTS  */
+$router->group(['middleware' => 'basic', 'prefix' => 'api'], function () use ($router) {
     $router->get('/status', function () {
         return response()->json([
             'memory' => memory_get_usage(),
@@ -150,5 +194,5 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
         ]);
     });
 
-
 });
+

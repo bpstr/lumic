@@ -1,0 +1,14 @@
+.git
+.local
+.lumic
+.github
+.gitignore
+.gitattributes
+.gitmodules
+.gitconfig
+.gitkeep
+.DS_Store
+desktop.ini
+Thumbs.db
+.env
+.env.*

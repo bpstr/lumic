@@ -19,6 +19,8 @@ return new class extends Migration
             $table->string('ssl')->nullable();
             $table->string('php')->nullable();
             $table->string('git')->nullable();
+            $table->string('branch')->default('main');
+            $table->string('commit')->nullable();
             $table->string('template')->nullable();
             $table->timestamps();
         });
@@ -29,6 +31,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('authors');
+        Schema::dropIfExists('servers');
     }
 };

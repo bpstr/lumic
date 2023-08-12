@@ -2,23 +2,24 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Server;
 use Illuminate\Console\Command;
 
-class CreateFtpCommand extends Command
+class HtmlTemplateCommand extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'db:create';
+    protected $signature = 'template:install {server}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Create database if not exists';
+    protected $description = 'Manage Nginx configuration files';
 
     /**
      * Create a new command instance.
@@ -37,8 +38,15 @@ class CreateFtpCommand extends Command
      */
     public function handle()
     {
+        $server = $this->argument('server');
+        if (!$server instanceof Server) {
+            $server = Server::find($this->argument('server'));
+        }
 
-        $this->info('create db.');
+        $config = view('sample.index', compact('server'));
+        file_put_contents(sprintf('%s/index.html', $server->docroot), $config);
+
+        $this->info('Created configuration: '.$server->nginx);
         return 1;
     }
 }

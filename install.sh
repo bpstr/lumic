@@ -94,7 +94,7 @@ mysql_secure_install "$DB_PASSWORD"
 ###########################################################
 echo "Setting up PHP 8.1..." >> /var/www/html/status.txt
 sudo apt-get install -y software-properties-common
-sudo add-apt-repository ppa:ondrej/php
+sudo add-apt-repository ppa:ondrej/php -y
 sudo apt-get update
 sudo apt-get install -y zip unzip php8.1-mbstring php8.1-zip php8.1-gd php8.1-cli php8.1-curl php8.1-intl php8.1-imap php8.1-xml php8.1-xsl php8.1-tokenizer php8.1-sqlite3 php8.1-pgsql php8.1-opcache php8.1-simplexml php8.1-fpm php8.1-bcmath php8.1-ctype php8.1-pdo php8.1-mysql php8.1-xml
 sudo service php8.1-fpm restart
@@ -130,6 +130,7 @@ APP_ENV=production
 APP_KEY=${APP_HASH}
 APP_DEBUG=false
 APP_URL=http://${APP_HOST}
+APP_IP=${IP}
 APP_TIMEZONE=UTC
 WEBMASTER_EMAIL=${APP_MAIL}
 ROOT_USER_NAME=${ROOT_USER_NAME}

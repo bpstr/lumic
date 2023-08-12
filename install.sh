@@ -5,7 +5,7 @@ IP=$(curl -s https://checkip.amazonaws.com)
 APP_NAME=${APP_NAME:-Lumic}
 APP_HASH=$(openssl rand -base64 32 | sha256sum | base64 | head -c 32 | tr '[:upper:]' '[:lower:]')
 APP_HOST=${APP_HOST:-$IP}
-APP_MAIL = ${APP_MAIL:-'webmaster@example.com'}
+APP_MAIL=${APP_MAIL:-'webmaster@example.com'}
 
 ROOT_USER_NAME=${ROOT_USER_NAME:-lumic}
 ROOT_USER_PASS=${ROOT_USER_PASS:-$(openssl rand -base64 32|sha256sum|base64|head -c 32| tr '[:upper:]' '[:lower:]')}

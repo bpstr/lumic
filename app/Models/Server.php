@@ -24,6 +24,7 @@ class Server extends Model
         'ssl',
         'php',
         'git',
+        'commit',
         'template',
     ];
 
@@ -40,22 +41,20 @@ class Server extends Model
         return $this->databases()->first() ?? new Database();
     }
 
+    public function getDocrootAttribute() {
+        return sprintf(env('DOCROOT_PATH').'/%s/%s', $this->name, $this->path);
+    }
     public function getDirectoryAttribute() {
         return sprintf(env('DOCROOT_PATH').'/%s/%s', $this->name, $this->path);
     }
 
     public function getNginxAttribute() {
         // return nginx config file
-        return sprintf(getenv('NGINX_ROOT_PATH').'/sites/%s.conf', $this->name);
+        return sprintf(getenv('NGINX_ROOT_PATH').'/sites-enabled/%s.conf', $this->name);
     }
 
-    public function getStorageUsedAttribute() {
-        $root = sprintf(env('DOCROOT_PATH').'/%s', $this->name);
-        if (is_dir($root)) {
-            return human_file_size(disk_total_space($root));
-        }
-
-        return '–';
+    public function getDeployLogAttribute() {
+        return sprintf(env('DOCROOT_PATH').'/%s/deploy.log', $this->name);
     }
 
 }

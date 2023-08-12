@@ -51,9 +51,15 @@
             <p class="text-muted small ms-1 mt-1">Start without leading slashes</p>
         </div>
 
+        <div class="mb-3">
+            <label for="gitRepository" class="form-label">Git repository</label>
+            <input type="text" name="git" class="form-control rounded-0" id="gitRepository" placeholder="git@github.com:bpstr/lumic.git">
+            <small class="text-muted">Use a password-protected SSH key.</small>
+        </div>
+
         <div class="form-group mb-3">
             <label for="configTemplate" class="form-label">Nginx config template</label>
-            <select class="form-select" name="template" id="configTemplate">
+            <select class="form-select rounded-0" name="template" id="configTemplate">
                 <option value="default">Default PHP Config</option>
                 <option value="laravel">Laravel standard</option>
                 <option value="drupal">Drupal recommended</option>

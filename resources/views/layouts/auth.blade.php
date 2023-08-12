@@ -15,14 +15,10 @@
     <link href="https://getbootstrap.com/docs/5.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-4bw+/aepP/YC94hEpVNVgiZdgIC5+VKNBQNGCHeKRQN+PtmoHDEXuppvnDJzQIu9" crossorigin="anonymous">
 
     <!-- Favicons -->
-    <link rel="apple-touch-icon" href="/docs/5.3/assets/img/favicons/apple-touch-icon.png" sizes="180x180">
-    <link rel="icon" href="/docs/5.3/assets/img/favicons/favicon-32x32.png" sizes="32x32" type="image/png">
-    <link rel="icon" href="/docs/5.3/assets/img/favicons/favicon-16x16.png" sizes="16x16" type="image/png">
-    <link rel="manifest" href="/docs/5.3/assets/img/favicons/manifest.json">
-    <link rel="mask-icon" href="/docs/5.3/assets/img/favicons/safari-pinned-tab.svg" color="#712cf9">
-    <link rel="icon" href="/docs/5.3/assets/img/favicons/favicon.ico">
-    <meta name="theme-color" content="#712cf9">
-
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest">
 
     <style>
         body {
@@ -110,8 +106,8 @@
 </head>
 <body>
 <header class="navbar sticky-top bg-dark flex-md-nowrap p-0 shadow" data-bs-theme="dark">
-    <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3 fs-6 text-white" href="/dashboard">{{ config('app.name') }}</a>
-
+    <a class="navbar-brand col-md-3 col-lg-2 me-0 px-3 fs-6 text-white shadow-lg" href="/dashboard">{{ config('app.name') }}</a>
+    <code class="me-auto ms-4 bg-dark border py-1 px-2">{{ getenv('APP_IP') }}</code>
     <ul class="navbar-nav flex-row d-md-none">
         <li class="nav-item text-nowrap">
             <button class="nav-link px-3 text-white" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSearch" aria-controls="navbarSearch" aria-expanded="false" aria-label="Toggle search">
@@ -138,7 +134,14 @@
                     <h5 class="offcanvas-title" id="sidebarMenuLabel">{{ config('app.name') }}</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#sidebarMenu" aria-label="Close"></button>
                 </div>
-                <div class="offcanvas-body d-md-flex flex-column p-0 pt-lg-3 overflow-y-auto">
+                <div class="offcanvas-body d-md-flex flex-column p-0 overflow-y-auto">
+                    <div class="p-3 bg-white mb-3 border-bottom">
+                        <a href="/dashboard">
+                            <img src="/lumic.svg" alt="Lumic" width="120px" class="d-block">
+                        </a>
+                        <small>Powered by <a href="https://antlify.hu/" target="_blank" class="text-decoration-none">antlify</a></small>
+                    </div>
+
                     <ul class="nav flex-column">
                         <li class="nav-item">
                             <a href="/dashboard" class="nav-link d-flex align-items-center gap-2 active" aria-current="page">
@@ -178,13 +181,22 @@
                                 </a>
                             </li>
                         @endforeach
+                            <li class="nav-item">
+                                <a class="nav-link d-flex align-items-center gap-2" href="/servers/add">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-terminal-plus" viewBox="0 0 16 16">
+                                        <path d="M2 3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h5.5a.5.5 0 0 1 0 1H2a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v4a.5.5 0 0 1-1 0V4a1 1 0 0 0-1-1H2Z"/>
+                                        <path d="M3.146 5.146a.5.5 0 0 1 .708 0L5.177 6.47a.75.75 0 0 1 0 1.06L3.854 8.854a.5.5 0 1 1-.708-.708L4.293 7 3.146 5.854a.5.5 0 0 1 0-.708ZM5.5 9a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1H6a.5.5 0 0 1-.5-.5ZM16 12.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Zm-3.5-2a.5.5 0 0 0-.5.5v1h-1a.5.5 0 0 0 0 1h1v1a.5.5 0 0 0 1 0v-1h1a.5.5 0 0 0 0-1h-1v-1a.5.5 0 0 0-.5-.5Z"/>
+                                    </svg>
+                                    <i class="">Add new server</i>
+                                </a>
+                            </li>
                     </ul>
 
-                    <hr class="my-3">
+                    <hr class="border my-3">
 
                     <ul class="nav flex-column mb-auto">
                         <li class="nav-item">
-                            <a class="nav-link d-flex align-items-center gap-2" href="#">
+                            <a class="nav-link d-flex align-items-center gap-2" href="/settings">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-gear-wide-connected" viewBox="0 0 16 16">
                                     <path d="M7.068.727c.243-.97 1.62-.97 1.864 0l.071.286a.96.96 0 0 0 1.622.434l.205-.211c.695-.719 1.888-.03 1.613.931l-.08.284a.96.96 0 0 0 1.187 1.187l.283-.081c.96-.275 1.65.918.931 1.613l-.211.205a.96.96 0 0 0 .434 1.622l.286.071c.97.243.97 1.62 0 1.864l-.286.071a.96.96 0 0 0-.434 1.622l.211.205c.719.695.03 1.888-.931 1.613l-.284-.08a.96.96 0 0 0-1.187 1.187l.081.283c.275.96-.918 1.65-1.613.931l-.205-.211a.96.96 0 0 0-1.622.434l-.071.286c-.243.97-1.62.97-1.864 0l-.071-.286a.96.96 0 0 0-1.622-.434l-.205.211c-.695.719-1.888.03-1.613-.931l.08-.284a.96.96 0 0 0-1.186-1.187l-.284.081c-.96.275-1.65-.918-.931-1.613l.211-.205a.96.96 0 0 0-.434-1.622l-.286-.071c-.97-.243-.97-1.62 0-1.864l.286-.071a.96.96 0 0 0 .434-1.622l-.211-.205c-.719-.695-.03-1.888.931-1.613l.284.08a.96.96 0 0 0 1.187-1.186l-.081-.284c-.275-.96.918-1.65 1.613-.931l.205.211a.96.96 0 0 0 1.622-.434l.071-.286zM12.973 8.5H8.25l-2.834 3.779A4.998 4.998 0 0 0 12.973 8.5zm0-1a4.998 4.998 0 0 0-7.557-3.779l2.834 3.78h4.723zM5.048 3.967c-.03.021-.058.043-.087.065l.087-.065zm-.431.355A4.984 4.984 0 0 0 3.002 8c0 1.455.622 2.765 1.615 3.678L7.375 8 4.617 4.322zm.344 7.646.087.065-.087-.065z"/>
                                 </svg>
@@ -218,12 +230,6 @@
 
     </div>
 
-</div>
-
-
-<div class="position-fixed bottom-0 left-0 m-2 mb-3 text-uppercase text-muted bg-light mw-100" style="font-size: 10px">
-    <img src="/lumic.svg" alt="Lumic" width="220px" class="d-block opacity-25">
-    Powered by <a href="https://antlify.hu/" target="_blank" class="text-decoration-none">antlify</a>
 </div>
 
 <script src="https://getbootstrap.com/docs/5.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-HwwvtgBNo3bZJJLYd8oVXjrBZt8cqVSpeBNS5n7C8IVInixGAoxmnlMuBnhbgrkm" crossorigin="anonymous"></script>
@@ -268,40 +274,6 @@
 
         document.body.removeChild(textarea); // Remove the temporary element
     }
-
-    document.addEventListener('DOMContentLoaded', function() {
-        // Call the fetchStatus function every 5 seconds
-        setInterval(fetchStatus, 5000);
-    });
-
-    function fetchStatus() {
-        fetch('/status', {
-            method: 'GET',
-            credentials: 'include' // This will include cookies in the request
-        })
-            .then(response => response.json())
-            .then(data => updateStatusIcon(data))
-            .catch(error => console.error('Error fetching status:', error));
-    }
-
-    function updateStatusIcon(data) {
-        const serverStatus = document.getElementById('serverStatus');
-
-        switch (data.status) {
-            case 'success':
-                statusIcon.className = 'bi bi-check-circle-fill text-success';
-                break;
-            case 'warning':
-                statusIcon.className = 'bi bi-exclamation-circle-fill text-warning';
-                break;
-            case 'error':
-                statusIcon.className = 'bi bi-x-circle-fill text-danger';
-                break;
-            default:
-                console.warn('Unknown status:', data.status);
-        }
-    }
-
 
 </script>
 </html>

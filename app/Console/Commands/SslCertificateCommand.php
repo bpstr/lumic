@@ -2,16 +2,17 @@
 
 namespace App\Console\Commands;
 
-use Illuminate\Console\Command;
+use App\Console\CommandBase;
+use App\Models\Server;
 
-class SslCertificateCommand extends Command
+class SslCertificateCommand extends CommandBase
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'ssl:certificate';
+    protected $signature = 'ssl:certificate {server}';
 
     /**
      * The console command description.
@@ -37,8 +38,24 @@ class SslCertificateCommand extends Command
      */
     public function handle()
     {
+        $server = Server::find($this->argument('server'));
 
-        $this->info('create db.');
+        $webmaster=getenv('WEBMASTER_EMAIL');
+        $domains = implode(',', [
+            $server->domain,
+            'www.' . $server->domain,
+        ]);
+
+        $this->info('Creating SSL certificate...');
+        try {
+            self::exec("certbot --nginx --non-interactive --agree-tos -m $webmaster --domains=$domains --expand");
+        }
+        catch (\Exception $exception) {
+            $this->error($exception->getMessage());
+            throw $exception;
+        }
+        $server->update(['ssl' => date('Y-m-d H:i:s')]);
+
         return 1;
     }
 }

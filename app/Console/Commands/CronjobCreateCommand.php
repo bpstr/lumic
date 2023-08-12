@@ -5,7 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Server;
 use Illuminate\Console\Command;
 
-class NginxConfigCommand extends Command
+class CronjobCreateCommand extends Command
 {
     /**
      * The name and signature of the console command.

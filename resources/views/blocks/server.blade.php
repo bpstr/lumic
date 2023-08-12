@@ -1,3 +1,4 @@
+@php use Carbon\CarbonInterface; @endphp
 
 <div class="card rounded-0">
     <div class="card-header">
@@ -10,10 +11,9 @@
                 <h6>Server configuration</h6>
                 <p class="text-nowrap">
                     <small>PHP Version: <code>{{ $server->php }}</code></small><br>
-                    <small>Storage used: <code>{{ $server->storage_used }}</code></small><br>
+                    <small>SSL Certification: <code>{{ $server->ssl instanceof CarbonInterface ? $server->ssl->format('Y-m-d') : $server->ssl ?? '—' }}</code></small> <a href="/servers/{{ $server->id }}/renew" class="badge bg-light text-dark text-decoration-none border rounded-0">Renew</a> <br>
                     <small>Docroot: <code>{{ $server->directory }}</code></small><br>
                 </p>
-
             </div>
             <div class="col-md-3">
                 <h6>Primary database</h6>
@@ -35,6 +35,14 @@
 
 
             </div>
+            <div class="col-md-2">
+                <h6>Git Repo</h6>
+                <div class="mb-1">
+                <span>Current commit:</span><br>
+                <code>{{ $server->commit ?? '–' }}</code>
+                </div>
+                <a href="/servers/{{ $server->id }}/deploy/trigger" class="btn btn-outline-dark btn-sm rounded-0">Deploy</a>
+            </div>
         </div>
 
 
@@ -46,8 +54,8 @@
                 {{ $server->databases->count() }}
                 </span>
             <span class="border-end pe-3 me-3">
-                <b>Storage used:</b>
-                {{ $server->storage_used }}
+                <b>Git repository:</b>
+                {{ $server->git }}
                 </span>
             <span>
                 <b>Created:</b>

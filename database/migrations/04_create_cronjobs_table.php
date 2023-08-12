@@ -11,12 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('databases', function (Blueprint $table) {
+        Schema::create('cronjobs', function (Blueprint $table) {
             $table->id();
             $table->string('server_id');
-            $table->string('name');
-            $table->string('username');
-            $table->string('password');
+            $table->string('command');
+            $table->string('minute');
+            $table->string('hour');
+            $table->string('day_of_month');
+            $table->string('month');
+            $table->string('day_of_week');
             $table->timestamps();
         });
     }
@@ -26,6 +29,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('databases');
+        Schema::dropIfExists('cronjobs');
     }
 };

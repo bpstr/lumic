@@ -23,6 +23,9 @@ $app = new Laravel\Lumen\Application(
     dirname(__DIR__)
 );
 
+$app->configure('queue');
+$app->register(Illuminate\Queue\QueueServiceProvider::class);
+
 $app->withFacades();
 
 $app->withEloquent();
@@ -78,6 +81,7 @@ $app->configure('app');
 
  $app->routeMiddleware([
      'auth' => App\Http\Middleware\Authenticate::class,
+     'basic' => App\Http\Middleware\BasicAuth::class,
  ]);
 
 /*

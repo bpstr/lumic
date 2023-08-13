@@ -83,36 +83,15 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
             'name' => $string,
         ]);
 
-        $database = Database::create([
+        Database::create([
             'name' => Str::slug(request()->input('domain')),
             'server_id' => $server->id,
             'username' => Str::slug(request()->input('domain')),
             'password' => Str::random(16)
         ]);
 
-
         Artisan::call('nginx:config', compact('server'));
-        // add scheduled job
-//        dispatch(new ServerSetupJob($server))->onQueue('default');
-
         Queue::push(new ServerSetupJob());
-
-//        Artisan::call('nginx:restart'); // todo test live
-//            Artisan::call('php:config');
-//            Artisan::call('php:restart');
-//        if (request()->input('crate_certificate')) {
-//            Artisan::call('ssl:certificate', compact('server'));
-//        }
-//        if (request()->input('create_db_user')) {
-//            Artisan::call('db:user', compact('database'));
-//        }
-//        if (request()->input('create_database')) {
-//            Artisan::call('db:create', compact('database'));
-//        }
-
-
-
-
 
         return redirect('/servers/' . $server->id);
     });

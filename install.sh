@@ -115,7 +115,9 @@ echo "Setting up Lumic PHP..." >> /var/www/html/status.txt
 mkdir -p /var/git && cd /var/git \
  && git clone 'https://github.com/bpstr/lumic/'
 rsync -av --exclude-from=/var/git/lumic/resources/lists/default-excluded.lst /var/git/lumic/ /var/www/html/
-
+chown -R :www-data /var/www/html
+chmod -R 775 /var/www/html/storage
+chmod -R 775 /var/www/html/database/database.sqlite
 # Fix permissions
 chown -Rf www-data:www-data /var/www/html
 find /var/www/html/ -type d -exec chmod 755 {} \;

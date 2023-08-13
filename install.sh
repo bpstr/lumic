@@ -182,50 +182,9 @@ http {
     include /etc/nginx/sites-enabled/*;
 }
 END
-
-cat << END > /etc/nginx/sites-enabled/home.conf
-server {
-        listen 80 default_server;
-        server_name _;
-
-        root /var/www/html/public;
-        add_header X-Frame-Options "SAMEORIGIN";
-        add_header X-XSS-Protection "1; mode=block";
-        add_header X-Content-Type-Options "nosniff";
-        index index.html index.htm index.php;
-        charset utf-8;
-        location / {
-                try_files \$uri \$uri/ /index.php?\$query_string;
-        }
-        location ^~ /livewire/ {
-            try_files  / =404;
-        }
-        location ~ \.(env|log) {
-                deny all;
-        }
-        location ~ ^/(^app$|bootstrap|config|database|overrides|resources|routes|tests|artisan) {
-                deny all;
-        }
-        location ~ ^/(modules|vendor|livewire)/(.*)\.((?!ico|gif|jpg|jpeg|png|js\b|css|less|sass|font|woff|woff2|eot|ttf|svg).)*$ {
-                deny all;
-        }
-        error_page 404 /index.php;
-        location ~ \.php$ {
-                fastcgi_split_path_info ^(.+\.php)(/.+)$;
-                fastcgi_pass php;
-                fastcgi_index index.php;
-                fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-                include fastcgi_params;
-        }
-        location ~ /\.(?!well-known).* {
-                deny all;
-        }
-}
-END
-
 # Remove installation screen
 rm -f /var/www/html/index.html
-sudo service nginx reload
+sudo service nginx restart
 ###########################################################
 # Firewall
 ###########################################################

@@ -182,6 +182,56 @@ http {
     include /etc/nginx/sites-enabled/*;
 }
 END
+unlink /etc/nginx/sites-enabled/default
+unlink /etc/nginx/sites-available/default
+cat << 'EOF' > /etc/nginx/sites-enabled/home.conf
+server {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        
+        server_name _;
+
+        root /var/www/html/public;
+        add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-XSS-Protection "1; mode=block";
+        add_header X-Content-Type-Options "nosniff";
+        index index.html index.htm index.php;
+        charset utf-8;
+        location / {
+                try_files $uri $uri/ /index.php?$query_string;
+        }
+
+        location ^~ /livewire/ {
+            try_files  / =404;
+        }
+
+        # Prevent Direct Access To Protected Files
+        location ~ \.(env|log) {
+                deny all;
+        }
+        # Prevent Direct Access To Protected Folders
+        location ~ ^/(^app$|bootstrap|config|database|overrides|resources|routes|tests|artisan) {
+                deny all;
+        }
+        # Prevent Direct Access To modules/vendor Folders Except Assets
+        location ~ ^/(modules|vendor|livewire)/(.*)\.((?!ico|gif|jpg|jpeg|png|js\b|css|less|sass|font|woff|woff2|eot|ttf|svg).)*$ {
+                deny all;
+        }
+        error_page 404 /index.php;
+        # Pass PHP Scripts To FastCGI Server
+        location ~ \.php$ {
+                fastcgi_split_path_info ^(.+\.php)(/.+)$;
+                fastcgi_pass php;
+                fastcgi_index index.php;
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                include fastcgi_params;
+        }
+        location ~ /\.(?!well-known).* {
+                deny all;
+        }
+}
+EOF
+
 # Remove installation screen
 rm -f /var/www/html/index.html
 sudo service nginx restart

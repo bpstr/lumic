@@ -42,6 +42,7 @@ class ServerSetupJob extends Job
             var_dump($item);
 
             $servers[] = $server;
+            Artisan::call('dir:prepare', ['server' => $server->id]);
 
             $project_log_path = sprintf('%s/%s/', getenv('NGINX_LOG_PATH'), $server->name);
             if (!is_dir($project_log_path)) {

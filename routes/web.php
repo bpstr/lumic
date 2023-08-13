@@ -91,10 +91,7 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
         ]);
 
 
-        // Run artisan commands (later move this to queue)
-        Artisan::call('dir:prepare', compact('server'));
         Artisan::call('nginx:config', compact('server'));
-
         // add scheduled job
 //        dispatch(new ServerSetupJob($server))->onQueue('default');
 

@@ -188,7 +188,7 @@ cat << 'EOF' > /etc/nginx/sites-enabled/home.conf
 server {
         listen 80 default_server;
         listen [::]:80 default_server;
-        
+
         server_name _;
 
         root /var/www/html/public;
@@ -265,25 +265,6 @@ cat > "$CRONTAB_FILE" <<EOF
 * * * * * cd /var/www/html && php artisan schedule:run >> /dev/null 2>&1
 EOF
 crontab $CRONTAB_FILE
-###########################################################
-# FTP Users
-###########################################################
-echo "Setting up ProFTP..." >> /var/www/html/status.txt
-apt-get install proftpd -y
-PROFTP_CONFIG=/etc/proftpd/proftpd.conf
-touch $PROFTP_CONFIG
-cat > "$PROFTP_CONFIG" <<EOF
-ServerName             "${IP}"
-ServerType             standalone
-MasqueradeAddress      ${IP}
-RequireValidShell      off
-DefaultRoot            ~
-PassivePorts           50000 51000
-<IfModule mod_facts.c>
-    FactsAdvertise off
-</IfModule>
-EOF
-systemctl restart proftpd
 ###########################################################
 # Installation complete
 ###########################################################

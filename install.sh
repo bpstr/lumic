@@ -159,29 +159,39 @@ php /var/www/html/artisan migrate:fresh --force --seed --no-interaction
 echo "Configuring Nginx..." >> /var/www/html/status.txt
 PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;")
 cat << END > /etc/nginx/nginx.conf
+# Generic startup file.
 user www-data;
+#usually equal to number of CPUs you have. run command "grep processor /proc/cpuinfo | wc -l" to find it
 worker_processes  auto;
 worker_cpu_affinity auto;
 error_log  /var/log/nginx/error.log;
 pid        /var/run/nginx.pid;
+# Keeps the logs free of messages about not being able to bind().
+#daemon     off;
 events {
-    worker_connections  1024;
+worker_connections  1024;
 }
 http {
-    include mime.types;
-    default_type       application/octet-stream;
-    access_log         /var/log/nginx/access.log;
-    sendfile           on;
-    keepalive_timeout  64;
-    client_max_body_size 13m;
-    index              index.php index.html index.htm;
-    upstream php {
-            #this should match value of "listen" directive in php-fpm pool
-            server unix:/run/php/php$PHP_VERSION-fpm.sock;
-            server 127.0.0.1:9000;
-    }
+#   rewrite_log on;
+include mime.types;
+default_type       application/octet-stream;
+access_log         /var/log/nginx/access.log;
+sendfile           on;
+#   tcp_nopush         on;
+keepalive_timeout  64;
+#   tcp_nodelay        on;
+#   gzip               on;
+        #php max upload limit cannot be larger than this
+client_max_body_size 13m;
+index              index.php index.html index.htm;
+# Upstream to abstract backend connection(s) for PHP.
+upstream php {
+        #this should match value of "listen" directive in php-fpm pool
+        server unix:/run/php/php8.1-fpm.sock;
+        server 127.0.0.1:9000;
+}
 
-    include /etc/nginx/sites-enabled/*;
+include /etc/nginx/sites-enabled/*;
 }
 END
 unlink /etc/nginx/sites-enabled/default
@@ -265,6 +275,7 @@ touch $CRONTAB_FILE
 cat > "$CRONTAB_FILE" <<EOF
 5 5 * * 5 certbot renew --nginx --non-interactive --post-hook "systemctl restart nginx.service"
 * * * * * cd /var/www/html && php artisan schedule:run >> /dev/null 2>&1
+* * * * * cd /var/www/html && php artisan queue:work --once >> /dev/null 2>&1
 EOF
 crontab $CRONTAB_FILE
 ###########################################################

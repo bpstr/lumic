@@ -2,7 +2,7 @@
 
 @section('title', $server->name ?? 'Add new server')
 @section('content')
-<form method="POST" action="/servers/add">
+<form method="POST" action="/servers/add" autocomplete="off">
     <div class="bg-light border">
         <div class="m-4 mx-4">
             <label for="domainName" class="form-label">Domain name</label>
@@ -49,7 +49,7 @@
                     <label for="publicPath" class="form-label">Public path</label>
                     <div class="input-group">
                         <span class="input-group-text rounded-0" id="domainAddon">/var/www/example-site/</span>
-                        <input type="text" name="path" class="form-control rounded-0" id="publicPath" placeholder="public">
+                        <input type="text" name="path" class="form-control rounded-0" id="publicPath" placeholder="">
                     </div>
                     <p class="text-muted small ms-1 mt-1">Start without leading slashes</p>
                 </div>
@@ -79,18 +79,6 @@
                     @endforeach
                 </div>
             </div>
-        </div>
-
-
-
-
-        <div class="form-group mb-3">
-            <label for="configTemplate" class="form-label">Nginx config template</label>
-            <select class="form-select rounded-0" name="template" id="configTemplate">
-                <option value="default">Default PHP Config</option>
-                <option value="laravel">Laravel standard</option>
-                <option value="drupal">Drupal recommended</option>
-            </select>
         </div>
 
         <button type="submit" class="btn btn-primary rounded-0">Submit</button>

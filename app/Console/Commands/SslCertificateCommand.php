@@ -46,9 +46,15 @@ class SslCertificateCommand extends CommandBase
             'www.' . $server->domain,
         ]);
 
+        $forced = '';
+        if ($this->argument('force')) {
+            $this->info('Mode set to forced');
+            $forced = ' --forced';
+        }
+
         $this->info('Creating SSL certificate...');
         try {
-            self::exec("certbot --nginx --non-interactive --agree-tos -m $webmaster --domains=$domains --expand");
+            self::exec("certbot --nginx --non-interactive --agree-tos -m $webmaster --domains=$domains --expand $forced");
         }
         catch (\Exception $exception) {
             $this->error($exception->getMessage());

@@ -11,7 +11,6 @@ return [
             'name' => 'WordPress Configuration',
             'hint' => 'Nginx configuration for WordPress based projects',
         ],
-
         'drupal' => [
             'name' => 'Drupal Recommended',
             'hint' => 'Drupal specific Nginx configuration',
@@ -19,6 +18,10 @@ return [
         'laravel' => [
             'name' => 'Laravel Configuration',
             'hint' => 'Nginx configuration for Laravel based projects',
+        ],
+        'html' => [
+            'name' => 'Static HTML',
+            'hint' => 'Config to serve static HTML pages with Nginx',
         ],
     ],
 ];

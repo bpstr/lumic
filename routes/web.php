@@ -2,11 +2,11 @@
 
 /** @var \Laravel\Lumen\Routing\Router $router */
 
+use App\Jobs\ForceSslCertJob;
 use App\Jobs\ServerSetupJob;
 use App\Models\Database;
 use App\Models\Server;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Cookie;
 
@@ -142,6 +142,12 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
         $server = Server::find($id);
         file_put_contents($server->deploy_log, 'User triggered deploy at ' . date('Y-m-d H:i:s') . PHP_EOL);
         return redirect('/servers/' . $server->id . '/deploy');
+    });
+
+    $router->get('/servers/{id}/renew', function ($id) {
+        $server = Server::find($id);
+        dispatch(new ForceSslCertJob($server));
+        return redirect('/servers/' . $server->id);
     });
 
     $router->get('/servers/{id}/deploy/logs', function ($id) {

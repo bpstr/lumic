@@ -4,3 +4,7 @@ Homestead.json
 Homestead.yaml
 .env
 .phpunit.result.cache
+docs/.vitepress/dist
+docs/.vitepress/cache
+.DS_Store
+node_modules

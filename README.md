@@ -1,4 +1,7 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/bpstr/lumic/main/public/lumic.svg" width="420" alt="Lumic Logo"></a></p>
+<p align="center"><a href="https://laravel.com" target="_blank">
+    <img src="https://raw.githubusercontent.com/bpstr/lumic/main/public/lumic.svg#gh-light-mode-only" width="420" alt="Lumic Logo">
+    <img src="https://raw.githubusercontent.com/bpstr/lumic/main/public/lumic-dark.svg#gh-dark-mode-only" width="420" alt="Lumic Logo">
+</a></p>
 
 <p align="center">
 <a href="https://www.linux.org/" title="Go to Linux homepage"><img src="https://img.shields.io/badge/OS-Linux-blue?logo=linux&logoColor=white" alt="OS - Linux"></a>

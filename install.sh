@@ -12,7 +12,6 @@ ROOT_USER_PASS=${ROOT_USER_PASS:-$(openssl rand -base64 32|sha256sum|base64|head
 MYSQL_ROOT_USER=${MYSQL_ROOT_USER:-lumic}
 MYSQL_ROOT_PASS=${MYSQL_ROOT_PASS:-$(openssl rand -base64 32|sha256sum|base64|head -c 32| tr '[:upper:]' '[:lower:]')}
 
-exec > >(tee /dev/ttyS0 /var/log/installscript.log) 2>&1
 DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null
 ###########################################################
 # Create root user

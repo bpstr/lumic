@@ -14,9 +14,9 @@ class GitDeployJob extends Job
      *
      * @return void
      */
-    public function __construct()
+    public function __construct($server)
     {
-
+        $this->server = $server;
     }
 
     /**

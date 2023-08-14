@@ -12,7 +12,7 @@ class SslCertificateCommand extends CommandBase
      *
      * @var string
      */
-    protected $signature = 'ssl:certificate {server}';
+    protected $signature = 'ssl:certificate {server} {--force=}';
 
     /**
      * The console command description.
@@ -38,7 +38,7 @@ class SslCertificateCommand extends CommandBase
      */
     public function handle()
     {
-        $server = Server::find($this->argument('server'));
+        $server = $this->getServer();
 
         $webmaster=getenv('WEBMASTER_EMAIL');
         $domains = implode(',', [
@@ -47,7 +47,7 @@ class SslCertificateCommand extends CommandBase
         ]);
 
         $forced = '';
-        if ($this->argument('force')) {
+        if ($this->option('force')) {
             $this->info('Mode set to forced');
             $forced = ' --forced';
         }

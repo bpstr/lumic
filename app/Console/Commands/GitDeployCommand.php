@@ -39,10 +39,7 @@ class GitDeployCommand extends CommandBase
      */
     public function handle()
     {
-        $server = $this->argument('server');
-        if (!$server instanceof Server) {
-            $server = Server::find($this->argument('server'));
-        }
+        $server = $this->getServer();
 
 
         $git = $server->git;

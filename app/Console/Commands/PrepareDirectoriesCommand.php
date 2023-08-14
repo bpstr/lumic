@@ -2,10 +2,11 @@
 
 namespace App\Console\Commands;
 
+use App\Console\CommandBase;
 use App\Models\Server;
 use Illuminate\Console\Command;
 
-class PrepareDirectoriesCommand extends Command
+class PrepareDirectoriesCommand extends CommandBase
 {
     /**
      * The name and signature of the console command.
@@ -38,7 +39,8 @@ class PrepareDirectoriesCommand extends Command
      */
     public function handle()
     {
-        $server = Server::find($this->argument('server'))->first();
+        $server = $this->getServer();
+
         $project_root_path = $server->directory;
         if (!is_dir($project_root_path)) {
             mkdir($project_root_path, 0755, true);

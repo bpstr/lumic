@@ -3,6 +3,7 @@
 /** @var \Laravel\Lumen\Routing\Router $router */
 
 use App\Jobs\ForceSslCertJob;
+use App\Jobs\GitDeployJob;
 use App\Jobs\ServerSetupJob;
 use App\Models\Database;
 use App\Models\Server;
@@ -140,7 +141,7 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
 
     $router->get('/servers/{id}/deploy/trigger', function ($id) {
         $server = Server::find($id);
-        file_put_contents($server->deploy_log, 'User triggered deploy at ' . date('Y-m-d H:i:s') . PHP_EOL);
+        dispatch(new GitDeployJob($server));
         return redirect('/servers/' . $server->id . '/deploy');
     });
 

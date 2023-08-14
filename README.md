@@ -1,8 +1,8 @@
 <p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/bpstr/lumic/main/public/lumic.svg" width="420" alt="Lumic Logo"></a></p>
 
 <p align="center">
-[![OS - Linux](https://img.shields.io/badge/OS-Linux-blue?logo=linux&logoColor=white)](https://www.linux.org/ "Go to Linux homepage")
-[![License - MIT](https://img.shields.io/badge/License-MIT-2ea44f)](https://)
+<a href="https://www.linux.org/" title="Go to Linux homepage"><img src="https://img.shields.io/badge/OS-Linux-blue?logo=linux&logoColor=white" alt="OS - Linux"></a>
+<a href="https://lumic.pixel24.hu/"><img src="https://img.shields.io/static/v1?label=License&message=MIT&color=2ea44f" alt="License - MIT"></a>
 </p>
 
 

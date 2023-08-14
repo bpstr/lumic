@@ -5,7 +5,7 @@ directory and configuration. Server blocks can be created using the
 admin UI. Insert the domain name and the docroot directory, select a 
 config template add click "Submit".
 
-<img src="/images/add-server.png">
+[//]: # (<img src="/images/add-server.png">)
 
 ## Initial configuration
 

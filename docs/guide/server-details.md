@@ -2,7 +2,7 @@
 
 The server details page shows the details of a single Nginx server block.
 
-<img src="/images/server-details.png">
+[//]: # (<img src="/images/server-details.png">)
 
 The following information is available:
 

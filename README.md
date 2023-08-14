@@ -1,6 +1,5 @@
 <p align="center"><a href="https://laravel.com" target="_blank">
     <img src="https://raw.githubusercontent.com/bpstr/lumic/main/public/lumic.svg#gh-light-mode-only" width="420" alt="Lumic Logo">
-    <img src="https://raw.githubusercontent.com/bpstr/lumic/main/public/lumic-dark.svg#gh-dark-mode-only" width="420" alt="Lumic Logo">
 </a></p>
 
 <p align="center">

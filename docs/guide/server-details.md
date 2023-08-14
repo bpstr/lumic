@@ -1,11 +1,18 @@
-# Creating servers
+# Server details
 
-A Lumic Server represents an Nginx server block. It has its own root
-directory and configuration. Server blocks can be created using the
-admin UI. Insert the domain name and the docroot directory, select a 
-config template add click "Submit".
+The server details page shows the details of a single Nginx server block.
 
-<img src="/images/add-server.png">
+<img src="/images/server-details.png">
+
+The following information is available:
+
+- PHP Version configured with the block
+- SSL Certification creation date
+- Docroot path of the server
+- Database access details
+- FTP Users with access to the server
+- Git repository if configured
+
 
 ## Initial configuration
 

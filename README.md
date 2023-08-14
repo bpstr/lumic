@@ -1,3 +1,11 @@
+<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/bpstr/lumic/main/public/lumic.svg" width="420" alt="Lumic Logo"></a></p>
+
+<p align="center">
+[![OS - Linux](https://img.shields.io/badge/OS-Linux-blue?logo=linux&logoColor=white)](https://www.linux.org/ "Go to Linux homepage")
+[![License - MIT](https://img.shields.io/badge/License-MIT-2ea44f)](https://)
+</p>
+
+
 # Lumic Server Management
 
 Lumic is a server management system for web servers. It is designed to be a simple and easy to use system for managing your web servers on a single VPS. Lumic is built on top of the Lumen PHP framework.

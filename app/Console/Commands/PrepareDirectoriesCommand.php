@@ -46,6 +46,11 @@ class PrepareDirectoriesCommand extends CommandBase
             mkdir($project_root_path, 0755, true);
         }
 
+        $project_git_repository = $server->gitroot;
+        if ($server->git && !is_dir($project_git_repository)) {
+            mkdir($project_git_repository, 0755, true);
+        }
+
         $this->info('Created directory: ' . $project_root_path);
         return 1;
     }

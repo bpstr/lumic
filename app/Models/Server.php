@@ -41,9 +41,14 @@ class Server extends Model
         return $this->databases()->first() ?? new Database();
     }
 
+    public function getGitrootAttribute() {
+        return sprintf(env('GITROOT_PATH').'/%s/%s', $this->name, $this->path);
+    }
+
     public function getDocrootAttribute() {
         return sprintf(env('DOCROOT_PATH').'/%s/%s', $this->name, $this->path);
     }
+
     public function getDirectoryAttribute() {
         return sprintf(env('DOCROOT_PATH').'/%s/%s', $this->name, $this->path);
     }
@@ -56,5 +61,4 @@ class Server extends Model
     public function getDeployLogAttribute() {
         return sprintf(env('DOCROOT_PATH').'/%s/deploy.log', $this->name);
     }
-
 }

@@ -7,7 +7,7 @@ hero:
   text: "Control Center "
   tagline: "Web Server Management for Ubuntu 20.04 VPS"
   image:
-      src: /logo.png
+      src: /images/landing.svg
       alt: Lumic Server Management
   actions:
     - theme: brand

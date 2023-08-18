@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  title: "Lumic Control Center",
+  title: "Lumic Control Center [not production ready]",
   description: "Server Management application for ubuntu VPS",
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config

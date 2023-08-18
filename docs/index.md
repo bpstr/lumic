@@ -4,10 +4,10 @@ layout: home
 
 hero:
   name: "Lumic"
-  text: "Control Center "
+  text: "Control Center"
   tagline: "Web Server Management for Ubuntu 20.04 VPS"
   image:
-      src: /images/landing.svg
+      src: /landing.svg
       alt: Lumic Server Management
   actions:
     - theme: brand

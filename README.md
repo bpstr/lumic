@@ -4,7 +4,7 @@
 
 <p align="center">
 <a href="https://www.linux.org/" title="Go to Linux homepage"><img src="https://img.shields.io/badge/OS-Linux-blue?logo=linux&logoColor=white" alt="OS - Linux"></a>
-<a href="https://lumic.pixel24.hu/"><img src="https://img.shields.io/static/v1?label=License&message=MIT&color=2ea44f" alt="License - MIT"></a>
+<a href="https://lumic.cc/"><img src="https://img.shields.io/static/v1?label=License&message=MIT&color=2ea44f" alt="License - MIT"></a>
 </p>
 
 
@@ -18,7 +18,7 @@ Install stackscript on Linode. This will install all the necessary packages and 
 
 Alternatively run the following command on any Ubuntu 20.04 server to install Lumic.
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/bpstr/lumic/main/install.sh)
+bash <(curl -s https://raw.githubusercontent.com/bpstr/lumic/main/lumic.sh)
 ```
 
 ## Features

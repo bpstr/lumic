@@ -7,7 +7,7 @@ outline: deep
 Run the following commands to install Lumic on Ubuntu 20.04.
 
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/bpstr/lumic/main/install.sh)
+bash <(curl -s https://raw.githubusercontent.com/bpstr/lumic/main/lumic.sh)
 ```
 
 This script automates the setup and configuration of a Lumic server manager on a fresh Ubuntu 20.04 instance. It streamlines the installation of various components, including NGINX, MySQL, PHP, Composer, and Certbot, among others.

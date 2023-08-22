@@ -13,7 +13,7 @@ running on a fresh instance of Ubuntu 20.04.
 Run the following command to install Lumic on Ubuntu 20.04.
 
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/bpstr/lumic/main/install.sh)
+bash <(curl -s https://raw.githubusercontent.com/bpstr/lumic/main/lumic.sh)
 ```
 
 Read the detailed [installation guide](/install-guide.html) for more 

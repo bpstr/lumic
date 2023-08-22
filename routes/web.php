@@ -8,6 +8,7 @@ use App\Jobs\ServerSetupJob;
 use App\Models\Database;
 use App\Models\Server;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Cookie;
 
@@ -61,6 +62,84 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
         ]);
     });
 
+    $router->get('/explorer',
+        function () use ($router) {
+            $rootuser = getenv('MYSQL_ROOT_USER');
+            $rootpass = getenv('MYSQL_ROOT_PASS');
+
+            // Connect to the MySQL server
+            $mysqli = new mysqli('localhost', $rootuser, $rootpass);
+
+            // Check the connection
+            if ($mysqli->connect_error) {
+                die('Connect Error (' . $mysqli->connect_errno . ') ' . $mysqli->connect_error);
+            }
+
+            // Query for users
+            $query_users = "SELECT user, host FROM mysql.user";
+            $result_users = $mysqli->query($query_users);
+
+            $users = [];
+            if ($result_users) {
+                while ($row = $result_users->fetch_assoc()) {
+                    $users[] = $row;
+                }
+                $result_users->free();
+            }
+            $query_dbs = "SHOW DATABASES";
+            $result_dbs = $mysqli->query($query_dbs);
+
+            $databases = [];
+            if ($result_dbs) {
+                while ($row = $result_dbs->fetch_assoc()) {
+                    if (in_array($row['Database'], ['information_schema', 'mysql', 'performance_schema'])) {
+                        continue;
+                    }
+
+                    $databases[] = $row['Database'];
+                }
+                $result_dbs->free();
+            }
+
+            $db_sizes = [];
+            $db_table_counts = [];
+            foreach ($databases as $db) {
+                // Select the database
+                $mysqli->select_db($db);
+
+                // Query for database size
+                $query_size = "SELECT table_schema AS db_name, SUM(data_length + index_length) AS db_size FROM information_schema.tables WHERE table_schema = '$db' GROUP BY table_schema";
+                $result_size = $mysqli->query($query_size);
+                if ($result_size) {
+                    $row = $result_size->fetch_assoc();
+                    $db_sizes[$db] = $row['db_size'] ?? '';
+                    $result_size->free();
+                }
+
+                // Query for number of tables
+                $query_table_count = "SELECT COUNT(*) AS table_count FROM information_schema.tables WHERE table_schema = '$db'";
+                $result_table_count = $mysqli->query($query_table_count);
+                if ($result_table_count) {
+                    $row = $result_table_count->fetch_assoc();
+                    $db_table_counts[$db] = $row['table_count'];
+                    $result_table_count->free();
+                }
+            }
+
+            $mysqli->close();
+
+// Output the database sizes and table counts
+            foreach ($databases as $index => $db) {
+                $databases[$index] = [
+                    'name' => $db,
+                    'size' => ($db_sizes[$db] ? round($db_sizes[$db] / (1024 * 1024), 2) . " MB" : "Unknown"),
+                    'tables' => ($db_table_counts[$db] ? $db_table_counts[$db] : "0"),
+                ];
+            }
+
+            return view('explorer', compact('users', 'databases'));
+        });
+
     $router->get('/settings', function () use ($router) {
         return view('settings', [
             'servers' => Server::all(),
@@ -84,11 +163,15 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
             'name' => $string,
         ]);
 
+        $dbname = Str::slug(request()->input('domain'));
+        $dbuser = Str::slug(request()->input('domain'));
+        $dbpass = Str::random(16);
+
         Database::create([
-            'name' => Str::slug(request()->input('domain')),
+            'name' => $dbname,
             'server_id' => $server->id,
-            'username' => Str::slug(request()->input('domain')),
-            'password' => Str::random(16)
+            'username' => $dbuser,
+            'password' => $dbpass,
         ]);
 
         Artisan::call('nginx:config', compact('server'));
@@ -123,6 +206,13 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
     $router->get('/servers/{id}/ftp', function ($id) {
         $server = Server::find($id);
         return view('servers.ftp', compact('server') +  ['servers' => Server::all()]);
+    });
+
+
+    $router->get('/servers/{id}/delete', function ($id) {
+        $server = Server::find($id);
+        $server->delete();
+        return redirect('/dashboard');
     });
 
 

@@ -51,6 +51,8 @@ class PrepareDirectoriesCommand extends CommandBase
             mkdir($project_git_repository, 0755, true);
         }
 
+        static::exec('chown www-data:www-data -R ' . $project_root_path);
+
         $this->info('Created directory: ' . $project_root_path);
         return 1;
     }

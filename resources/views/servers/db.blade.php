@@ -6,7 +6,8 @@
             <div class="card-body">
                 <div class="row">
                 @foreach($server->databases as $database)
-                    <div class="col-md-4 col-lg-3">
+                    <div class="col-md-6 col-lg-4">
+                        <small>#{{ $database->id }}</small>
                         <div class="card my-3 rounded-0 relative">
                             <span class="card-body text-decoration-none pe-auto">
                                 <small class="fw-bold">database: <code>{{ $database->name }}</code></small><br>

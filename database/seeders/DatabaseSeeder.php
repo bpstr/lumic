@@ -15,7 +15,7 @@ class DatabaseSeeder extends Seeder
     public function run()
     {
         Server::create([
-            'name' => 'home',
+            'name' => '.home',
             'domain' => getenv('SERVER_IP'),
             'php' => '8.1',
             'template' => 'laravel',

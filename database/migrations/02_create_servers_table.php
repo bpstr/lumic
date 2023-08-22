@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('servers', function (Blueprint $table) {
             $table->id();
             $table->string('domain');
-            $table->string('name');
+            $table->string('name')->unique();
             $table->string('path')->nullable();
             $table->string('ssl')->nullable();
             $table->string('php')->nullable();

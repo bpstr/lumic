@@ -89,6 +89,12 @@ expect eof
 echo "mysql-server mysql-server/root_password password ${MYSQL_ROOT_PASS}" | debconf-set-selections
 echo "mysql-server mysql-server/root_password_again password ${MYSQL_ROOT_PASS}" | debconf-set-selections
 mysql_secure_install "$MYSQL_ROOT_PASS"
+/usr/bin/mysql -u root -p$MYSQL_ROOT_PASS <<EOF
+use mysql;
+CREATE USER '$MYSQL_ROOT_NAME'@'%' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';
+GRANT ALL PRIVILEGES ON *.* TO '$MYSQL_ROOT_NAME'@'%' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+EOF
 ###########################################################
 # Install PHP
 ###########################################################

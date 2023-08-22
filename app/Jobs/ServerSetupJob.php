@@ -52,8 +52,16 @@ class ServerSetupJob extends Job
 
             rename(storage_path('blocks/'.$item), $server->nginx);
 
+            foreach ($server->databases as $database) {
+                Artisan::call('db:create', [
+                    'name' => $database->name,
+                    'user' => $database->user,
+                    'pass' => $database->pass,
+                ]);
+            }
+
             Artisan::call('ssl:certificate', ['server' => $server->id]);
-            Artisan::call('template:install', compact('server'));
+            Artisan::call('template:install', ['server' => $server->id] );
         }
 
         Artisan::call('nginx:restart');

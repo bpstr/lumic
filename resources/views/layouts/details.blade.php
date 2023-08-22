@@ -5,7 +5,7 @@
 @section('actions')
 
     <div class="btn-group me-2">
-        <a href="#" class="btn btn-sm btn-outline-danger">Delete</a>
+        <a href="/servers/{{ $server->id }}/delete" class="btn btn-sm btn-outline-danger">Delete</a>
         <a href="https://{{ $server->domain }}" target="_blank" class="btn btn-sm btn-outline-dark">Open domain</a>
     </div>
 

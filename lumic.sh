@@ -157,6 +157,9 @@ END
 cd /var/www/html && php artisan key:generate
 # Fix permissions
 sudo chmod o+w /var/www/html/storage/ -R
+sudo chown -R :www-data /var/www/html
+sudo chmod -R 775 /var/www/html/storage
+sudo chmod -R 775 /var/www/html/database
 # Install lumic
 php /var/www/html/artisan migrate:fresh --force --seed --no-interaction
 ###########################################################

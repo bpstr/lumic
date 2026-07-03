@@ -7,9 +7,11 @@ use App\Jobs\GitDeployJob;
 use App\Jobs\ServerSetupJob;
 use App\Models\Cronjob;
 use App\Models\Database;
+use App\Models\FtpUser;
 use App\Models\Server;
 use App\Support\CronInput;
 use App\Support\DatabaseInput;
+use App\Support\FtpUserInput;
 use App\Support\ServerInput;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -222,6 +224,20 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
     $router->get('/servers/{id}/ftp', function ($id) {
         $server = Server::find($id);
         return view('servers.ftp', compact('server') +  ['servers' => Server::all()]);
+    });
+
+    $router->post('/servers/{id}/ftp', function ($id) {
+        $server = Server::find($id);
+        try {
+            $payload = FtpUserInput::payload(request(), $server);
+        } catch (InvalidArgumentException $exception) {
+            return redirect('/servers/' . $server->id . '/ftp')->with('error', $exception->getMessage());
+        }
+
+        $ftpUser = FtpUser::create($payload + ['server_id' => $server->id]);
+        Artisan::call('ftp:create-user', ['ftpUser' => $ftpUser->id]);
+
+        return redirect('/servers/' . $server->id . '/ftp');
     });
 
 

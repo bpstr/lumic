@@ -42,6 +42,10 @@ class Server extends Model
         return $this->hasMany(Cronjob::class);
     }
 
+    public function ftpUsers() {
+        return $this->hasMany(FtpUser::class);
+    }
+
     public function getDatabaseAttribute() {
         return $this->databases()->first() ?? new Database();
     }

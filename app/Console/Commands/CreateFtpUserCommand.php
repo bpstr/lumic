@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Console\CommandBase;
-use Illuminate\Console\Command;
+use App\Models\FtpUser;
 
 class CreateFtpUserCommand extends CommandBase
 {
@@ -12,14 +12,14 @@ class CreateFtpUserCommand extends CommandBase
      *
      * @var string
      */
-    protected $signature = 'ftp:create';
+    protected $signature = 'ftp:create-user {ftpUser}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Create a new ftp user';
+    protected $description = 'Create an SFTP system user';
 
     /**
      * Create a new command instance.
@@ -38,10 +38,31 @@ class CreateFtpUserCommand extends CommandBase
      */
     public function handle()
     {
-        static::exec('useradd -m ftp2 -s /bin/bash');
+        $ftpUser = $this->argument('ftpUser');
+        if (!$ftpUser instanceof FtpUser) {
+            $ftpUser = FtpUser::find($ftpUser);
+        }
 
+        if (!$ftpUser) {
+            throw new \InvalidArgumentException('SFTP user record not found.');
+        }
 
-        $this->info('create db.');
+        static::exec(self::useraddCommand($ftpUser));
+
+        $this->info('Created SFTP user: '.$ftpUser->username);
         return 1;
+    }
+
+    public static function useraddCommand(FtpUser $ftpUser): array
+    {
+        return [
+            'useradd',
+            '-m',
+            '-d',
+            $ftpUser->home,
+            '-s',
+            $ftpUser->shell,
+            $ftpUser->username,
+        ];
     }
 }

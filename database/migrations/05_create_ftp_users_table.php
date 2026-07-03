@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('ftp_users', function (Blueprint $table) {
             $table->id();
-            $table->string('server_id');
+            $table->foreignId('server_id')->constrained('servers')->cascadeOnDelete();
             $table->string('username')->unique();
             $table->string('home');
             $table->string('shell')->default('/usr/sbin/nologin');

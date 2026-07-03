@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('domain_aliases', function (Blueprint $table) {
             $table->id();
-            $table->string('server_id');
+            $table->foreignId('server_id')->constrained('servers')->cascadeOnDelete();
             $table->string('domain');
             $table->timestamps();
             $table->unique(['server_id', 'domain']);

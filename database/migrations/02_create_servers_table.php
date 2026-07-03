@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('domain');
             $table->string('name')->unique();
             $table->string('path')->nullable();
-            $table->string('ssl')->nullable();
+            $table->dateTime('ssl')->nullable();
             $table->string('php')->nullable();
             $table->string('git')->nullable();
             $table->string('branch')->default('main');

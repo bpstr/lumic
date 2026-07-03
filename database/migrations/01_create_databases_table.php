@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('databases', function (Blueprint $table) {
             $table->id();
-            $table->string('server_id');
+            $table->foreignId('server_id')->constrained('servers')->cascadeOnDelete();
             $table->string('name');
             $table->string('username');
             $table->string('password');

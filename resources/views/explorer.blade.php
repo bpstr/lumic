@@ -3,6 +3,10 @@
 @section('title', 'Database explorer')
 
 @section('content')
+    @isset($error)
+        <div class="alert alert-warning rounded-0">{{ $error }}</div>
+    @endisset
+
     <table class="table">
         <thead>
             <tr>
@@ -17,9 +21,7 @@
                 <tr>
                     <th scope="row">{{ $index }}</th>
                     <td>
-                        <a href="/explorer/{{ $database['name'] }}" class="">
-                            {{ $database['name'] }}
-                        </a>
+                        {{ $database['name'] }}
                     </td>
                     <td>{{ $database['size'] }}</td>
                     <td>{{ $database['tables'] }} tables</td>

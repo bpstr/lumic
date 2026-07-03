@@ -41,10 +41,7 @@ class SslCertificateCommand extends CommandBase
         $server = $this->getServer();
 
         $webmaster=getenv('WEBMASTER_EMAIL');
-        $domains = implode(',', [
-            $server->domain,
-            'www.' . $server->domain,
-        ]);
+        $domains = implode(',', $server->server_names);
 
         $forced = '';
         if ($this->option('force')) {

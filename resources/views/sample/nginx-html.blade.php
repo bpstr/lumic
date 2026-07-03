@@ -1,6 +1,6 @@
 server {
     listen 80;
-    server_name {{ $server->domain }} www.{{ $server->domain }};
+    server_name {{ implode(' ', $server->server_names) }};
 
     index index.html index.htm;
     charset utf-8;

@@ -46,6 +46,17 @@ class Server extends Model
         return $this->hasMany(FtpUser::class);
     }
 
+    public function aliases() {
+        return $this->hasMany(DomainAlias::class);
+    }
+
+    public function getServerNamesAttribute(): array {
+        return array_values(array_unique(array_merge(
+            [$this->domain, 'www.' . $this->domain],
+            $this->aliases->pluck('domain')->all()
+        )));
+    }
+
     public function getDatabaseAttribute() {
         return $this->databases()->first() ?? new Database();
     }

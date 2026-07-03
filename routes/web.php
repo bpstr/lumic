@@ -7,6 +7,7 @@ use App\Jobs\GitDeployJob;
 use App\Jobs\ServerSetupJob;
 use App\Models\Cronjob;
 use App\Models\Database;
+use App\Models\DomainAlias;
 use App\Models\FtpUser;
 use App\Models\Server;
 use App\Support\CronInput;
@@ -256,6 +257,25 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
     $router->get('/servers/{id}/cron', function ($id) {
         $server = Server::find($id);
         return view('servers.cron', compact('server') +  ['servers' => Server::all()]);
+    });
+
+    $router->get('/servers/{id}/domains', function ($id) {
+        $server = Server::find($id);
+        return view('servers.domains', compact('server') + ['servers' => Server::all()]);
+    });
+
+    $router->post('/servers/{id}/domains', function ($id) {
+        $server = Server::find($id);
+        $domain = trim((string) request()->input('domain'));
+        try {
+            ServerInput::assertDomain($domain);
+        } catch (InvalidArgumentException $exception) {
+            return redirect('/servers/' . $server->id . '/domains')->with('error', $exception->getMessage());
+        }
+
+        DomainAlias::firstOrCreate(['server_id' => $server->id, 'domain' => $domain]);
+
+        return redirect('/servers/' . $server->id . '/domains');
     });
 
     $router->post('/servers/{id}/cron', function ($id) {

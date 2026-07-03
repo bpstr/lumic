@@ -40,11 +40,12 @@ class DoJobCommand extends Command
      */
     public function handle()
     {
-        $job = new GitDeployJob();
-        $job->handle();
+        foreach (Server::whereNotNull('git')->get() as $server) {
+            (new GitDeployJob($server))->handle();
+        }
 
 
-        $this->info('do job.');
+        $this->info('Deploy jobs processed.');
         return 1;
     }
 }

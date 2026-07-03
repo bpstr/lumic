@@ -26,22 +26,23 @@ class GitDeployJob extends Job
      */
     public function handle()
     {
-        $servers = Server::whereNotNull('git')->get();
-        foreach ($servers as $server) {
-            if (!file_exists($server->deploy_log)) {
-                continue;
-            }
-
-            $lines = file($server->deploy_log);
-            if (count($lines) !== 1) {
-                continue;
-            }
-
-            if (!str_starts_with($lines[0], 'User triggered deploy')) {
-                continue;
-            }
-
-            Artisan::call('git:deploy', ['server' => $server->id]);
+        if (!$this->server->git) {
+            $this->appendDeployLog('Deploy skipped: no Git repository configured.');
+            return;
         }
+
+        $this->appendDeployLog('User triggered deploy.');
+        Artisan::call('git:deploy', ['server' => $this->server->id]);
+    }
+
+    private function appendDeployLog(string $line): void
+    {
+        $log = $this->server->deploy_log;
+        $dir = dirname($log);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        file_put_contents($log, '[' . date('Y-m-d H:i:s') . '] ' . $line . PHP_EOL, FILE_APPEND);
     }
 }

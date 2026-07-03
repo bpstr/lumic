@@ -12,6 +12,7 @@ use App\Models\Server;
 use App\Support\CronInput;
 use App\Support\DatabaseInput;
 use App\Support\FtpUserInput;
+use App\Support\PhpRuntime;
 use App\Support\ServerInput;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -155,7 +156,11 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
 
     $router->get('/servers/add', function () {
         $server = new Server();
-        return view('servers.form', compact('server') +  ['servers' => Server::all()]);
+        $phpRuntime = [
+            'versions' => PhpRuntime::versions(),
+            'extensions' => PhpRuntime::extensions(),
+        ];
+        return view('servers.form', compact('server', 'phpRuntime') +  ['servers' => Server::all()]);
     });
 
     $router->post('/servers/add', function () {

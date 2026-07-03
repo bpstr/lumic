@@ -40,6 +40,14 @@
                             <label class="form-check-label" for="phpVersion{{ $index }}">{{ $version }}</label>
                         </div>
                     @endforeach
+                    @isset($phpRuntime)
+                        <div class="small text-muted mt-2">
+                            @foreach($phpRuntime['versions'] as $runtime)
+                                <span class="d-block">{{ $runtime['version'] }}: {{ $runtime['installed'] ? 'installed' : 'PHP-FPM socket missing' }}</span>
+                            @endforeach
+                            <span class="d-block">Extensions: {{ implode(', ', array_slice($phpRuntime['extensions'], 0, 12)) }}</span>
+                        </div>
+                    @endisset
                 </div>
 
 

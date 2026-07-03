@@ -70,4 +70,8 @@ class Server extends Model
     public function getDeployLogAttribute() {
         return sprintf(env('DOCROOT_PATH').'/%s/deploy.log', $this->name);
     }
+
+    public function getPhpFpmSocketAttribute() {
+        return \App\Support\PhpRuntime::socket($this->php ?: '8.1');
+    }
 }

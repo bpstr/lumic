@@ -14,6 +14,7 @@ use App\Support\CronInput;
 use App\Support\DatabaseInput;
 use App\Support\FtpUserInput;
 use App\Support\FileBrowser;
+use App\Support\AuthTokens;
 use App\Support\PhpRuntime;
 use App\Support\ServerInput;
 use Illuminate\Support\Facades\Artisan;
@@ -51,8 +52,17 @@ $router->post('/login', function () use ($router) {
     if ($credentials['name'] === getenv('ROOT_USER_NAME') &&
         $credentials['pass'] === getenv('ROOT_USER_PASS')) {
 
-        $pers = hash('sha256', $credentials['name'] . ':' . $credentials['pass'], true, ['salt' => getenv('APP_KEY')]);
-        $cookie = new Cookie('auth', $pers);
+        $cookie = new Cookie(
+            'auth',
+            AuthTokens::sessionToken($credentials['name'], $credentials['pass']),
+            time() + 60 * 60 * 12,
+            '/',
+            null,
+            request()->isSecure(),
+            true,
+            false,
+            Cookie::SAMESITE_LAX
+        );
 
         return redirect('/dashboard')->withCookie($cookie);
     }
@@ -61,6 +71,20 @@ $router->post('/login', function () use ($router) {
 });
 
 $router->group(['middleware' => 'auth'], function () use ($router) {
+    $router->get('/logout', function () {
+        return redirect('/')->withCookie(Cookie::create(
+            'auth',
+            '',
+            time() - 3600,
+            '/',
+            null,
+            request()->isSecure(),
+            true,
+            false,
+            Cookie::SAMESITE_LAX
+        ));
+    });
+
     $router->get('/dashboard', function () {
         return view('dashboard', [
             'servers' => Server::all(),
@@ -152,7 +176,7 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
     $router->get('/settings', function () use ($router) {
         return view('settings', [
             'servers' => Server::all(),
-            'deploy_token' => 'asd',
+            'deploy_token' => AuthTokens::basicToken(),
         ]);
     });
 
@@ -308,9 +332,7 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
 
     $router->get('/servers/{id}/deploy', function ($id) {
         $server = Server::find($id);
-        $username = hash('sha256', getenv('ROOT_USER_NAME'), true, ['salt' => getenv('APP_KEY')]);
-        $password = hash('sha256', getenv('ROOT_USER_PASS'), true, ['salt' => getenv('APP_KEY')]);
-        $deploy_token = base64_encode($username . ':' . $password);
+        $deploy_token = AuthTokens::basicToken();
         return view('servers.deploy', compact('server', 'deploy_token') +  ['servers' => Server::all()]);
     });
 

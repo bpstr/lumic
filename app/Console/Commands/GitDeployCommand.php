@@ -4,7 +4,6 @@ namespace App\Console\Commands;
 
 use App\Console\CommandBase;
 use App\Models\Server;
-use Illuminate\Console\Command;
 
 class GitDeployCommand extends CommandBase
 {
@@ -41,29 +40,27 @@ class GitDeployCommand extends CommandBase
     {
         $server = $this->getServer();
         $branch = $server->branch ?: 'main';
+        $git = (string) $server->git;
 
-        $git = $server->git;
-        $token = getenv('GITHUB_TOKEN');
-        $git = str_replace('git@github.com:', "https://oauth2:$token@github.com/", $git);
+        self::assertSafeServer($server);
+        self::assertSafeGitUrl($git);
 
-        if (!is_dir('/var/git/'.$server->name)) {
-            static::exec('cd /var/git && GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone '.$git.' '.$server->name . ' >> '.$server->deploy_log.' 2>&1');
+        if (!is_dir(dirname($server->gitroot))) {
+            mkdir(dirname($server->gitroot), 0755, true);
         }
 
-        foreach (self::repositoryCommandLines($server, $branch) as $command) {
-            static::exec($command);
+        if (!is_dir($server->gitroot)) {
+            $this->runAndLog(['git', 'clone', $git, $server->gitroot], dirname($server->gitroot));
         }
 
-        $commit = trim(static::exec('cd /var/git/'.$server->name.' && git log --pretty="%h" -n1 HEAD'));
+        foreach (self::repositoryCommands($branch) as $command) {
+            $this->runAndLog($command, $server->gitroot);
+        }
+
+        $commit = trim($this->runAndLog(['git', 'log', '--pretty=%h', '-n1', 'HEAD'], $server->gitroot));
         $server->update(['commit' => $commit]);
 
         $this->info('Deployed commit: '.$commit);
-
-        $data = file($server->deploy_log);
-        $line = $data[count($data)-1];
-        if (str_starts_with($line, "Your branch is up to date with 'origin/".$branch."'")) {
-            $this->info('Already up to date.');
-        }
 
         $this->info('Deploying...');
         return $this->deploy($server);
@@ -71,32 +68,89 @@ class GitDeployCommand extends CommandBase
 
     public static function repositoryCommandLines($server, string $branch): array
     {
+        return array_map(fn ($command) => implode(' ', $command), self::repositoryCommands($branch));
+    }
+
+    public static function repositoryCommands(string $branch): array
+    {
         return [
-            'cd /var/git/'.$server->name.' && git reset --hard HEAD >> '.$server->deploy_log.' 2>&1',
-            'cd /var/git/'.$server->name.' && git fetch origin '.$branch.' >> '.$server->deploy_log.' 2>&1',
-            'cd /var/git/'.$server->name.' && git checkout '.$branch.' >> '.$server->deploy_log.' 2>&1',
-            'cd /var/git/'.$server->name.' && git pull origin '.$branch.' >> '.$server->deploy_log.' 2>&1',
+            ['git', 'reset', '--hard', 'HEAD'],
+            ['git', 'fetch', 'origin', $branch],
+            ['git', 'checkout', $branch],
+            ['git', 'pull', 'origin', $branch],
         ];
     }
 
     public function deploy($server) {
-        if (file_exists('/var/git/'.$server->name.'/.lumic/hooks/pre-deploy.sh')) {
-            static::exec('chmod +x ./.lumic/hooks/pre-deploy.sh >> '.$server->deploy_log.' 2>&1');
-            static::exec('cd /var/git/'.$server->name.' && ./.lumic/hooks/pre-deploy.sh >> '.$server->deploy_log.' 2>&1');
+        $preDeploy = $server->gitroot.'/.lumic/hooks/pre-deploy.sh';
+        if (is_file($preDeploy)) {
+            $this->runAndLog(['chmod', '+x', $preDeploy]);
+            $this->runAndLog([$preDeploy], $server->gitroot);
         }
 
-        $exclude_list = '';
-        if (file_exists('/var/git/'.$server->name.'/.lumic/excluded.lst')) {
-            $exclude_list = ' --exclude-from={'.'} ';
-        }
+        $this->runAndLog(self::rsyncCommand($server));
 
-        static::exec('rsync -av --exclude-from=/var/www/html/resources/lists/default-excluded.lst '.$exclude_list.' /var/git/'.$server->name.'/ /var/www/'.$server->name.'/ >> '.$server->deploy_log.' 2>&1');
-
-        if (file_exists('/var/git/'.$server->name.'/.lumic/hooks/post-deploy.sh')) {
-            static::exec('chmod +x /var/git/'.$server->name.'/.lumic/hooks/post-deploy.sh >> '.$server->deploy_log.' 2>&1');
-            static::exec('cd /var/git/'.$server->name.' && ./.lumic/hooks/post-deploy.sh >> '.$server->deploy_log.' 2>&1');
+        $postDeploy = $server->gitroot.'/.lumic/hooks/post-deploy.sh';
+        if (is_file($postDeploy)) {
+            $this->runAndLog(['chmod', '+x', $postDeploy]);
+            $this->runAndLog([$postDeploy], $server->gitroot);
         }
 
         return 1;
+    }
+
+    public static function rsyncCommand($server): array
+    {
+        $command = [
+            'rsync',
+            '-av',
+            '--exclude-from='.resource_path('lists/default-excluded.lst'),
+        ];
+
+        $customExclude = $server->gitroot.'/.lumic/excluded.lst';
+        if (is_file($customExclude)) {
+            $command[] = '--exclude-from='.$customExclude;
+        }
+
+        $command[] = rtrim($server->gitroot, '/') . '/';
+        $command[] = rtrim($server->docroot, '/') . '/';
+
+        return $command;
+    }
+
+    public static function assertSafeGitUrl(string $url): void
+    {
+        $ssh = preg_match('/^git@github\.com:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/', $url);
+        $https = preg_match('/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/', $url);
+
+        if (!$ssh && !$https) {
+            throw new \InvalidArgumentException('Only GitHub SSH or HTTPS repository URLs are supported.');
+        }
+    }
+
+    public static function assertSafeServer($server): void
+    {
+        if (!preg_match('/^[a-z0-9-]+$/', (string) $server->name)) {
+            throw new \InvalidArgumentException('Unsafe server name for deploy.');
+        }
+    }
+
+    private function runAndLog(array $command, ?string $cwd = null): string
+    {
+        $server = $this->getServer();
+        $result = static::runCommand($command, cwd: $cwd);
+        $line = '$ ' . $result->commandForLog() . PHP_EOL . $result->output;
+
+        $dir = dirname($server->deploy_log);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+        file_put_contents($server->deploy_log, $line, FILE_APPEND);
+
+        if ($result->exitCode !== 0) {
+            throw new \RuntimeException($result->commandForLog() . ' - ' . $result->output);
+        }
+
+        return $result->output;
     }
 }

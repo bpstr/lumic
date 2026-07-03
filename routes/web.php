@@ -5,8 +5,10 @@
 use App\Jobs\ForceSslCertJob;
 use App\Jobs\GitDeployJob;
 use App\Jobs\ServerSetupJob;
+use App\Models\Cronjob;
 use App\Models\Database;
 use App\Models\Server;
+use App\Support\CronInput;
 use App\Support\DatabaseInput;
 use App\Support\ServerInput;
 use Illuminate\Support\Facades\Artisan;
@@ -233,6 +235,19 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
     $router->get('/servers/{id}/cron', function ($id) {
         $server = Server::find($id);
         return view('servers.cron', compact('server') +  ['servers' => Server::all()]);
+    });
+
+    $router->post('/servers/{id}/cron', function ($id) {
+        $server = Server::find($id);
+        try {
+            $payload = CronInput::payload(request());
+        } catch (InvalidArgumentException $exception) {
+            return redirect('/servers/' . $server->id . '/cron')->with('error', $exception->getMessage());
+        }
+
+        Cronjob::create($payload + ['server_id' => $server->id]);
+
+        return redirect('/servers/' . $server->id . '/cron');
     });
 
     $router->get('/servers/{id}/deploy', function ($id) {

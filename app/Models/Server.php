@@ -38,6 +38,10 @@ class Server extends Model
         return $this->hasMany(Database::class);
     }
 
+    public function cronjobs() {
+        return $this->hasMany(Cronjob::class);
+    }
+
     public function getDatabaseAttribute() {
         return $this->databases()->first() ?? new Database();
     }

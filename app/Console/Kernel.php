@@ -4,6 +4,7 @@ namespace App\Console;
 
 use App\Console\Commands\CreateDatabaseCommand;
 use App\Console\Commands\CreateFtpUserCommand;
+use App\Console\Commands\CronjobCreateCommand;
 use App\Console\Commands\DatabaseUserCommand;
 use App\Console\Commands\DoJobCommand;
 use App\Console\Commands\GenerateCronJobTable;
@@ -35,6 +36,7 @@ class Kernel extends ConsoleKernel
         HtmlTemplateCommand::class,
         GitDeployCommand::class,
         CreateFtpUserCommand::class,
+        CronjobCreateCommand::class,
     ];
 
     /**

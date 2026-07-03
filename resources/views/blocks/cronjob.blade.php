@@ -11,33 +11,20 @@
     </tr>
     </thead>
     <tbody>
-    <tr>
-        <th scope="row">1</th>
-        <td>*</td>
-        <td>*</td>
-        <td>*</td>
-        <td>*</td>
-        <td>*</td>
-        <td>/path/to/script.sh</td>
-    </tr>
-    <tr>
-        <th scope="row">2</th>
-        <td>30</td>
-        <td>1</td>
-        <td>*</td>
-        <td>*</td>
-        <td>*</td>
-        <td>/path/to/another_script.sh</td>
-    </tr>
-    <tr>
-        <th scope="row">3</th>
-        <td>*</td>
-        <td>*</td>
-        <td>*</td>
-        <td>*</td>
-        <td>7</td>
-        <td>/path/to/yet other script.sh</td>
-    </tr>
-    <!-- Add more rows for other cron jobs -->
+    @forelse($server->cronjobs as $cronjob)
+        <tr>
+            <th scope="row">{{ $cronjob->id }}</th>
+            <td>{{ $cronjob->minute }}</td>
+            <td>{{ $cronjob->hour }}</td>
+            <td>{{ $cronjob->day_of_month }}</td>
+            <td>{{ $cronjob->month }}</td>
+            <td>{{ $cronjob->day_of_week }}</td>
+            <td><code>{{ $cronjob->command }}</code></td>
+        </tr>
+    @empty
+        <tr>
+            <td colspan="7" class="text-muted">No cron jobs configured.</td>
+        </tr>
+    @endforelse
     </tbody>
 </table>

@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Server;
+use App\Models\Cronjob;
 use Illuminate\Console\Command;
 
 class CronjobCreateCommand extends Command
@@ -12,14 +12,14 @@ class CronjobCreateCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'nginx:config {server}';
+    protected $signature = 'cron:create {cronjob}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Manage Nginx configuration files';
+    protected $description = 'Render a managed cron job line';
 
     /**
      * Create a new command instance.
@@ -38,15 +38,16 @@ class CronjobCreateCommand extends Command
      */
     public function handle()
     {
-        $server = $this->argument('server');
-        if (!$server instanceof Server) {
-            $server = Server::find($this->argument('server'));
+        $cronjob = $this->argument('cronjob');
+        if (!$cronjob instanceof Cronjob) {
+            $cronjob = Cronjob::find($this->argument('cronjob'));
         }
 
-        $config = view(sprintf('sample.nginx-%s', $server->template ?? 'default'), compact('server'));
-        file_put_contents(storage_path(sprintf('blocks/%s.conf', $server->name)), $config);
+        if (!$cronjob) {
+            throw new \InvalidArgumentException('Cron job not found.');
+        }
 
-        $this->info('Created configuration: '.$server->nginx);
+        $this->line($cronjob->expression() . ' ' . $cronjob->command);
         return 1;
     }
 }

@@ -7,6 +7,7 @@ use App\Jobs\GitDeployJob;
 use App\Jobs\ServerSetupJob;
 use App\Models\Database;
 use App\Models\Server;
+use App\Support\ServerInput;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -153,18 +154,16 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
     });
 
     $router->post('/servers/add', function () {
-        if (empty(request()->input('domain'))) {
-            return redirect('/servers/add')->with('error', 'Domain is required!');
+        try {
+            $payload = ServerInput::createPayload(request());
+        } catch (InvalidArgumentException $exception) {
+            return redirect('/servers/add')->with('error', $exception->getMessage());
         }
 
-        // Todo validate input fields (php version)
-        $string = preg_replace('/[^a-zA-Z0-9]/', '-', request()->input('domain'));
-        $server = Server::create(request()->all() + [
-            'name' => $string,
-        ]);
+        $server = Server::create($payload);
 
-        $dbname = Str::slug(request()->input('domain'));
-        $dbuser = Str::slug(request()->input('domain'));
+        $dbname = Str::slug($payload['domain']);
+        $dbuser = Str::slug($payload['domain']);
         $dbpass = Str::random(16);
 
         Database::create([
@@ -187,7 +186,13 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
 
     $router->post('/servers/{id}/update', function ($id) {
         $server = Server::find($id);
-        $server->update(request()->all());
+        try {
+            $payload = ServerInput::updatePayload(request());
+        } catch (InvalidArgumentException $exception) {
+            return redirect('/servers/' . $server->id . '/deploy')->with('error', $exception->getMessage());
+        }
+
+        $server->update($payload);
         return redirect('/servers/' . $server->id . '/deploy');
     });
 
@@ -268,4 +273,3 @@ $router->group(['middleware' => 'basic', 'prefix' => 'api'], function () use ($r
     });
 
 });
-

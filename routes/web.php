@@ -143,7 +143,7 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
         ]);
 
         Artisan::call('nginx:config', compact('server'));
-        dispatch(new ServerSetupJob());
+        dispatch(new ServerSetupJob($server));
 
         return redirect('/servers/' . $server->id);
     });

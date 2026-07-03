@@ -14,6 +14,7 @@ use App\Console\Commands\NginxConfigCommand;
 use App\Console\Commands\PrepareDirectoriesCommand;
 use App\Console\Commands\RestartNginxCommand;
 use App\Console\Commands\SslCertificateCommand;
+use App\Console\Commands\TestNginxCommand;
 use Illuminate\Console\Scheduling\Schedule;
 use Laravel\Lumen\Console\Kernel as ConsoleKernel;
 
@@ -37,6 +38,7 @@ class Kernel extends ConsoleKernel
         GitDeployCommand::class,
         CreateFtpUserCommand::class,
         CronjobCreateCommand::class,
+        TestNginxCommand::class,
     ];
 
     /**

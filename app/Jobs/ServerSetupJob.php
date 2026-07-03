@@ -7,60 +7,88 @@ use Illuminate\Support\Facades\Artisan;
 
 class ServerSetupJob extends Job
 {
-    public Server $server;
+    public ?Server $server;
 
-    /**
-     * Create a new job instance.
-     *
-     * @return void
-     */
-    public function __construct()
+    public function __construct(?Server $server = null)
     {
-
+        $this->server = $server;
     }
 
-    /**
-     * Execute the job.
-     *
-     * @return void
-     */
     public function handle()
     {
-        $blocks = scandir(storage_path('blocks'));
-        $servers = [];
-        foreach ($blocks as $key => $item) {
-            if (!str_ends_with($item, '.conf')) {
-                continue;
-            }
+        foreach ($this->serversToSetup() as $server) {
+            $this->setupServer($server);
+        }
+    }
 
-            $server = Server::where('name', substr($item, 0, -5))->first();
+    private function serversToSetup()
+    {
+        if ($this->server) {
+            return collect([$this->server]);
+        }
 
-            if (!$server) {
-                continue;
-            }
+        $blocks = collect(scandir(storage_path('blocks')) ?: [])
+            ->filter(fn ($item) => str_ends_with($item, '.conf'))
+            ->map(fn ($item) => substr($item, 0, -5));
 
-            $servers[] = $server;
+        return Server::whereIn('name', $blocks)->get();
+    }
 
+    private function setupServer(Server $server): void
+    {
+        $server->update(['setup_status' => 'running']);
+        $server->appendSetupLog('Setup started.');
+
+        try {
             Artisan::call('dir:prepare', ['server' => $server->id]);
+            $server->appendSetupLog('Directories prepared.');
 
-            $project_log_path = sprintf('%s/%s/', getenv('NGINX_LOG_PATH'), $server->name);
-            if (!is_dir($project_log_path)) {
-                mkdir($project_log_path, 0755, true);
-            }
-
-            rename(storage_path('blocks/'.$item), $server->nginx);
+            $this->ensureLogDirectory($server);
+            $this->installNginxConfig($server);
+            $server->appendSetupLog('Nginx configuration installed.');
 
             foreach ($server->databases as $database) {
-                Artisan::call('db:create', [
-                    'database' => $database->id,
-                ]);
+                Artisan::call('db:create', ['database' => $database->id]);
+                $server->appendSetupLog('Database provisioned: '.$database->name);
             }
 
             Artisan::call('ssl:certificate', ['server' => $server->id]);
-            Artisan::call('template:install', ['server' => $server->id] );
+            $server->appendSetupLog('SSL certificate command completed.');
+
+            Artisan::call('template:install', ['server' => $server->id]);
+            $server->appendSetupLog('Template installed.');
+
+            if (Artisan::call('nginx:restart') !== 0) {
+                throw new \RuntimeException('Nginx restart failed.');
+            }
+            $server->appendSetupLog('Nginx restarted.');
+            $server->update(['setup_status' => 'completed']);
+        } catch (\Throwable $throwable) {
+            $server->appendSetupLog('Setup failed: '.$throwable->getMessage());
+            $server->update(['setup_status' => 'failed']);
+        }
+    }
+
+    private function ensureLogDirectory(Server $server): void
+    {
+        $projectLogPath = sprintf('%s/%s/', getenv('NGINX_LOG_PATH'), $server->name);
+        if (!is_dir($projectLogPath)) {
+            mkdir($projectLogPath, 0755, true);
+        }
+    }
+
+    private function installNginxConfig(Server $server): void
+    {
+        $source = storage_path('blocks/'.$server->name.'.conf');
+        if (!is_file($source)) {
+            $server->appendSetupLog('Nginx configuration already installed or not pending.');
+            return;
         }
 
-        Artisan::call('nginx:restart');
+        if (Artisan::call('nginx:test') !== 0) {
+            throw new \RuntimeException('Nginx configuration validation failed.');
+        }
 
+        rename($source, $server->nginx);
     }
 }

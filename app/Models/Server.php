@@ -27,12 +27,22 @@ class Server extends Model
         'branch',
         'commit',
         'template',
+        'setup_status',
+        'setup_log',
     ];
 
     // casts
     protected $casts = [
         'ssl' => 'date',
     ];
+
+    public function appendSetupLog(string $message): void
+    {
+        $line = '[' . date('Y-m-d H:i:s') . '] ' . $message;
+        $this->forceFill([
+            'setup_log' => trim(($this->setup_log ? $this->setup_log . PHP_EOL : '') . $line),
+        ])->save();
+    }
 
     public function databases() {
         return $this->hasMany(Database::class);

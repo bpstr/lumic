@@ -22,6 +22,8 @@ return new class extends Migration
             $table->string('branch')->default('main');
             $table->string('commit')->nullable();
             $table->string('template')->nullable();
+            $table->string('setup_status')->default('pending');
+            $table->text('setup_log')->nullable();
             $table->timestamps();
         });
     }

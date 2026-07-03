@@ -40,7 +40,7 @@ class GitDeployCommand extends CommandBase
     public function handle()
     {
         $server = $this->getServer();
-
+        $branch = $server->branch ?: 'main';
 
         $git = $server->git;
         $token = getenv('GITHUB_TOKEN');
@@ -50,23 +50,33 @@ class GitDeployCommand extends CommandBase
             static::exec('cd /var/git && GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone '.$git.' '.$server->name . ' >> '.$server->deploy_log.' 2>&1');
         }
 
-        static::exec('cd /var/git/'.$server->name.' && git reset --hard HEAD >> '.$server->deploy_log.' 2>&1');
-        static::exec('cd /var/git/'.$server->name.' && git pull origin >> '.$server->deploy_log.' 2>&1');
-        static::exec('cd /var/git/'.$server->name.' && git checkout main >> '.$server->deploy_log.' 2>&1');
+        foreach (self::repositoryCommandLines($server, $branch) as $command) {
+            static::exec($command);
+        }
 
         $commit = trim(static::exec('cd /var/git/'.$server->name.' && git log --pretty="%h" -n1 HEAD'));
-//        $server->update(['commit' => $commit]);
+        $server->update(['commit' => $commit]);
 
         $this->info('Deployed commit: '.$commit);
 
         $data = file($server->deploy_log);
         $line = $data[count($data)-1];
-        if (str_starts_with($line, "Your branch is up to date with 'origin/main'")) {
+        if (str_starts_with($line, "Your branch is up to date with 'origin/".$branch."'")) {
             $this->info('Already up to date.');
         }
 
         $this->info('Deploying...');
         return $this->deploy($server);
+    }
+
+    public static function repositoryCommandLines($server, string $branch): array
+    {
+        return [
+            'cd /var/git/'.$server->name.' && git reset --hard HEAD >> '.$server->deploy_log.' 2>&1',
+            'cd /var/git/'.$server->name.' && git fetch origin '.$branch.' >> '.$server->deploy_log.' 2>&1',
+            'cd /var/git/'.$server->name.' && git checkout '.$branch.' >> '.$server->deploy_log.' 2>&1',
+            'cd /var/git/'.$server->name.' && git pull origin '.$branch.' >> '.$server->deploy_log.' 2>&1',
+        ];
     }
 
     public function deploy($server) {

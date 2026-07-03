@@ -24,6 +24,7 @@ class Server extends Model
         'ssl',
         'php',
         'git',
+        'branch',
         'commit',
         'template',
     ];

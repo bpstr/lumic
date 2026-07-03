@@ -10,6 +10,7 @@ class ServerInput
 {
     private const DOMAIN_PATTERN = '/^(?=.{1,253}$)(?!-)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i';
     private const PATH_PATTERN = '/^[A-Za-z0-9._\/-]*$/';
+    private const BRANCH_PATTERN = '/^(?!\/|.*(?:\.\.|\/\/|@\{|\\$|[\x00-\x20~^:?*\[\\\\]))[A-Za-z0-9._\/-]{1,255}(?<!\.lock)(?<!\/)(?<!\.)$/';
 
     public static function createPayload(Request $request): array
     {
@@ -66,6 +67,10 @@ class ServerInput
             self::assertTemplate($payload['template']);
         }
 
+        if (isset($payload['branch']) && $payload['branch'] !== '') {
+            self::assertBranch($payload['branch']);
+        }
+
         return array_filter($payload, fn ($value) => $value !== '');
     }
 
@@ -103,6 +108,13 @@ class ServerInput
     {
         if (!array_key_exists($template, config('server.templates', []))) {
             throw new InvalidArgumentException('Selected server template is not supported.');
+        }
+    }
+
+    public static function assertBranch(string $branch): void
+    {
+        if (!preg_match(self::BRANCH_PATTERN, $branch)) {
+            throw new InvalidArgumentException('Branch name is not safe.');
         }
     }
 

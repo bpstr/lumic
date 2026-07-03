@@ -19,7 +19,7 @@ class SslCertificateCommand extends CommandBase
      *
      * @var string
      */
-    protected $description = 'Create database if not exists';
+    protected $description = 'Create or renew an SSL certificate';
 
     /**
      * Create a new command instance.

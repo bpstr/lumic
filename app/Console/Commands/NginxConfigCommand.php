@@ -19,7 +19,7 @@ class NginxConfigCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Manage Nginx configuration files';
+    protected $description = 'Render an Nginx server configuration';
 
     /**
      * Create a new command instance.

@@ -18,7 +18,7 @@ class DatabaseUserCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Create database if not exists';
+    protected $description = 'Create a database user';
 
     /**
      * Create a new command instance.
@@ -38,7 +38,7 @@ class DatabaseUserCommand extends Command
     public function handle()
     {
 
-        $this->info('create db.');
+        $this->info('Database user command is not implemented.');
         return 1;
     }
 }

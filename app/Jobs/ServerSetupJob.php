@@ -39,8 +39,6 @@ class ServerSetupJob extends Job
                 continue;
             }
 
-            var_dump($item);
-
             $servers[] = $server;
 
             Artisan::call('dir:prepare', ['server' => $server->id]);
@@ -64,7 +62,5 @@ class ServerSetupJob extends Job
 
         Artisan::call('nginx:restart');
 
-
-//        file_put_contents('asdf.txt', var_export(storage_path('blocks'), true));
     }
 }

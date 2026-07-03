@@ -19,7 +19,7 @@ class HtmlTemplateCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Manage Nginx configuration files';
+    protected $description = 'Install the starter HTML template';
 
     /**
      * Create a new command instance.
@@ -46,7 +46,7 @@ class HtmlTemplateCommand extends Command
         $config = view('sample.index', compact('server'));
         file_put_contents(sprintf('%s/index.html', $server->docroot), $config);
 
-        $this->info('Created configuration: '.$server->nginx);
+        $this->info('Installed starter template: '.$server->docroot.'/index.html');
         return 1;
     }
 }

@@ -21,7 +21,7 @@ class DoJobCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Do the job.';
+    protected $description = 'Process deploy jobs for configured Git servers';
 
     /**
      * Create a new command instance.

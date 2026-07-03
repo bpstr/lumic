@@ -38,7 +38,7 @@ class DatabasePasswordCommand extends Command
     public function handle()
     {
 
-        $this->info('reset db pass.');
+        $this->info('Database password command is not implemented.');
         return 1;
     }
 }

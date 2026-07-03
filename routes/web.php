@@ -7,6 +7,7 @@ use App\Jobs\GitDeployJob;
 use App\Jobs\ServerSetupJob;
 use App\Models\Database;
 use App\Models\Server;
+use App\Support\DatabaseInput;
 use App\Support\ServerInput;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -203,7 +204,15 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
 
     $router->post('/servers/{id}/db', function ($id) {
         $server = Server::find($id);
-        Database::create(['name' => Str::slug(request()->input('name')), 'server_id' => $server->id] + request()->all());
+        try {
+            $payload = DatabaseInput::payload(request());
+        } catch (InvalidArgumentException $exception) {
+            return redirect('/servers/' . $server->id . '/db')->with('error', $exception->getMessage());
+        }
+
+        $database = Database::create($payload + ['server_id' => $server->id]);
+        Artisan::call('db:create', ['database' => $database->id]);
+
         return redirect('/servers/' . $server->id . '/db');
     });
 

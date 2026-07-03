@@ -54,9 +54,7 @@ class ServerSetupJob extends Job
 
             foreach ($server->databases as $database) {
                 Artisan::call('db:create', [
-                    'name' => $database->name,
-                    'user' => $database->user,
-                    'pass' => $database->pass,
+                    'database' => $database->id,
                 ]);
             }
 

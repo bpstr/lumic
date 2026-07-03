@@ -42,21 +42,51 @@ class CreateDatabaseCommand extends CommandBase
         $rootuser = getenv('MYSQL_ROOT_USER');
         $rootpass = getenv('MYSQL_ROOT_PASS');
 
-        $database = $this->argument('database');
-        if (!$database instanceof Database) {
-            $database = Database::find($this->argument('database'));
+        $database = $this->resolveDatabase();
+        $secrets = [$rootpass, $database->password];
+
+        foreach (self::sqlStatements($database) as $sql) {
+            static::exec(['mysql', '-u', $rootuser, '-p'.$rootpass, '-e', $sql], $secrets);
         }
-
-        $dbname = $database->name;
-        $dbuser = $database->username;
-        $dbpass = $database->password;
-
-        static::exec('echo "CREATE DATABASE '.$dbname.';" | mysql -u '.$rootuser.' -p"'.$rootpass.'"');
-        static::exec('echo "CREATE USER \''.$dbuser.'\'@\'localhost\' IDENTIFIED BY \''.$dbpass.'\';" | mysql -u '.$rootuser.' -p"'.$rootpass.'"');
-        static::exec('echo "GRANT ALL PRIVILEGES ON '.$dbname.'.* TO \''.$dbuser.'\'@\'localhost\';" | mysql -u '.$rootuser.' -p"'.$rootpass.'"');
-        static::exec('echo "FLUSH PRIVILEGES;" | mysql -u '.$rootuser.' -p"'.$rootpass.'"');
 
         $this->info('Database created.');
         return 1;
+    }
+
+    public function resolveDatabase(): Database
+    {
+        $database = $this->argument('database');
+        if (!$database instanceof Database) {
+            $database = Database::find($database);
+        }
+
+        if (!$database) {
+            throw new \InvalidArgumentException('Database record not found.');
+        }
+
+        return $database;
+    }
+
+    public static function sqlStatements(Database $database): array
+    {
+        $name = self::identifier($database->name);
+        $user = str_replace("'", "''", $database->username);
+        $pass = str_replace("'", "''", $database->password);
+
+        return [
+            "CREATE DATABASE IF NOT EXISTS `{$name}`;",
+            "CREATE USER IF NOT EXISTS '{$user}'@'localhost' IDENTIFIED BY '{$pass}';",
+            "GRANT ALL PRIVILEGES ON `{$name}`.* TO '{$user}'@'localhost';",
+            'FLUSH PRIVILEGES;',
+        ];
+    }
+
+    private static function identifier(string $value): string
+    {
+        if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', $value)) {
+            throw new \InvalidArgumentException('Unsafe database identifier.');
+        }
+
+        return $value;
     }
 }

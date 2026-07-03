@@ -13,6 +13,7 @@ use App\Models\Server;
 use App\Support\CronInput;
 use App\Support\DatabaseInput;
 use App\Support\FtpUserInput;
+use App\Support\FileBrowser;
 use App\Support\PhpRuntime;
 use App\Support\ServerInput;
 use Illuminate\Support\Facades\Artisan;
@@ -262,6 +263,20 @@ $router->group(['middleware' => 'auth'], function () use ($router) {
     $router->get('/servers/{id}/domains', function ($id) {
         $server = Server::find($id);
         return view('servers.domains', compact('server') + ['servers' => Server::all()]);
+    });
+
+    $router->get('/servers/{id}/files', function ($id) {
+        $server = Server::find($id);
+        try {
+            $path = FileBrowser::resolve($server, request()->query('path'));
+        } catch (InvalidArgumentException $exception) {
+            return redirect('/servers/' . $server->id)->with('error', $exception->getMessage());
+        }
+
+        $entries = FileBrowser::entries($path);
+        $relativePath = trim((string) request()->query('path'), '/');
+
+        return view('servers.files', compact('server', 'entries', 'relativePath') + ['servers' => Server::all()]);
     });
 
     $router->post('/servers/{id}/domains', function ($id) {

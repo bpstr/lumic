@@ -22,6 +22,7 @@
             'servers/'. $server->id .'/deploy' => 'Deployment',
             'servers/'. $server->id .'/cron' => 'Cron jobs',
             'servers/'. $server->id .'/domains' => 'Addon Domains',
+            'servers/'. $server->id .'/files' => 'Files',
         ];
         if ($server->template === 'laravel') {
             $tabs['servers/'. $server->id .'/artisan'] = 'Artisan UI';

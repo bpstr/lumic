@@ -9,7 +9,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="{{ get_url(path='/') }}" aria-label="Lumic home"><img src="{{ get_url(path='lumic.svg') }}" alt="Lumic"></a>
+    <a class="brand" href="{{ get_url(path='/') }}" aria-label="Lumic Control Center home"><img src="{{ get_url(path='lumic.svg') }}" alt="Lumic Control Center"></a>
     <nav>
       <a href="{{ get_url(path='@/docs/_index.md') }}">Docs</a>
       <a href="{{ get_url(path='@/docs/nightly.md') }}">Nightly</a>
@@ -18,7 +18,7 @@
   </header>
   {% block body %}{% endblock body %}
   <footer class="footer">
-    <span>Lumic · host-native Linux infrastructure</span>
+    <span>Lumic Control Center · host-native Linux infrastructure</span>
     <span><a href="{{ config.extra.github }}">bpstr/lumic</a></span>
   </footer>
 </body>

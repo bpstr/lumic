@@ -24,39 +24,53 @@ Lumic manages Linux directly. Containers are a supported workload and deployment
 
 These three steps define the product. Everything else is capability.
 
-### 1. Install Lumic
+### 1. Bootstrap Lumic
+
+The target v2 fresh-VPS experience starts on your workstation with only the IP address and the root password supplied by the VPS provider:
 
 ```bash
-ssh root@server 'curl -fsSL https://lumic.cc/install | sh'
+curl -fsSL https://lumic.cc/bootstrap | sh -s -- root@203.0.113.42
 ```
 
-A fresh VPS becomes a Lumic node. Lumic detects the host and provides the daemon, CLI, management UI and MCP endpoint.
+The bootstrap helper is ephemeral; Lumic does **not** need to be installed locally. It delegates the password prompt to the system OpenSSH client, installs Lumic remotely, provisions the node's trusted HTTPS identity and creates a short-lived one-time owner-enrollment grant over the already authenticated SSH channel.
+
+Lumic must never read, store, copy or automate the root password itself. It must never use `sshpass`, disable SSH host-key verification, bypass TLS verification or turn the bootstrap grant into a reusable API/MCP token. See [`docs/BOOTSTRAP_SECURITY.md`](docs/BOOTSTRAP_SECURITY.md).
+
+> **Pre-alpha note:** the secure local bootstrap/enrollment flow and trusted remote HTTP transport are the v2 contract and are being implemented. The repository currently includes the server-side installer used during development:
+>
+> ```bash
+> ssh root@server 'curl -fsSL https://lumic.cc/install | sh'
+> ```
 
 ### 2. Connect MCP
 
-The intended v2 flow is deliberately simple:
+The node's stable agent endpoint is intended to be:
 
-```bash
-lumic mcp setup
+```text
+https://203.0.113.42/mcp
 ```
 
-Lumic prints the endpoint and client configuration required by Codex, Claude or another MCP client. Once connected, the coding agent can inspect the node and call structured Lumic operations instead of being given unrestricted SSH access.
+No domain and no local Lumic binary are required. The bootstrap flow may register this URL with detected MCP clients and launch their supported authorization flow, but long-lived credentials belong to the MCP client's standard OAuth/token store rather than to the bootstrap shell.
 
-> **Pre-alpha note:** the MCP setup command and remote transport are part of the v2 public contract and are being implemented during the initial roadmap.
+A remote MCP endpoint is exposed only after trusted TLS and authentication are ready. If trusted HTTPS cannot be established, Lumic keeps remote MCP closed and may provide SSH/stdio as a fallback instead of weakening certificate verification.
+
+> **Pre-alpha note:** remote Streamable HTTP MCP, OAuth authorization and automatic client registration are part of the v2 public contract and are being implemented during the initial roadmap.
 
 ### 3. Open the UI
 
-```bash
-lumic ui
+The same node identity exposes the management UI:
+
+```text
+https://203.0.113.42/
 ```
 
-Lumic prints/opens the local management URL. The UI exposes the same server, application, service, deployment, event and diagnostic model as CLI and MCP.
+The UI exposes the same server, application, service, deployment, event and diagnostic model as CLI and MCP. Domains later pointed at the VPS belong to hosted applications; they do not replace the node's management identity.
 
 > **Pre-alpha note:** the Rust management UI is part of the v2 contract and follows the core/MCP foundation.
 
 That is Lumic:
 
-**Install when the VPS is created. Connect MCP for agent operation. Open the UI when you want to see or manage it yourself.**
+**Bootstrap once with the VPS credentials you already received. Afterwards manage the node through authenticated HTTPS, MCP and the UI without routine root-password setup.**
 
 ## The best part: give Codex the VPS
 
@@ -138,6 +152,7 @@ Examples include packages and PHP extensions, PostgreSQL extensions, Git hosting
 8. **Evidence over magic.** Diagnostics expose measurements and correlations; AI performs reasoning on top.
 9. **Nightly is a product channel.** Early Lumic improves every night while stable remains conservative.
 10. **Extensibility without core bloat.** Packages, components, managed services, application recipes and roles have progressively richer contracts.
+11. **Bootstrap without credential sprawl.** Initial SSH proves server control once; Lumic never stores the root password and remote clients receive revocable scoped credentials instead.
 
 ## Workspace
 
@@ -165,10 +180,11 @@ Read in this order before substantial work:
 
 1. [`docs/PRODUCT.md`](docs/PRODUCT.md)
 2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-3. [`docs/ROADMAP.md`](docs/ROADMAP.md)
-4. [`AGENTS.md`](AGENTS.md)
-5. [`docs/CODEX_KICKOFF.md`](docs/CODEX_KICKOFF.md)
-6. [`docs/CODEX_NIGHTLY.md`](docs/CODEX_NIGHTLY.md)
+3. [`docs/BOOTSTRAP_SECURITY.md`](docs/BOOTSTRAP_SECURITY.md)
+4. [`docs/ROADMAP.md`](docs/ROADMAP.md)
+5. [`AGENTS.md`](AGENTS.md)
+6. [`docs/CODEX_KICKOFF.md`](docs/CODEX_KICKOFF.md)
+7. [`docs/CODEX_NIGHTLY.md`](docs/CODEX_NIGHTLY.md)
 
 ## Versions
 

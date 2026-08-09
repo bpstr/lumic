@@ -4,33 +4,35 @@ description = "The host is Lumic's primary abstraction: OS, packages, services, 
 weight = 30
 [extra]
 kicker = "SERVER"
-status = "planned contract"
+status = "foundation implemented; broader management planned"
 +++
 
 A Lumic node models the real Linux machine rather than hiding it behind containers.
 
 ## Host facts
 
-Lumic should expose structured facts including distro/version, architecture, hostname, kernel, CPU, memory, disks, networking and installed/managed capabilities.
+Lumic currently exposes live distro/version, architecture, hostname, kernel, logical CPU count, memory/swap and root-filesystem capacity. A complete mount inventory, load, networking, processes, packages and services follow in Phase 1.
 
 These facts are shared by CLI, UI and MCP so an agent can inspect the machine before choosing an operation.
+
+Detection supports Debian 12/13 and Ubuntu 22.04/24.04 on x86_64 in the Phase 0 CI matrix. Distribution parsing and resource conversion also use host-independent fixtures, including an aarch64 parsing fixture; aarch64 is not a supported release target until an artifact is built and tested in CI.
 
 ## Native package management
 
 Lumic does not implement its own package manager. Debian/Ubuntu adapters invoke apt using validated executable arguments and policy.
 
-Public operations remain semantic:
+The nightly CLI implements these semantic operations:
 
 ```text
 package.search
 package.install
 package.remove
-package.upgrade
+package.update_index
 ```
 
 not arbitrary `apt-get` strings.
 
-Package policy can allow exact packages or constrained package families. The default MCP policy should be deny-by-default for dangerous operations.
+Package identifiers are validated as Debian names and the initial policy uses exact built-in entries. Unknown search results do not become trusted. Integrations may add reviewed exact packages to their policy instance. Mutations capture bounded native-tool output and emit local events; MCP package mutations remain disabled.
 
 ## Integration levels
 

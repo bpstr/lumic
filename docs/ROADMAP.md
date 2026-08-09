@@ -26,6 +26,8 @@ Do not stall the fast track to achieve broad ecosystem coverage.
 
 ## Phase 0 — Foundation
 
+Implemented: the foundation reports live distribution, node, kernel, CPU, memory/swap and root-filesystem facts and provides the shared core/platform contracts used by the CLI, daemon and MCP adapters.
+
 - Rust workspace and stable crate boundaries.
 - Host/OS detection.
 - Safe process execution boundary.
@@ -38,6 +40,8 @@ Do not stall the fast track to achieve broad ecosystem coverage.
 **Exit:** Lumic installs, starts, reports status, and has safe primitives suitable for real host operations.
 
 ## Phase 1 — Trusted host operations
+
+In progress: the safe process executor is now used by an apt adapter with exact package policy, package CLI operations, durable structured events, and mutation correlation metadata. systemd, broader host facts, audit before/after records, and diagnosis remain.
 
 - apt operations through typed policy-controlled capability.
 - systemd lifecycle operations.
@@ -63,6 +67,8 @@ Do not stall the fast track to achieve broad ecosystem coverage.
 **Exit:** Lumic can provision a normal web application stack on a clean VPS.
 
 ## Phase 3 — Deployment engine
+
+In progress: Lumic includes persistent application metadata, external Git mirror/fetch, isolated static/generic-PHP releases, entry-point validation, atomic symlink activation, retention, history, and manual rollback. HTTP health and service-aware activation remain.
 
 - immutable release directories.
 - build lifecycle.

@@ -4,10 +4,14 @@ description = "Applications own runtime, Git, environment, web routing, workers,
 weight = 40
 [extra]
 kicker = "APPLICATIONS"
-status = "planned contract"
+status = "persistent nightly foundation"
 +++
 
 In Lumic an application is more than an nginx site. It is the lifecycle boundary for deployable software.
+
+The nightly CLI currently persists application identity, domain, static/PHP runtime, Git repository and branch, health configuration/state, release retention, timestamps, and deployment history. It creates `releases/`, `shared/`, `repository/`, and an atomic `current` symlink under `/var/lib/lumic/apps/<name>`.
+
+Repository URLs must use HTTPS, SSH/Git scp syntax, or `file://`. HTTPS credentials embedded in URLs are rejected; metadata stores only an optional credential reference. Secret-store resolution and deploy-key injection are not implemented yet.
 
 An application can own:
 
@@ -32,7 +36,7 @@ The goal is simple: describe a stack such as Node + PostgreSQL + Redis + workers
 
 ## Runtimes
 
-Initial runtime targets are PHP, Node.js, Python, static applications and custom processes. Containerized applications are supported as another runtime/workload type, not the default.
+The implemented deployment types are static repositories with a root `index.html`, and generic PHP repositories with a root `index.php`. PHP runs production Composer install flags when `composer.json` exists. Runtime installation and PHP-FPM integration remain planned.
 
 ## Peripheral dependencies
 

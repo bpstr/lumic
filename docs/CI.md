@@ -11,10 +11,12 @@ CI is infrastructure product testing, not just Rust compilation.
 - static musl build used by image tests
 - installer smoke tests on Ubuntu 22.04, Ubuntu 24.04, Debian 12 and Debian 13
 - installer idempotency (install same binary twice)
-- `lumic version` and `lumic status` smoke checks
+- deterministic `lumic version` and structured `lumic status --json` smoke checks
 - Cargo dependency advisory audit
+- host-source fixture tests and process-runner behavior tests on the CI host
+- package identifier/policy regression tests, durable event-store tests, and a real local-Git static deploy/persistence/rollback integration test
 
-As host features grow, add privileged/VM/systemd tests instead of pretending Docker images model a complete VPS. Containers are acceptable for package-manager/OS-detection/install smoke coverage only.
+As host features grow, add privileged/VM/systemd tests instead of pretending Docker images model a complete VPS. Containers are acceptable for OS-detection/install/status smoke coverage only. Process timeout, bounded-output and argv behavior is covered by host-runner tests outside containers.
 
 ## Nightly channel
 

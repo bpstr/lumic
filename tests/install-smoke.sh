@@ -7,7 +7,14 @@ export LUMIC_INSTALL_DIR="/usr/local/bin"
 
 /install.sh
 lumic version
-lumic status
+STATUS_JSON="$(lumic status --json)"
+printf '%s\n' "$STATUS_JSON"
+printf '%s\n' "$STATUS_JSON" | grep -q '"operating_system": "linux"'
+printf '%s\n' "$STATUS_JSON" | grep -q '"distribution"'
+printf '%s\n' "$STATUS_JSON" | grep -q '"hostname"'
+printf '%s\n' "$STATUS_JSON" | grep -q '"cpu_count"'
+printf '%s\n' "$STATUS_JSON" | grep -q '"memory"'
+printf '%s\n' "$STATUS_JSON" | grep -q '"disks"'
 
 # Installer should be idempotent for the same binary.
 /install.sh

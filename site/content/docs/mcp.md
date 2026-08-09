@@ -4,7 +4,7 @@ description = "Structured infrastructure capabilities for Codex, Claude and othe
 weight = 70
 [extra]
 kicker = "AGENTS"
-status = "foundation"
+status = "read-only stdio foundation implemented"
 +++
 
 MCP is a first-class Lumic interface and the highest-leverage way to operate multiple nodes.
@@ -48,4 +48,12 @@ Mutating operations should carry actor/interface/correlation metadata into Lumic
 
 ## Current implementation
 
-The v2 repository already contains an MCP crate boundary. Phase 0 introduces the first read-only server status capability before broader mutations are exposed.
+Phase 0 provides an MCP server binary using the official Rust SDK over stdio:
+
+```bash
+cargo run -p lumic-mcp
+```
+
+It publishes `lumic://server/status` and three read-only tools: `inspect_server`, `application_list`, and `events_list`. They use the same host/application/event services as the CLI and do not mutate the host. The server advertises no shell or mutation tool.
+
+Remote HTTP transport, authentication, TLS, `lumic mcp setup`, policy identities and audit integration are not implemented yet. Do not expose this stdio process remotely through an unauthenticated bridge.

@@ -13,6 +13,8 @@ Lumic operates close to root privileges. Security is therefore an architecture b
 
 Lumic prefers direct executable invocation with separated argument arrays. Untrusted values must not be interpolated into `sh -c`.
 
+The Phase 0 internal process runner enforces a per-process timeout, consumes stdout/stderr without deadlocking, bounds retained output, reports truncation and captures exit code/signal metadata. It is not exposed through CLI or MCP.
+
 ## Capability policy
 
 Interfaces receive Lumic capabilities rather than a generic shell. Policy can allow or deny operations and constrain arguments such as package identifiers.

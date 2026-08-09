@@ -16,3 +16,6 @@ lumic-platform = { path = "../lumic-platform" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"

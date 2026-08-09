@@ -3,14 +3,23 @@ set -eu
 
 REPO="bpstr/lumic"
 CHANNEL="${LUMIC_CHANNEL:-stable}"
+VERSION="${LUMIC_VERSION:-}"
 INSTALL_DIR="${LUMIC_INSTALL_DIR:-/usr/local/bin}"
 LOCAL_BINARY="${LUMIC_INSTALL_BINARY:-}"
+CONFIG_DIR="${LUMIC_CONFIG_DIR:-/etc/lumic}"
+STATE_DIR="${LUMIC_STATE_DIR:-/var/lib/lumic}"
 
 fail() { printf 'lumic: %s\n' "$*" >&2; exit 1; }
 info() { printf 'lumic: %s\n' "$*"; }
 
 [ "$(id -u)" -eq 0 ] || fail "run installer as root (or with sudo)"
 [ -r /etc/os-release ] || fail "cannot detect Linux distribution: /etc/os-release missing"
+
+case "$INSTALL_DIR" in /*) ;; *) fail "LUMIC_INSTALL_DIR must be an absolute path" ;; esac
+case "$CONFIG_DIR" in /*) ;; *) fail "LUMIC_CONFIG_DIR must be an absolute path" ;; esac
+case "$STATE_DIR" in /*) ;; *) fail "LUMIC_STATE_DIR must be an absolute path" ;; esac
+case "$CHANNEL" in stable|nightly) ;; *) fail "unknown LUMIC_CHANNEL '$CHANNEL' (expected stable or nightly)" ;; esac
+case "$VERSION" in *[!0-9A-Za-z._-]*) fail "invalid LUMIC_VERSION '$VERSION'" ;; esac
 
 # shellcheck disable=SC1091
 . /etc/os-release
@@ -22,13 +31,14 @@ esac
 ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64|amd64) TARGET="x86_64-unknown-linux-musl" ;;
-  aarch64|arm64) TARGET="aarch64-unknown-linux-musl" ;;
-  *) fail "unsupported architecture '$ARCH'" ;;
+  *) fail "unsupported architecture '$ARCH' (Phase 0 release artifacts are x86_64 only)" ;;
 esac
 
-mkdir -p "$INSTALL_DIR"
+install -d -m 0755 "$INSTALL_DIR" "$CONFIG_DIR"
+install -d -m 0700 "$STATE_DIR"
+[ -w "$INSTALL_DIR" ] || fail "install directory is not writable: $INSTALL_DIR"
 DEST="$INSTALL_DIR/lumic"
-TMP="${TMPDIR:-/tmp}/lumic-install.$$"
+TMP="$(mktemp "$INSTALL_DIR/.lumic.XXXXXX")" || fail "cannot create temporary file in $INSTALL_DIR"
 trap 'rm -f "$TMP"' EXIT INT TERM
 
 if [ -n "$LOCAL_BINARY" ]; then
@@ -36,17 +46,33 @@ if [ -n "$LOCAL_BINARY" ]; then
   cp "$LOCAL_BINARY" "$TMP"
 else
   command -v curl >/dev/null 2>&1 || fail "curl is required for remote installation"
-  case "$CHANNEL" in
-    stable) URL="https://github.com/$REPO/releases/latest/download/lumic-$TARGET" ;;
-    nightly) URL="https://github.com/$REPO/releases/download/nightly/lumic-$TARGET" ;;
-    *) fail "unknown LUMIC_CHANNEL '$CHANNEL' (expected stable or nightly)" ;;
-  esac
-  info "downloading $CHANNEL build for $ID/$ARCH"
-  curl -fL --retry 3 "$URL" -o "$TMP" || fail "download failed; releases may not exist yet"
+  if [ "$CHANNEL" = "nightly" ]; then
+    [ -z "$VERSION" ] || fail "LUMIC_VERSION cannot be combined with the rolling nightly channel"
+    URL="https://github.com/$REPO/releases/download/nightly/lumic-$TARGET"
+  else
+    [ -n "$VERSION" ] || fail "stable releases are not published yet; use LUMIC_CHANNEL=nightly or LUMIC_INSTALL_BINARY for local CI"
+    URL="https://github.com/$REPO/releases/download/v$VERSION/lumic-$TARGET"
+  fi
+  info "downloading ${VERSION:-$CHANNEL} build for $ID/$ARCH"
+  curl -fL --retry 3 "$URL" -o "$TMP" || fail "download failed from $URL; verify the channel/version and network access"
 fi
 
 chmod 0755 "$TMP"
-"$TMP" version >/dev/null 2>&1 || fail "downloaded binary failed verification"
-install -m 0755 "$TMP" "$DEST"
-info "installed $($DEST version) to $DEST"
-info "server ready for Lumic bootstrap development"
+INSTALLED_VERSION="$($TMP version 2>/dev/null)" || fail "downloaded binary failed 'lumic version' verification"
+case "$INSTALLED_VERSION" in "lumic "*) ;; *) fail "binary returned an unexpected version string" ;; esac
+if [ -n "$VERSION" ] && [ "$INSTALLED_VERSION" != "lumic $VERSION" ]; then
+  fail "requested version $VERSION but binary reports '$INSTALLED_VERSION'"
+fi
+
+if [ -f "$DEST" ] && cmp -s "$TMP" "$DEST"; then
+  info "$INSTALLED_VERSION is already installed at $DEST"
+else
+  mv -f "$TMP" "$DEST"
+  chmod 0755 "$DEST"
+  info "installed $INSTALLED_VERSION to $DEST"
+fi
+
+info "prepared $CONFIG_DIR (configuration) and $STATE_DIR (private state)"
+if command -v systemctl >/dev/null 2>&1; then
+  info "systemd detected; daemon registration will be enabled when lumicd artifacts ship"
+fi

@@ -4,7 +4,7 @@ description = "Lumic actively observes server state, records events and can noti
 weight = 80
 [extra]
 kicker = "AUTOMATION"
-status = "planned contract"
+status = "local event trail implemented; automation planned"
 +++
 
 Lumic is an active participant on the server, not a command that only wakes when invoked.
@@ -25,6 +25,8 @@ healthcheck.recovered
 disk.threshold_exceeded
 repository.updated
 ```
+
+The nightly implementation appends structured JSON events to a mode-0600 local JSON-lines store for package, application, repository, deployment, rollback, and deletion mutations. `lumic events` shows concise output and `lumic events --json` returns the typed records. Actor, interface, entity, correlation ID, timestamp, and structured payload are retained. Generic webhook delivery is not implemented yet.
 
 ## Destinations
 

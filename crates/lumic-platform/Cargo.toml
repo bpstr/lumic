@@ -7,4 +7,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+libc = "0.2"
 lumic-core = { path = "../lumic-core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

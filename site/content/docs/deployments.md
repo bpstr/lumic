@@ -4,7 +4,7 @@ description = "Git-backed releases, health checks, activation and rollback with 
 weight = 60
 [extra]
 kicker = "APPLICATIONS"
-status = "planned contract"
+status = "static/PHP release foundation implemented"
 +++
 
 Zero-downtime deployment is a core Lumic capability, not an optional plugin.
@@ -38,3 +38,9 @@ Dangerous deployment operations should expose a plan that reports detected migra
 Lumic supports external Git providers such as GitHub/GitLab, generic Git remotes, locally hosted bare repositories, and eventually local mirrors/caches for multi-node deployment.
 
 Hosted repositories are first-class infrastructure rather than a hidden implementation detail.
+
+## Current nightly behavior
+
+`lumic app deploy` maintains a local bare mirror, resolves the configured branch to an exact commit, checks it out into a new release directory, validates the required entry point, and only then atomically replaces `current`. It never edits the active release. A failed pre-activation validation is recorded and the incomplete release is removed. `lumic app rollback` activates the prior retained successful release. Five releases are retained by default.
+
+This is not the complete production deployment promise yet. HTTP post-activation health, automatic rollback after an HTTP failure, shared-path linking, Nginx/FPM reload, structured build hooks, and service-aware activation are still planned.

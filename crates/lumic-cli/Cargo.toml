@@ -12,4 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+lumic-core = { path = "../lumic-core" }
 lumic-platform = { path = "../lumic-platform" }
+serde_json.workspace = true
+tokio.workspace = true

@@ -2,15 +2,15 @@
 {% block body %}
 <main>
   <section class="hero shell">
-    <div class="eyebrow">SERVER OPERATING LAYER · {{ config.extra.version | upper }}</div>
+    <div class="eyebrow">LUMIC CONTROL CENTER · {{ config.extra.version | upper }}</div>
     <h1>Your server.<br>Ready to rock.</h1>
-    <p class="lead">Install Lumic once, connect it to your coding agent through MCP, and open the UI whenever you want direct visibility and control.</p>
-    <div class="command"><span>$</span><code>ssh root@server 'curl -fsSL https://lumic.cc/install | sh'</code></div>
+    <p class="lead">Install Lumic Control Center once, connect it to your coding agent through MCP, and open the UI whenever you want direct visibility and control.</p>
+    <div class="command"><span>$</span><code>ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'</code></div>
     <div class="actions"><a class="button primary" href="{{ get_url(path='@/docs/installation.md') }}">Install Lumic</a><a class="button" href="{{ get_url(path='@/docs/_index.md') }}">Read the docs</a></div>
   </section>
 
   <section class="shell architecture-card">
-<pre>        Lumic
+<pre> Lumic Control Center
           │
    ┌──────┼──────┐
    │      │      │
@@ -22,7 +22,7 @@
   </section>
 
   <section class="shell grid">
-    <article><span class="index">01</span><h2>Install</h2><p>Turn a fresh Linux VPS into a Lumic node with one command. Lumic detects the host and establishes the daemon, CLI and management foundation.</p><div class="command compact"><span>$</span><code>ssh root@server 'curl -fsSL https://lumic.cc/install | sh'</code></div></article>
+    <article><span class="index">01</span><h2>Install</h2><p>Turn a fresh Linux VPS into a Lumic node with one command. Lumic detects the host and establishes the daemon, CLI and management foundation.</p><div class="command compact"><span>$</span><code>ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'</code></div></article>
     <article><span class="index">02</span><h2>Connect MCP</h2><p>Expose structured server capabilities to Codex, Claude or another MCP client instead of making unrestricted SSH the normal agent interface.</p><div class="command compact"><span>$</span><code>lumic mcp setup</code></div></article>
     <article><span class="index">03</span><h2>Open the UI</h2><p>Use the clean Rust management interface when you want direct visibility and control over the same state and operations available through MCP and CLI.</p><div class="command compact"><span>$</span><code>lumic ui</code></div></article>
   </section>

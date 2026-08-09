@@ -17,6 +17,7 @@ Build Lumic into a host-native Linux server operating layer for developers and o
 - Prefer additive architecture. New services, runtimes, recipes and integrations should implement contracts rather than require rewrites of core orchestration.
 - **Do not create a separate Lumic client binary.** The node's own CLI/UI/API/MCP surfaces are sufficient unless a concrete future requirement proves otherwise.
 - **Do not create a Lumic-specific AI skills package/repository.** Agent knowledge belongs in MCP schemas/descriptions, public docs, catalogs/recipes, inspection and suggestion capabilities.
+- **The fresh-VPS path must work from IP + root/password without Lumic installed locally.** Any local bootstrap helper is ephemeral and must delegate password handling to OpenSSH.
 
 Avoid architectural work whose main effect is adding another installation step, release lifecycle or source of duplicated operational knowledge.
 
@@ -58,6 +59,29 @@ Infrastructure code is destructive by nature. Every mutating capability must con
 10. tests on supported operating systems.
 
 Never interpolate untrusted strings into `sh -c`. Prefer direct process execution with separated arguments. Package operations must validate package identifiers and policy before invoking the OS package manager.
+
+## Bootstrap and remote-auth security
+
+Read [`docs/BOOTSTRAP_SECURITY.md`](docs/BOOTSTRAP_SECURITY.md) before changing installers, remote HTTP, MCP transport, authentication, first-owner setup, TLS or SSH-hardening behavior. Its requirements are normative.
+
+Hard rules:
+
+- Never read/store/forward the VPS root password in Lumic code.
+- Never add password CLI arguments, password environment variables, `sshpass`, `expect`, stdin password capture or password temp files.
+- Never use `StrictHostKeyChecking=no` or silently disable first-connection host verification. Optional explicit fingerprint pinning is allowed.
+- Never use `curl -k`, `--insecure`, disabled certificate verification or a self-signed public MCP certificate as the normal path.
+- A bootstrap grant must be CSPRNG-generated, at least 256 bits, single-use, <=120 seconds in the normal flow, purpose-bound and stored server-side only as a digest.
+- Bootstrap grants are enrollment credentials only. They must never be accepted by MCP/API as general bearer credentials.
+- Do not place bootstrap/access/refresh/session secrets in URLs, logs, audit payloads, process arguments or environment variables.
+- Consume bootstrap grants atomically before issuing the resulting owner/session credential; concurrent replay must not succeed twice.
+- Remote MCP must use trusted TLS and the current MCP authorization model. Do not invent a root-password or proprietary long-lived token login.
+- Do not reverse-engineer Codex/Claude private token stores. Register endpoints and invoke supported client authorization flows only.
+- Valid authentication never bypasses Lumic capability policy/approvals.
+- Keep privileged daemon/internal MCP listeners on loopback/Unix sockets behind the managed HTTPS edge.
+- If trusted public TLS cannot be provisioned, fail closed and use a secure SSH/stdio fallback rather than weakening verification.
+- Never disable existing SSH password access until a replacement path has been independently verified and rollback is available.
+
+Security tests for bootstrap/auth code must include replay, concurrent exchange, expiry, wrong-purpose grants, redaction, downgrade/certificate failures, OAuth state/redirect abuse, revocation/scope escalation and lockout prevention.
 
 ## Architecture rules
 

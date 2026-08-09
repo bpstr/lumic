@@ -37,7 +37,7 @@ Lumic has two release channels:
 The installer defaults to stable. During pre-release testing, use the nightly channel explicitly:
 
 ```bash
-curl -fsSL https://lumic.cc/install.sh | LUMIC_CHANNEL=nightly sudo -E sh
+curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_CHANNEL=nightly sh
 ```
 
 A node never silently changes channels.

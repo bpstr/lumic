@@ -1,86 +1,293 @@
-# Implementation roadmap
+# Lumic implementation roadmap
 
-The roadmap is ordered to protect the architecture: establish safe primitives and contracts first, then build vertical capabilities. Avoid broad placeholder APIs that have no tested implementation.
+Lumic development has two lanes:
 
-## Phase 0 — foundation (now)
+1. **Fast-track epics** — manually triggered, high-intensity Codex runs that build major product capabilities and move Lumic rapidly toward the complete product.
+2. **Nightly** — continuous hardening, test expansion, bug fixes, support breadth and additional integrations built on top of the established capabilities.
 
-- Rust workspace and crate boundaries.
-- Host/OS facts and detection contracts.
-- Operation result/error types.
+The fast track optimizes for a stable base and useful features, not speculative abstraction. Add architecture only where an actual capability needs a boundary.
+
+## Development rule
+
+A manual epic builds the **mechanism**. Nightly expands the **catalog**.
+
+Examples:
+
+- Manual epic: build the application recipe engine and one reference recipe.
+- Nightly: add Drupal, WordPress, Symfony and other recipes.
+- Manual epic: build managed-service lifecycle and one or two reference services.
+- Nightly: add more services using the same contract.
+- Manual epic: build framework-aware environment integration.
+- Nightly: add more framework/service combinations.
+
+Do not stall the fast track to achieve broad ecosystem coverage.
+
+---
+
+## Phase 0 — Foundation
+
+- Rust workspace and stable crate boundaries.
+- Host/OS detection.
+- Safe process execution boundary.
 - Capability/policy skeleton.
-- CLI `version` and `status` backed by core/platform, not hard-coded presentation logic.
-- Daemon lifecycle skeleton and clean shutdown.
-- MCP crate/interface skeleton with first read-only host status resource/tool.
-- Installer supporting fresh Debian/Ubuntu detection and local CI install mode.
-- Multi-image CI and nightly artifacts.
-- Documentation/agent contract.
+- CLI, daemon and MCP foundations.
+- Installer and update channels.
+- Multi-image CI.
+- Agent/development contracts.
 
-## Phase 1 — trusted host operations
+**Exit:** Lumic installs, starts, reports status, and has safe primitives suitable for real host operations.
 
-- Safe process executor with separated args, timeouts, output limits and audit metadata.
-- apt adapter: update/search/install/remove/version with allowlist policy.
-- systemd adapter: inspect/start/stop/restart/reload/enable/disable.
-- package/component catalog format.
-- host CPU/memory/disk/load/process/service inspection.
-- structured events and local audit store.
-- `lumic diagnose` v1.
+## Phase 1 — Trusted host operations
 
-## Phase 2 — runtimes and web applications
+- apt operations through typed policy-controlled capability.
+- systemd lifecycle operations.
+- package/component catalog.
+- CPU, memory, disk, load, process and service inspection.
+- filesystem/config atomic-write helpers.
+- structured events and audit storage.
+- initial `lumic diagnose`.
 
-- nginx managed service + config validation/reload.
-- PHP runtime + versioning + extension components.
-- Node runtime.
-- application domain/model and environment handling.
-- Git source + credentials model.
-- local bare Git repository hosting.
-- domains and TLS.
-- workers and scheduled jobs.
+**Exit:** Lumic can safely operate the Linux host without exposing arbitrary shell execution.
 
-## Phase 3 — deployments
+## Phase 2 — Applications and runtimes
 
-- release directory model and retention.
+- application model and persistent state.
+- PHP runtime and extension/component management.
+- Node runtime foundation.
+- nginx managed service.
+- domains and application environment handling.
+- Git source/credential model.
+- worker and scheduled-process model.
+- TLS lifecycle.
+
+**Exit:** Lumic can provision a normal web application stack on a clean VPS.
+
+## Phase 3 — Deployment engine
+
+- immutable release directories.
 - build lifecycle.
-- atomic PHP/static activation.
-- long-running process blue/green or start/health/switch/drain strategy.
-- health checks and automatic rollback.
-- deployment events/history.
-- GitHub/GitLab webhook adapters.
+- atomic activation.
+- long-running process activation/draining strategy.
+- health gates.
+- automatic rollback.
+- deployment history and events.
+- Git webhook trigger substrate.
 
-## Phase 4 — managed data/services
+**Exit:** a Git application can be deployed and rolled back without manually SSHing into the machine.
 
-- PostgreSQL.
-- MariaDB.
-- Redis/Valkey.
-- database/user/backup/restore primitives.
-- Typesense/Meilisearch and Agnative as managed services.
-- backup destinations and schedules.
+## Phase 4 — Managed services and data
 
-## Phase 5 — UI and operator experience
+Build the generic managed-service machinery first, then implement a minimal useful reference set.
+
+- managed service lifecycle contract.
+- service configuration/state/secrets.
+- database/user primitives.
+- backup/restore primitives.
+- Redis/Valkey-style cache service reference.
+- PostgreSQL reference.
+- generic service health/log/event integration.
+
+Nightly expands the catalog to MariaDB, Typesense, Meilisearch, Agnative, MinIO, RabbitMQ, NATS and others.
+
+**Exit:** services are first-class Lumic resources rather than ad-hoc packages.
+
+## Phase 5 — Operator UI
 
 - Rust UI shell and authentication.
-- server overview, applications, services, deployments, logs/events.
+- minimal black/white Lumic design system.
+- server overview.
+- applications.
+- services.
+- deployments.
+- logs/events.
 - progressive expert details.
-- notifications/webhook configuration.
 - policy/approval views.
 
-UI may begin earlier once core read models are stable, but must remain an adapter.
+The UI remains an adapter over the same application services used by CLI/MCP.
 
-## Phase 6 — recipes and infrastructure
+**Exit:** Lumic is pleasant to operate without a terminal while preserving expert transparency.
 
-- recipe catalog and signed/versioned distribution.
-- Laravel, Symfony, WordPress, Drupal, Forgejo/Gitea and other application recipes.
-- node roles (app/worker/cache/db/git/media/backup/edge).
-- environment export/import and clone/transform workflows.
-- explicit multi-node relationships/topology.
+## Phase 6 — Application recipes
 
-## Phase 7 — advanced operations
+Build the Installatron-like application provisioning substrate.
 
-- richer tracing/correlation reports.
-- deterministic remediation rules.
+- declarative recipe schema.
+- dependency/capability composition.
+- runtime/service/domain/TLS composition.
+- setup lifecycle and validation.
+- versioned/signed recipe distribution design.
+- one simple reference recipe proving the mechanism.
+
+Nightly owns breadth: Laravel, Symfony, Drupal, WordPress, Forgejo/Gitea, Ghost, Matomo, etc.
+
+**Exit:** new application installers can usually be added as data/recipe work rather than core Rust changes.
+
+## Phase 7 — Complete host operator
+
+Eliminate the remaining common reasons to SSH into the VPS.
+
+- users and permissions.
+- firewall and listening-port inspection.
+- storage/filesystem management.
+- timers/jobs.
+- package/security updates.
+- process inspection/control.
+- journal/system/application log search.
+- richer diagnostics.
+- deterministic remediation actions.
+- backup scheduling.
+
+**Exit:** normal operation and troubleshooting are possible through Lumic CLI/UI/MCP.
+
+## Phase 8 — Git and environment management
+
+- hosted bare Git repositories.
+- deploy keys and credentials.
+- repository mirrors/caches.
+- push-to-deploy substrate.
+- environment export/import.
+- environment cloning and transformation.
+- application configuration diffing.
+
+**Exit:** Lumic can host source when desired and reproduce/clone managed application environments.
+
+## Phase 9 — Multi-node foundation
+
+Keep this conventional and simple; do not build Kubernetes.
+
+- node identity and trust.
+- node discovery/registration.
+- explicit relationships between Lumic nodes.
+- node roles: app, worker, database, cache, Git, media, backup, edge.
+- infrastructure read model.
+- safe cross-node operation orchestration.
+
+**Exit:** multiple autonomous Lumic nodes can be reasoned about and operated as one explicit infrastructure topology.
+
+## Phase 10 — Environments and coordinated deployment
+
+- production/staging/development environment model.
+- clone/transform environment workflows.
+- coordinated multi-node application deployments.
+- load-balancer/reverse-proxy membership substrate.
+- worker-node addition/removal.
+- service endpoint propagation.
+- cross-node health verification and rollback boundaries.
+
+**Exit:** Codex can take two clean Lumic VPSs and construct separate environments without manual SSH configuration.
+
+## Phase 11 — Observability
+
+- durable time-series-ish operational snapshots appropriate for a lightweight node agent.
+- CPU/memory/disk/network/process/service history.
+- application and deployment health history.
+- nginx/runtime/database/cache signals through provider hooks.
+- OOM/kernel/system event ingestion.
+- correlated operational timeline.
+- `lumic diagnose` evidence reports.
+
+**Exit:** Lumic can explain what changed around an incident instead of showing only current metrics.
+
+## Phase 12 — Notifications and automation
+
+- event subscriptions.
+- generic signed outbound webhooks.
+- delivery retry/history.
+- notification destinations substrate.
+- deterministic rules: condition -> typed Lumic action -> verification -> notification.
+- escalation and cooldown protections.
+
+Nightly may add Slack, Discord, email and other destinations.
+
+**Exit:** Lumic actively participates in operating the server rather than waiting for commands.
+
+## Phase 13 — Advanced operational safety
+
+- plan/apply for material changes.
+- dependency impact previews.
+- richer audit correlation.
+- configuration rollback snapshots.
+- update safety and recovery.
+- backup verification.
 - security hardening profiles.
-- optional Hub/fleet layer.
-- container workload support and container-specific diagnostics where valuable.
+- policy scopes suitable for autonomous MCP agents.
 
-## Definition of done for any capability
+**Exit:** increasingly autonomous operation remains understandable and reversible.
 
-Implementation + tests + CLI/API/MCP mapping where relevant + policy + audit/events + documentation + supported-OS CI. No feature is “done” because a command happens to work once on the developer machine.
+## Phase 14 — Context & server intelligence
+
+Lumic learns what the application and server mean together.
+
+- framework/application fingerprinting.
+- environment/configuration discovery.
+- application <-> runtime <-> service dependency graph.
+- integration recipe substrate.
+- safe environment mutation with backup/diff/rollback.
+- post-integration verification.
+- dependency-impact reasoning.
+- incident aggregation and correlation.
+- structured incident context packages for LLM/webhook analysis.
+- AI-generated diagnosis/remediation proposals executed only through normal typed Lumic operations.
+
+Reference behavior should prove flows such as:
+
+`Laravel app + install Redis` -> discover the app -> discover `.env` -> provision service -> configure connection -> update relevant environment -> restart affected workers -> verify app/service connectivity -> record the changes.
+
+`Laravel app + install Typesense` should be achievable by the same generic mechanism once a Typesense integration definition exists; nightly can add the breadth of such definitions.
+
+**Exit:** Lumic understands relationships and can safely wire common infrastructure into applications instead of merely installing packages next to them.
+
+## Phase 15 — Personality
+
+A small, deliberately fun presentation layer over factual Lumic state.
+
+- optional per-node personality.
+- factual status summary model separated from presentation.
+- personality-aware CLI/UI conversational summaries.
+- MCP resource/tool for "how are you doing?" style status.
+- personalities such as professional, dry, grumpy, paranoid, cheerful and `idiot`.
+- event/recovery/deployment messages may use personality.
+- severity, evidence and recommended actions must never be hidden or altered by personality.
+
+Example:
+
+> Redis fell over at 03:14. I restarted it, checked connectivity, and everything recovered six seconds later. It has been warned.
+
+**Exit:** servers can feel alive and memorable without compromising operational truth.
+
+---
+
+# Fast-track target
+
+The manually triggered epic sequence is defined in `docs/CODEX_FAST_TRACK.md`.
+
+The goal is to reach Phase 15 quickly with:
+
+- narrow but real reference implementations;
+- stable reusable capability contracts;
+- excellent end-to-end behavior;
+- strong security boundaries;
+- CI coverage for every mechanism.
+
+Do **not** delay Phase 15 for broad integration support. Once the mechanism works, open backlog items and let nightly expand it.
+
+# Nightly after the fast track
+
+Nightly should primarily:
+
+- fix bugs/regressions/security findings;
+- strengthen tests and supported-OS behavior;
+- add runtime versions and components;
+- add managed service definitions;
+- add application recipes;
+- add framework/service intelligence integrations;
+- add notification destinations;
+- improve UX/docs;
+- improve performance and reliability;
+- respond to real VPS findings.
+
+Nightly should not casually invent a new core architecture or start a large roadmap epic when a manual fast-track epic is intentionally pending.
+
+# Definition of done for any capability
+
+Implementation + tests + CLI/API/MCP mapping where relevant + policy + audit/events + documentation + supported-OS CI. No feature is complete because a command worked once on one machine.

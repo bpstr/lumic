@@ -29,6 +29,9 @@ jobs:
       - run: tests/epic-a-smoke.sh
         env:
           LUMIC_TEST_BINARY: target/release/lumic
+      - run: tests/epic-b-smoke.sh
+        env:
+          LUMIC_TEST_BINARY: target/release/lumic
 
   audit:
     runs-on: ubuntu-latest
@@ -46,11 +49,13 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo build --locked -p lumic-cli --release --target x86_64-unknown-linux-musl
+      - run: cargo build --locked -p lumic-cli -p lumic-daemon --release --target x86_64-unknown-linux-musl
       - uses: actions/upload-artifact@v4
         with:
           name: lumic-x86_64-unknown-linux-musl
-          path: target/x86_64-unknown-linux-musl/release/lumic
+          path: |
+            target/x86_64-unknown-linux-musl/release/lumic
+            target/x86_64-unknown-linux-musl/release/lumicd
 
   install-images:
     needs: static-linux
@@ -69,12 +74,25 @@ jobs:
         with:
           name: lumic-x86_64-unknown-linux-musl
           path: dist
-      - run: chmod +x dist/lumic tests/install-smoke.sh install.sh
+      - run: chmod +x dist/lumic dist/lumicd tests/install-smoke.sh tests/epic-b-smoke.sh install.sh
       - name: Install and smoke test on ${{ matrix.image }}
         run: |
           docker run --rm \
             -v "$PWD/dist/lumic:/opt/lumic:ro" \
+            -v "$PWD/dist/lumicd:/opt/lumicd:ro" \
             -v "$PWD/install.sh:/install.sh:ro" \
             -v "$PWD/tests/install-smoke.sh:/test.sh:ro" \
             -e LUMIC_TEST_BINARY=/opt/lumic \
+            -e LUMIC_TEST_DAEMON_BINARY=/opt/lumicd \
             "${{ matrix.image }}" /test.sh
+
+  managed-services:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked -p lumic-cli --release
+      - run: sudo apt-get update
+      - name: PostgreSQL and Redis live lifecycle smoke test
+        run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_MANAGED_SERVICE_LIVE=1 "$PWD/tests/epic-b-smoke.sh"

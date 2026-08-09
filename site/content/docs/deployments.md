@@ -46,3 +46,5 @@ Hosted repositories are first-class infrastructure rather than a hidden implemen
 After activation, an enabled health check sends a local HTTP request with the application's `Host` header. An unacceptable response marks the deployment `failed_rolled_back` and atomically restores the previous release. `lumic app rollback` provides the same recovery explicitly. Five releases are retained by default, and deployment history records every phase and whether rollback was automatic.
 
 Generic PHP installs dependencies with Composer when `composer.json` exists; Node runs `npm ci` only when a supported lockfile exists. Arbitrary project build hooks, database migrations, shared-path declarations and zero-downtime Node handoff remain future work rather than hidden shell execution.
+
+The operator UI shows deployment history, source commit, per-phase results and final status. Deploy and rollback are session-authenticated, CSRF-protected confirmation actions that call this same deployment service; they do not bypass plans, health gates, events or audit behavior.

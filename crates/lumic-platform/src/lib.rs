@@ -10,7 +10,11 @@ use std::{
     process::Stdio,
     time::{Duration, Instant},
 };
-use tokio::{io::AsyncReadExt, process::Command, time::timeout};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+    time::timeout,
+};
 
 pub mod app_process;
 pub mod application;
@@ -19,7 +23,9 @@ pub mod atomic_file;
 pub mod audit_store;
 pub mod diagnostics;
 pub mod event_store;
+pub mod managed_service;
 pub mod runtime;
+pub mod secret_store;
 pub mod self_update;
 pub mod systemd;
 pub mod web;
@@ -274,6 +280,8 @@ pub struct ProcessSpec {
     pub stderr_limit: usize,
     pub current_dir: Option<std::path::PathBuf>,
     pub environment: BTreeMap<String, String>,
+    /// Bytes written directly to the child stdin. Callers must never log this field.
+    pub stdin: Option<Vec<u8>>,
 }
 
 impl ProcessSpec {
@@ -286,6 +294,7 @@ impl ProcessSpec {
             stderr_limit: 64 * 1024,
             current_dir: None,
             environment: BTreeMap::new(),
+            stdin: None,
         }
     }
 
@@ -301,6 +310,11 @@ impl ProcessSpec {
 
     pub fn environment(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.environment.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn stdin(mut self, bytes: impl Into<Vec<u8>>) -> Self {
+        self.stdin = Some(bytes.into());
         self
     }
 }
@@ -343,7 +357,11 @@ impl ProcessRunner {
             command.current_dir(current_dir);
         }
         let mut child = command
-            .stdin(Stdio::null())
+            .stdin(if spec.stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -352,6 +370,23 @@ impl ProcessRunner {
                 executable: spec.executable.clone(),
                 message: error.to_string(),
             })?;
+        if let Some(input) = &spec.stdin {
+            let mut stdin = child.stdin.take().expect("stdin was configured as piped");
+            stdin
+                .write_all(input)
+                .await
+                .map_err(|error| LumicError::Process {
+                    executable: spec.executable.clone(),
+                    message: format!("failed to write child input: {error}"),
+                })?;
+            stdin
+                .shutdown()
+                .await
+                .map_err(|error| LumicError::Process {
+                    executable: spec.executable.clone(),
+                    message: format!("failed to close child input: {error}"),
+                })?;
+        }
         let stdout = child.stdout.take().expect("stdout was configured as piped");
         let stderr = child.stderr.take().expect("stderr was configured as piped");
         let stdout_task = tokio::spawn(read_bounded(stdout, spec.stdout_limit));
@@ -532,6 +567,21 @@ mod tests {
         let output = ProcessRunner.run(&spec).await.unwrap();
         assert_eq!(output.stdout, b"1234");
         assert!(output.stdout_truncated);
+    }
+
+    #[tokio::test]
+    async fn process_runner_sends_sensitive_input_over_stdin_not_arguments() {
+        let spec = ProcessSpec::new("sh")
+            .args(["-c", "read value; printf '%s' \"$value\""])
+            .stdin(b"private-value\n".to_vec());
+        assert!(
+            !spec
+                .args
+                .iter()
+                .any(|argument| argument.contains("private-value"))
+        );
+        let output = ProcessRunner.run(&spec).await.unwrap();
+        assert_eq!(output.stdout, b"private-value");
     }
 
     #[tokio::test]

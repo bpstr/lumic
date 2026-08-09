@@ -29,12 +29,13 @@ Lumic exposes that individual node to Codex, Claude and other MCP clients throug
 ## 3. Open the UI
 
 ```bash
-lumic ui
+sudo lumic ui token rotate
+ssh -L 8080:127.0.0.1:8080 root@server
 ```
 
 Use the clean Rust management UI when you want visibility or direct control. CLI, UI and MCP must operate over the same capability model.
 
-> **Pre-alpha:** the management UI follows the core/MCP foundation and is not yet complete.
+Open `http://127.0.0.1:8080`. The installed `lumicd` serves the authenticated Rust UI on loopback; it exposes live applications, services, deployments, events/logs and confirmed safe actions.
 
 Those three actions define Lumic. The growing collection of server capabilities is deliberately secondary: packages, runtimes, PHP extensions, Git hosting, databases, Redis, TLS, deployments, workers, events, diagnostics, notifications, webhooks and multi-node infrastructure should increasingly feel like things Lumic simply already knows how to do.
 

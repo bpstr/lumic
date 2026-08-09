@@ -4,7 +4,7 @@ description = "The human console over the same typed capabilities used by UI and
 weight = 100
 [extra]
 kicker = "REFERENCE"
-status = "Epic A nightly"
+status = "Epic B nightly"
 +++
 
 The CLI should stay predictable and map to Lumic's domain model.
@@ -27,6 +27,25 @@ lumic app rollback <app>
 lumic app tls <app> --email admin@example.com
 lumic app inspect <app>
 lumic app delete <app>
+
+lumic managed-service list
+lumic managed-service detect postgresql|redis
+lumic managed-service inspect <service>
+lumic managed-service plan-install <service> postgresql|redis
+lumic managed-service install <service> postgresql|redis [--dry-run]
+lumic managed-service configure <service> [--bind 127.0.0.1] [--port <port>] [--setting key=value]
+lumic managed-service start|stop|restart <service>
+lumic managed-service update|remove <service> [--dry-run]
+lumic managed-service logs <service> [--lines 100]
+lumic managed-service declare-dependency <service> <dependency> --purpose <text>
+lumic managed-service database-create <service> <database> [--owner <user>]
+lumic managed-service user-create <service> <user>
+lumic managed-service grant <service> <database> <user>
+lumic managed-service backup <service> [--database <database>]
+lumic managed-service restore <service> <backup-id>
+lumic managed-service attach <service> <app> --role <role> [--database <database>] [--user <user>]
+
+lumic ui token rotate
 
 lumic package search <name>
 lumic package inspect <name>
@@ -73,3 +92,7 @@ SSH keys are copied into Lumic's mode-`0600` credential store and application me
 `lumic self-update apply` downloads the x86_64 nightly artifact and its SHA-256 file, verifies the checksum, runs the candidate's version preflight, preserves the previous executable, atomically replaces Lumic, and performs a post-install check with automatic restoration on failure. `enable-nightly` installs a persistent daily systemd timer. Nightly release publishing includes the checksum asset. AArch64 release artifacts are not published yet.
 
 Generic outbound webhooks and framework-specific recipes are later epics and are not part of this capability set.
+
+## Managed services and UI
+
+Managed-service commands return structured JSON and compose approved apt packages, systemd, atomic provider configuration and provider health checks. PostgreSQL adds database/user/grant and local dump/restore primitives; Redis adds local snapshot/restore. Generated database passwords are never printed—the CLI returns only a private secret reference. `ui token rotate` is the exception for an operator credential: it prints the newly generated token once and stores only its digest.

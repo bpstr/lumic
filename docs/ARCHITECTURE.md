@@ -21,8 +21,10 @@ The host-status service reads through a testable `HostDataSource`. The system ad
 
 Epic A adds small concrete adapters rather than a plugin framework: apt package/runtime catalogs, systemd lifecycle, atomic recoverable files, nginx/TLS, application processes, and checksum-verified self-update. `ApplicationService` composes these adapters into persistent application provisioning and deployment. The release mechanism is runtime-neutral; static and generic PHP repositories are its reference proofs, while Node is only a foundation.
 
+Epic B adds `ManagedServiceManager` as the shared orchestration boundary for persistent identity/desire, native detection/package/systemd state, provider configuration, health/log hooks, dependency metadata, database/user operations, local backup/restore and application references. A two-entry declarative definition selects PostgreSQL or Redis package/unit/data paths; provider-specific behavior remains ordinary Rust branches until a third implementation proves a trait/plugin boundary useful. Secret values live in a private store and native SQL receives them through stdin. Configuration writes record every affected file so failed validation restores overwritten files and removes newly created files.
+
 ### lumic-daemon
-Long-running node process. Owns lifecycle wiring, state, event dispatch, scheduled host observation and interface servers. Business behavior must remain in reusable services rather than handlers.
+Long-running node process. Owns lifecycle wiring, state, event dispatch, scheduled host observation and interface servers. The installed daemon currently serves the loopback-only operator UI and graceful shutdown. Business behavior remains in reusable services rather than handlers.
 
 ### lumic-cli
 Human interface. Commands translate arguments to the same capability/application operations exposed elsewhere. `--json` should become available for automation as commands mature.
@@ -32,8 +34,8 @@ Agent adapter. MCP exposes resources and typed tools rather than generic shell. 
 
 The MCP adapter uses the official Rust `rmcp` SDK and stdio transport. Read tools are available by default. Apply tools require process-level `LUMIC_MCP_ALLOW_MUTATIONS=1` and per-call `approved=true`; remote transport remains deferred until authentication and encryption are implemented.
 
-### UI/API
-Future crates/adapters. The UI is Rust-based and calls the same services. Do not place privileged host logic in browser-facing code.
+### lumic-ui / API
+The initial Axum UI is a server-rendered adapter over `ApplicationService`, `ManagedServiceManager`, host inspection and event storage. It owns authentication/session/CSRF and HTML presentation, but no privileged host implementation. It binds only to loopback, uses in-memory sessions and exposes confirmed restart/deploy/rollback actions. A general HTTP API and remote-auth model remain future interfaces.
 
 ## No companion client or skills layer
 

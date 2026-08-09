@@ -9,7 +9,9 @@ status = "Epic A nightly"
 
 In Lumic an application is more than an nginx site. It is the lifecycle boundary for deployable software.
 
-The nightly CLI persists application identity, domain, static/PHP/Node runtime, Git repository and branch, health configuration/state, worker/schedule definitions, nginx/TLS state, release retention, timestamps, and deployment history. It creates `releases/`, `shared/`, `repository/`, and an atomic `current` symlink under `/var/lib/lumic/apps/<name>`.
+The nightly CLI persists application identity, domain, static/PHP/Node runtime, Git repository and branch, health configuration/state, worker/schedule definitions, typed managed-service references, nginx/TLS state, release retention, timestamps, and deployment history. It creates `releases/`, `shared/`, `repository/`, and an atomic `current` symlink under `/var/lib/lumic/apps/<name>`.
+
+Managed PostgreSQL/Redis resources can be attached with a semantic role plus optional database/user. Application metadata keeps only the secret reference; it does not copy credential values. Environment-file discovery and automatic connection-variable wiring are intentionally reserved for the later application-integration epic.
 
 Repository URLs must use HTTPS, SSH/Git scp syntax, or `file://`. HTTPS credentials embedded in URLs are rejected; metadata stores only an optional credential reference. `app credential import` copies a validated private key into the private state directory with mode `0600`; Git receives the resolved key path through a scoped process environment and status/audit output remains redacted.
 

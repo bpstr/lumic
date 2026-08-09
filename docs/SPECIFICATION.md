@@ -76,7 +76,9 @@ Contract:
 - events;
 - uninstall/recovery rules.
 
-Initial direction: nginx, PostgreSQL, MariaDB, Redis/Valkey. Later: Typesense, Meilisearch, MinIO, queues and Agnative.
+Implemented reference direction: PostgreSQL and Redis use native Debian/Ubuntu packages, systemd, loopback-only validated configuration, provider health/log hooks, persistent state/events and local backup/restore. nginx remains an application/web adapter rather than being forced into the data-service model. MariaDB, Valkey, Typesense, Meilisearch, MinIO, queues and Agnative remain catalog breadth.
+
+Managed resources may declare typed dependencies on another managed resource. PostgreSQL implements validated database/user/grant primitives; generated passwords are private secret references and are passed to `psql` via stdin. Applications may store a typed service/database/user reference without copying secret values. Automatic environment wiring is a later integration contract.
 
 ## 5. Applications
 

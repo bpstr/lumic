@@ -66,6 +66,13 @@ application_create              application_configure_process
 application_set_repository      application_provision
 application_set_health_check    application_deploy
 application_rollback            application_enable_tls
+managed_service_list            managed_service_detect
+managed_service_inspect         managed_service_plan_install
+managed_service_install         managed_service_configure
+managed_service_apply           managed_service_declare_dependency
+managed_service_database_create managed_service_user_create
+managed_service_database_grant  managed_service_backup
+managed_service_restore         application_attach_managed_service
 events_list                     audit_list
 ```
 
@@ -80,6 +87,6 @@ For example:
 LUMIC_MCP_ALLOW_MUTATIONS=1 LUMIC_MCP_ACTOR=codex cargo run -p lumic-mcp
 ```
 
-Tool descriptions identify read-only versus mutating behavior. Apply operations use the same validated application, apt, systemd, nginx, TLS, health and rollback services as the CLI. Actor/interface/correlation data is written to `audit.jsonl`; Git credential values are neither accepted by the repository tool nor returned.
+Tool descriptions identify read-only versus mutating behavior. Apply operations use the same validated application, apt, systemd, PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Detection/list/inspect/plan are read-only. Service installation, lifecycle/configuration, dependencies, database/user/grant, backup/restore and application attachment require mutation policy plus `approved: true`. Actor/interface/correlation data is written to `audit.jsonl`; Git/database credential values are neither accepted by ordinary tools nor returned.
 
 Remote HTTP transport, authentication, TLS, `lumic mcp setup`, fine-grained identity scopes, self-update and credential import tools are not implemented yet. Do not expose this stdio process remotely through an unauthenticated bridge. Import credentials locally with the CLI, then pass only their reference to MCP. Application process commands are accepted only as an executable/argument array; shell command strings are not a supported escape hatch.

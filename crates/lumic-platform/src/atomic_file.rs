@@ -1,6 +1,9 @@
 use lumic_core::{LumicError, Result};
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::{
+    ffi::OsStrExt,
+    fs::{MetadataExt, OpenOptionsExt},
+};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -41,9 +44,14 @@ pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<AtomicWri
         .and_then(|name| name.to_str())
         .ok_or_else(|| io_error("path has no UTF-8 file name"))?;
     let temporary = parent.join(format!(".{name}.lumic-{}.tmp", std::process::id()));
+    let original_metadata = fs::metadata(path).ok();
     let backup = if path.is_file() {
         let backup = parent.join(format!(".{name}.lumic-backup"));
         fs::copy(path, &backup).map_err(|error| io_error(error.to_string()))?;
+        #[cfg(unix)]
+        if let Some(metadata) = &original_metadata {
+            preserve_owner(&backup, metadata)?;
+        }
         Some(backup)
     } else {
         None
@@ -61,6 +69,10 @@ pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<AtomicWri
         file.sync_all()
             .map_err(|error| io_error(error.to_string()))?;
         fs::rename(&temporary, path).map_err(|error| io_error(error.to_string()))?;
+        #[cfg(unix)]
+        if let Some(metadata) = &original_metadata {
+            preserve_owner(path, metadata)?;
+        }
         Ok(AtomicWriteResult {
             changed: true,
             backup,
@@ -70,6 +82,17 @@ pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<AtomicWri
         let _ = fs::remove_file(temporary);
     }
     result
+}
+
+#[cfg(unix)]
+fn preserve_owner(path: &Path, metadata: &fs::Metadata) -> Result<()> {
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io_error("configuration path contains a NUL byte"))?;
+    // SAFETY: `path` is a valid NUL-terminated filesystem path; uid/gid came from stat metadata.
+    if unsafe { libc::chown(path.as_ptr(), metadata.uid(), metadata.gid()) } != 0 {
+        return Err(io_error(std::io::Error::last_os_error().to_string()));
+    }
+    Ok(())
 }
 
 pub fn restore_backup(path: &Path, backup: &Path) -> Result<()> {

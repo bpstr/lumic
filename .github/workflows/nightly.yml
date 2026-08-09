@@ -25,22 +25,29 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace --all-features
-      - run: cargo build --locked -p lumic-cli --release --target x86_64-unknown-linux-musl
+      - run: cargo build --locked -p lumic-cli -p lumic-daemon --release --target x86_64-unknown-linux-musl
       - run: tests/epic-a-smoke.sh
+        env:
+          LUMIC_TEST_BINARY: target/x86_64-unknown-linux-musl/release/lumic
+      - run: tests/epic-b-smoke.sh
         env:
           LUMIC_TEST_BINARY: target/x86_64-unknown-linux-musl/release/lumic
       - run: |
           cp target/x86_64-unknown-linux-musl/release/lumic lumic-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/lumicd lumicd-x86_64-unknown-linux-musl
           sha256sum lumic-x86_64-unknown-linux-musl > lumic-x86_64-unknown-linux-musl.sha256
+          sha256sum lumicd-x86_64-unknown-linux-musl > lumicd-x86_64-unknown-linux-musl.sha256
       - name: Smoke installer images
         run: |
-          chmod +x lumic-x86_64-unknown-linux-musl tests/install-smoke.sh install.sh
+          chmod +x lumic-x86_64-unknown-linux-musl lumicd-x86_64-unknown-linux-musl tests/install-smoke.sh install.sh
           for image in ubuntu:22.04 ubuntu:24.04 debian:12 debian:13; do
             docker run --rm \
               -v "$PWD/lumic-x86_64-unknown-linux-musl:/opt/lumic:ro" \
+              -v "$PWD/lumicd-x86_64-unknown-linux-musl:/opt/lumicd:ro" \
               -v "$PWD/install.sh:/install.sh:ro" \
               -v "$PWD/tests/install-smoke.sh:/test.sh:ro" \
               -e LUMIC_TEST_BINARY=/opt/lumic \
+              -e LUMIC_TEST_DAEMON_BINARY=/opt/lumicd \
               "$image" /test.sh
           done
       - name: Publish rolling nightly prerelease
@@ -48,7 +55,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete nightly --cleanup-tag --yes || true
-          gh release create nightly lumic-x86_64-unknown-linux-musl lumic-x86_64-unknown-linux-musl.sha256 \
+          gh release create nightly lumic-x86_64-unknown-linux-musl lumic-x86_64-unknown-linux-musl.sha256 lumicd-x86_64-unknown-linux-musl lumicd-x86_64-unknown-linux-musl.sha256 \
             --prerelease \
             --title "Lumic Nightly $(date -u +%Y-%m-%d)" \
             --notes "Automated tested nightly build from main at $GITHUB_SHA."

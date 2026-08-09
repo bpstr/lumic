@@ -26,7 +26,7 @@ disk.threshold_exceeded
 repository.updated
 ```
 
-The nightly implementation appends structured JSON events to a mode-0600 local JSON-lines store for package, systemd, application, repository, runtime, process, TLS, deployment, rollback, self-update and deletion mutations. `lumic events` shows concise output and `lumic events --json` returns the typed records. Actor, interface, entity, correlation ID, timestamp, and structured payload are retained. Generic webhook delivery is not implemented yet.
+The nightly implementation appends structured JSON events to a mode-0600 local JSON-lines store for package, systemd, application, managed-service, database/user/grant, backup/restore, repository, runtime, process, TLS, deployment, rollback, self-update and deletion mutations. `lumic events` shows concise output, `lumic events --json` returns typed records, and the UI exposes the same history. Actor, interface, entity, correlation ID, timestamp, and structured payload are retained. Generic webhook delivery is not implemented yet.
 
 A separate private audit JSON-lines store records every attempted mutation, including failed native-tool operations, capability, operation, redacted arguments, before/after data and outcome. `lumic audit` and the read-only MCP `audit_list` tool expose newest-first records. Audit is durable local evidence, not an authorization mechanism by itself.
 

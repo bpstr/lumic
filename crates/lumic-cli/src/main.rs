@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use lumic_core::{
     Architecture, HostFacts, OperationContext, OperationInterface,
-    application::{ApplicationProcess, ApplicationProcessKind, ApplicationRuntime},
+    application::{
+        ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, ApplicationServiceReference,
+    },
+    managed_service::ManagedServiceKind,
     package::{PackageMutation, PackageName, PackageRecord},
 };
 use lumic_platform::{
@@ -10,10 +13,11 @@ use lumic_platform::{
     audit_store::AuditStore,
     diagnostics::diagnose_host,
     event_store::EventStore,
+    managed_service::ManagedServiceManager,
     self_update::SelfUpdateManager,
     systemd::{ServiceAction, SystemdServiceManager},
 };
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -46,6 +50,11 @@ enum Command {
         #[command(subcommand)]
         command: ServiceCommand,
     },
+    /// Manage native PostgreSQL and Redis resources through stable Lumic contracts.
+    ManagedService {
+        #[command(subcommand)]
+        command: ManagedServiceCommand,
+    },
     /// Search, inspect, install, or remove trusted native packages.
     Package {
         #[command(subcommand)]
@@ -77,6 +86,25 @@ enum Command {
         #[command(subcommand)]
         command: AppCommand,
     },
+    /// Configure the authenticated local operator UI.
+    Ui {
+        #[command(subcommand)]
+        command: UiCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum UiCommand {
+    Token {
+        #[command(subcommand)]
+        command: UiTokenCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum UiTokenCommand {
+    /// Create or rotate the admin token. The value is printed once; only its hash is stored.
+    Rotate,
 }
 
 #[derive(Subcommand)]
@@ -144,6 +172,134 @@ enum ServiceCommand {
     },
     Disable {
         unit: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ManagedServiceKindArg {
+    Postgresql,
+    Redis,
+}
+
+impl From<ManagedServiceKindArg> for ManagedServiceKind {
+    fn from(value: ManagedServiceKindArg) -> Self {
+        match value {
+            ManagedServiceKindArg::Postgresql => Self::Postgresql,
+            ManagedServiceKindArg::Redis => Self::Redis,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum ManagedServiceCommand {
+    List,
+    Detect {
+        #[arg(value_enum)]
+        kind: ManagedServiceKindArg,
+    },
+    Inspect {
+        service: String,
+    },
+    PlanInstall {
+        service: String,
+        #[arg(value_enum)]
+        kind: ManagedServiceKindArg,
+    },
+    Install {
+        service: String,
+        #[arg(value_enum)]
+        kind: ManagedServiceKindArg,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Configure {
+        service: String,
+        #[arg(long)]
+        bind: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long = "setting")]
+        settings: Vec<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Start {
+        service: String,
+    },
+    Stop {
+        service: String,
+    },
+    Restart {
+        service: String,
+    },
+    Update {
+        service: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Remove {
+        service: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Logs {
+        service: String,
+        #[arg(long, default_value_t = 100)]
+        lines: usize,
+    },
+    DeclareDependency {
+        service: String,
+        dependency: String,
+        #[arg(long)]
+        purpose: String,
+        #[arg(long, default_value_t = true)]
+        required: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    DatabaseCreate {
+        service: String,
+        database: String,
+        #[arg(long)]
+        owner: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    UserCreate {
+        service: String,
+        user: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Grant {
+        service: String,
+        database: String,
+        user: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Backup {
+        service: String,
+        #[arg(long)]
+        database: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Restore {
+        service: String,
+        backup: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Attach {
+        service: String,
+        app: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long)]
+        database: Option<String>,
+        #[arg(long)]
+        user: Option<String>,
     },
 }
 
@@ -324,6 +480,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::Service { command } => run_service(command).await?,
+        Command::ManagedService { command } => run_managed_service(command).await?,
         Command::Package { command } => run_package(command).await?,
         Command::Events { limit, json } => {
             let events = event_store().list(limit)?;
@@ -386,6 +543,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::App { command } => run_app(command).await?,
+        Command::Ui { command } => match command {
+            UiCommand::Token {
+                command: UiTokenCommand::Rotate,
+            } => {
+                let token =
+                    lumic_ui::UiCredentialStore::at_state_dir(state_directory()).rotate()?;
+                println!("Lumic UI admin token (shown once): {token}");
+            }
+        },
     }
     Ok(())
 }
@@ -602,6 +768,183 @@ async fn run_service(command: ServiceCommand) -> Result<(), Box<dyn std::error::
         }
     }
     Ok(())
+}
+
+async fn run_managed_service(
+    command: ManagedServiceCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let manager = ManagedServiceManager::at_state_dir(state_directory());
+    let value = match command {
+        ManagedServiceCommand::List => serde_json::to_value(manager.list()?)?,
+        ManagedServiceCommand::Detect { kind } => {
+            serde_json::to_value(manager.detect(kind.into()).await?)?
+        }
+        ManagedServiceCommand::Inspect { service } => {
+            serde_json::to_value(manager.inspect(&service).await?)?
+        }
+        ManagedServiceCommand::PlanInstall { service, kind } => {
+            serde_json::to_value(manager.plan_install(&service, kind.into())?)?
+        }
+        ManagedServiceCommand::Install {
+            service,
+            kind,
+            dry_run,
+        } => serde_json::to_value(
+            manager
+                .install(&service, kind.into(), &operation_context(dry_run))
+                .await?,
+        )?,
+        ManagedServiceCommand::Configure {
+            service,
+            bind,
+            port,
+            settings,
+            dry_run,
+        } => {
+            let mut configuration = manager.inspect(&service).await?.service.configuration;
+            if let Some(bind) = bind {
+                configuration.bind_address = bind;
+            }
+            if let Some(port) = port {
+                configuration.port = port;
+            }
+            configuration.settings = parse_settings(settings)?;
+            serde_json::to_value(
+                manager
+                    .configure(&service, configuration, &operation_context(dry_run))
+                    .await?,
+            )?
+        }
+        ManagedServiceCommand::Start { service } => serde_json::to_value(
+            manager
+                .lifecycle(&service, ServiceAction::Start, &operation_context(false))
+                .await?,
+        )?,
+        ManagedServiceCommand::Stop { service } => serde_json::to_value(
+            manager
+                .lifecycle(&service, ServiceAction::Stop, &operation_context(false))
+                .await?,
+        )?,
+        ManagedServiceCommand::Restart { service } => serde_json::to_value(
+            manager
+                .lifecycle(&service, ServiceAction::Restart, &operation_context(false))
+                .await?,
+        )?,
+        ManagedServiceCommand::Update { service, dry_run } => serde_json::to_value(
+            manager
+                .update(&service, &operation_context(dry_run))
+                .await?,
+        )?,
+        ManagedServiceCommand::Remove { service, dry_run } => serde_json::to_value(
+            manager
+                .remove(&service, false, &operation_context(dry_run))
+                .await?,
+        )?,
+        ManagedServiceCommand::Logs { service, lines } => {
+            serde_json::to_value(manager.logs(&service, lines).await?)?
+        }
+        ManagedServiceCommand::DeclareDependency {
+            service,
+            dependency,
+            purpose,
+            required,
+            dry_run,
+        } => serde_json::to_value(manager.declare_dependency(
+            &service,
+            &dependency,
+            &purpose,
+            required,
+            &operation_context(dry_run),
+        )?)?,
+        ManagedServiceCommand::DatabaseCreate {
+            service,
+            database,
+            owner,
+            dry_run,
+        } => serde_json::to_value(
+            manager
+                .create_database(
+                    &service,
+                    &database,
+                    owner.as_deref(),
+                    &operation_context(dry_run),
+                )
+                .await?,
+        )?,
+        ManagedServiceCommand::UserCreate {
+            service,
+            user,
+            dry_run,
+        } => serde_json::to_value(
+            manager
+                .create_database_user(&service, &user, &operation_context(dry_run))
+                .await?,
+        )?,
+        ManagedServiceCommand::Grant {
+            service,
+            database,
+            user,
+            dry_run,
+        } => serde_json::to_value(
+            manager
+                .grant_database(&service, &database, &user, &operation_context(dry_run))
+                .await?,
+        )?,
+        ManagedServiceCommand::Backup {
+            service,
+            database,
+            dry_run,
+        } => serde_json::to_value(
+            manager
+                .backup(&service, database.as_deref(), &operation_context(dry_run))
+                .await?,
+        )?,
+        ManagedServiceCommand::Restore {
+            service,
+            backup,
+            dry_run,
+        } => serde_json::to_value(
+            manager
+                .restore(&service, &backup, &operation_context(dry_run))
+                .await?,
+        )?,
+        ManagedServiceCommand::Attach {
+            service,
+            app,
+            role,
+            database,
+            user,
+        } => serde_json::to_value(manager.attach_to_application(
+            &application_service(),
+            &app,
+            ApplicationServiceReference {
+                service_id: service,
+                role,
+                database,
+                user,
+                secret_reference: None,
+            },
+            &operation_context(false),
+        )?)?,
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn parse_settings(values: Vec<String>) -> Result<BTreeMap<String, String>, lumic_core::LumicError> {
+    values
+        .into_iter()
+        .map(|value| {
+            let (key, value) =
+                value
+                    .split_once('=')
+                    .ok_or_else(|| lumic_core::LumicError::InvalidInput {
+                        field: "setting".into(),
+                        message: "settings must use key=value syntax".into(),
+                    })?;
+            Ok((key.to_owned(), value.to_owned()))
+        })
+        .collect()
 }
 
 fn render_json_or_app(

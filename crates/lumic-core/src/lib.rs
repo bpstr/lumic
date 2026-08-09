@@ -4,6 +4,7 @@ use thiserror::Error;
 
 pub mod application;
 pub mod events;
+pub mod managed_service;
 pub mod package;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +128,7 @@ pub enum OperationInterface {
     Cli,
     Daemon,
     Http,
+    Ui,
     Mcp,
     Internal,
 }

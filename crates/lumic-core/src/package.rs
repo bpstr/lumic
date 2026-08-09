@@ -73,6 +73,8 @@ impl PackagePolicy {
             "php-xml",
             "php-zip",
             "python3-certbot-nginx",
+            "postgresql",
+            "redis-server",
         ];
         Self {
             allowed: names

@@ -266,6 +266,7 @@ mod tests {
             runtime,
             repository: None,
             environment_references: BTreeMap::new(),
+            service_references: Vec::new(),
             health_check: HealthCheck::default(),
             processes: Vec::new(),
             web_configured: false,

@@ -27,6 +27,10 @@ Using apt through Lumic does not mean exposing arbitrary apt execution. A packag
 
 Mutating operations should consider preconditions, idempotency, plan/dry-run support, failure behavior, before/after state, rollback/recovery and audit metadata.
 
+Managed PostgreSQL credentials are generated from the operating system random source, stored below private Lumic state with mode `0600`, passed to native tools over stdin and represented externally only by opaque references. PostgreSQL/Redis reference configurations are loopback-only and allow only bounded provider settings. Failed configuration health checks restore the previous native file or remove a newly created file.
+
+The UI binds only to loopback. Its one-time admin token is stored as a digest, sessions are short-lived and in-memory, cookies are HttpOnly/SameSite=Strict, mutation forms are CSRF protected, and responses include restrictive browser headers. Remote UI access requires an operator-provided authenticated TLS reverse proxy or an SSH tunnel.
+
 ## Container boundaries
 
 Docker socket mounts and privileged host mounts are treated as host-level power. Containerized Lumic must never imply host control unless those privileges have been deliberately granted and surfaced to the operator.

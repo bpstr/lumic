@@ -5,6 +5,7 @@ members = [
   "crates/lumic-cli",
   "crates/lumic-daemon",
   "crates/lumic-mcp",
+  "crates/lumic-ui",
 ]
 resolver = "2"
 
@@ -17,11 +18,13 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 anyhow = "1"
+axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+sha2 = "0.10"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

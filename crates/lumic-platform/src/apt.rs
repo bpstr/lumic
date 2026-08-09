@@ -173,6 +173,58 @@ impl AptPackageManager {
         Ok(mutation)
     }
 
+    pub async fn upgrade(
+        &self,
+        package: &PackageName,
+        context: &OperationContext,
+    ) -> Result<PackageMutation> {
+        self.policy.authorize(package)?;
+        let installed = self.installed_version(package).await?;
+        if installed.is_none() {
+            return Err(LumicError::InvalidInput {
+                field: "package".into(),
+                message: "package must be installed before it can be upgraded".into(),
+            });
+        }
+        let record = self.inspect(package).await?;
+        if record.candidate_version == installed {
+            return Ok(PackageMutation {
+                package: package.clone(),
+                action: "upgrade".into(),
+                changed: false,
+                output: "already at candidate version".into(),
+            });
+        }
+        if context.dry_run {
+            return Ok(PackageMutation {
+                package: package.clone(),
+                action: "upgrade".into(),
+                changed: false,
+                output: "dry run: package would be upgraded".into(),
+            });
+        }
+        let mut spec = ProcessSpec::new("apt-get").args([
+            "install",
+            "--only-upgrade",
+            "--yes",
+            "--no-install-recommends",
+            "--",
+            package.as_str(),
+        ]);
+        spec.timeout = Duration::from_secs(600);
+        let output = self
+            .run_mutation(spec, package, "upgrade", context, installed)
+            .await?;
+        let mutation = PackageMutation {
+            package: package.clone(),
+            action: "upgrade".into(),
+            changed: true,
+            output: clean_output(&output),
+        };
+        self.emit("package.upgraded", &mutation, context)?;
+        Ok(mutation)
+    }
+
     async fn installed_version(&self, package: &PackageName) -> Result<Option<String>> {
         let spec = ProcessSpec::new("dpkg-query").args([
             "--show",

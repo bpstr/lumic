@@ -10,9 +10,10 @@ use crate::{
 use lumic_core::{
     Capability, Change, LumicError, OperationContext, Plan, Result, Risk, RiskLevel,
     application::{
-        Application, ApplicationProcess, ApplicationRuntime, Deployment, DeploymentPhase,
-        DeploymentPhaseStatus, DeploymentStatus, RepositoryConfig, TlsState, unix_time_ms,
-        validate_branch, validate_command, validate_domain, validate_repository_url, validate_slug,
+        Application, ApplicationProcess, ApplicationRuntime, ApplicationServiceReference,
+        Deployment, DeploymentPhase, DeploymentPhaseStatus, DeploymentStatus, RepositoryConfig,
+        TlsState, unix_time_ms, validate_branch, validate_command, validate_domain,
+        validate_repository_url, validate_slug,
     },
     events::{AuditRecord, Event},
 };
@@ -161,6 +162,7 @@ impl ApplicationService {
             runtime,
             repository: None,
             environment_references: Default::default(),
+            service_references: Vec::new(),
             health_check: Default::default(),
             processes: Vec::new(),
             web_configured: false,
@@ -1018,6 +1020,61 @@ impl ApplicationService {
                 message: stderr.trim().to_owned(),
             })
         }
+    }
+
+    pub fn attach_service(
+        &self,
+        id: &str,
+        reference: ApplicationServiceReference,
+        context: &OperationContext,
+    ) -> Result<Application> {
+        validate_slug("application", id)?;
+        lumic_core::managed_service::validate_resource_id("service", &reference.service_id)?;
+        if reference.role.is_empty()
+            || reference.role.len() > 64
+            || !reference
+                .role
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(LumicError::InvalidInput {
+                field: "role".into(),
+                message: "must be a lowercase role containing letters, digits, or underscores"
+                    .into(),
+            });
+        }
+        let service_id = reference.service_id.clone();
+        let role = reference.role.clone();
+        let application = self.update_application(id, |application| {
+            if let Some(existing) = application
+                .service_references
+                .iter_mut()
+                .find(|item| item.role == role)
+            {
+                *existing = reference.clone();
+            } else {
+                application.service_references.push(reference.clone());
+            }
+        })?;
+        self.emit(
+            "application.service_attached",
+            id,
+            context,
+            json!({"service_id": service_id, "role": role}),
+        )?;
+        self.audit.append(&AuditRecord::now(
+            context,
+            "application.service.attach",
+            "attach",
+            "application",
+            id,
+            json!({"service_id": service_id, "role": role}),
+            None,
+            Some(json!({"attached": true})),
+            true,
+            "managed service attached to application",
+        ))?;
+        Ok(application)
     }
 
     fn update_application(

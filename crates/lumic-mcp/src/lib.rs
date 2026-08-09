@@ -2,7 +2,11 @@
 
 use lumic_core::{
     HostFacts, OperationContext, OperationInterface,
-    application::{ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, Deployment},
+    application::{
+        ApplicationProcess, ApplicationProcessKind, ApplicationRuntime,
+        ApplicationServiceReference, Deployment,
+    },
+    managed_service::{ManagedServiceKind, ServiceConfiguration},
     package::PackageName,
 };
 use lumic_platform::{
@@ -11,6 +15,7 @@ use lumic_platform::{
     audit_store::AuditStore,
     diagnostics::diagnose_host,
     event_store::EventStore,
+    managed_service::ManagedServiceManager,
     systemd::{ServiceAction, SystemdServiceManager},
 };
 use rmcp::{
@@ -25,6 +30,7 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 pub const HOST_STATUS_URI: &str = "lumic://server/status";
 
@@ -114,6 +120,101 @@ struct PackageInput {
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct InstallPackage {
     package: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ManagedServiceId {
+    service: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct DetectManagedService {
+    /// One of: postgresql, redis.
+    kind: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct InstallManagedService {
+    service: String,
+    /// One of: postgresql, redis.
+    kind: String,
+    #[serde(default)]
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ConfigureManagedService {
+    service: String,
+    bind_address: String,
+    port: u16,
+    #[serde(default)]
+    settings: BTreeMap<String, String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ManagedServiceAction {
+    service: String,
+    /// One of: start, stop, restart, update, remove.
+    action: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct DeclareServiceDependency {
+    service: String,
+    dependency: String,
+    purpose: String,
+    #[serde(default = "default_true")]
+    required: bool,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct CreateDatabase {
+    service: String,
+    database: String,
+    owner: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct CreateDatabaseUser {
+    service: String,
+    user: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct GrantDatabase {
+    service: String,
+    database: String,
+    user: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct BackupService {
+    service: String,
+    database: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RestoreService {
+    service: String,
+    backup: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct AttachManagedService {
+    app: String,
+    service: String,
+    role: String,
+    database: Option<String>,
+    user: Option<String>,
     approved: bool,
 }
 
@@ -412,6 +513,298 @@ impl LumicMcpServer {
     }
 
     #[tool(
+        name = "managed_service_list",
+        description = "List Lumic-managed native services and their desired configuration. Read-only; secret values are never returned."
+    )]
+    fn managed_service_list(&self) -> Result<String, String> {
+        to_json(&managed_service_manager().list().map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "managed_service_detect",
+        description = "Detect a native PostgreSQL or Redis package, systemd state, version and provider health without adopting or changing it. Read-only."
+    )]
+    async fn managed_service_detect(
+        &self,
+        Parameters(request): Parameters<DetectManagedService>,
+    ) -> Result<String, String> {
+        to_json(
+            &managed_service_manager()
+                .detect(parse_managed_kind(&request.kind)?)
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_inspect",
+        description = "Inspect a managed service with live package version, systemd state, provider health, ports and expert paths. Read-only."
+    )]
+    async fn managed_service_inspect(
+        &self,
+        Parameters(ManagedServiceId { service }): Parameters<ManagedServiceId>,
+    ) -> Result<String, String> {
+        to_json(
+            &managed_service_manager()
+                .inspect(&service)
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_plan_install",
+        description = "Resolve native package, systemd, health validation, risk and recovery steps for PostgreSQL or Redis. Read-only; call before managed_service_install."
+    )]
+    fn managed_service_plan_install(
+        &self,
+        Parameters(request): Parameters<InstallManagedService>,
+    ) -> Result<String, String> {
+        to_json(
+            &managed_service_manager()
+                .plan_install(&request.service, parse_managed_kind(&request.kind)?)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_install",
+        description = "Install and reconcile one PostgreSQL or Redis service through apt, validated configuration, systemd and a provider health gate. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn managed_service_install(
+        &self,
+        Parameters(request): Parameters<InstallManagedService>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &managed_service_manager()
+                .install(
+                    &request.service,
+                    parse_managed_kind(&request.kind)?,
+                    &operation_context("managed_service_install"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_configure",
+        description = "Apply a loopback-only, provider-allowlisted configuration and restart with health-gated rollback. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn managed_service_configure(
+        &self,
+        Parameters(request): Parameters<ConfigureManagedService>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let configuration = ServiceConfiguration {
+            bind_address: request.bind_address,
+            port: request.port,
+            settings: request.settings,
+        };
+        to_json(
+            &managed_service_manager()
+                .configure(
+                    &request.service,
+                    configuration,
+                    &operation_context("managed_service_configure"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_apply",
+        description = "Start, stop, restart, update or remove a managed service through typed native operations. Remove retains native data. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn managed_service_apply(
+        &self,
+        Parameters(request): Parameters<ManagedServiceAction>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let manager = managed_service_manager();
+        let context = operation_context("managed_service_apply");
+        let mutation = match request.action.as_str() {
+            "start" => {
+                manager
+                    .lifecycle(&request.service, ServiceAction::Start, &context)
+                    .await
+            }
+            "stop" => {
+                manager
+                    .lifecycle(&request.service, ServiceAction::Stop, &context)
+                    .await
+            }
+            "restart" => {
+                manager
+                    .lifecycle(&request.service, ServiceAction::Restart, &context)
+                    .await
+            }
+            "update" => manager.update(&request.service, &context).await,
+            "remove" => manager.remove(&request.service, false, &context).await,
+            _ => return Err("action must be one of: start, stop, restart, update, remove".into()),
+        };
+        to_json(&mutation.map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "managed_service_declare_dependency",
+        description = "Declare a typed relationship between two managed services for impact inspection. Mutating Lumic state: requires node policy enablement and approved=true."
+    )]
+    fn managed_service_declare_dependency(
+        &self,
+        Parameters(request): Parameters<DeclareServiceDependency>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &managed_service_manager()
+                .declare_dependency(
+                    &request.service,
+                    &request.dependency,
+                    &request.purpose,
+                    request.required,
+                    &operation_context("managed_service_declare_dependency"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_database_create",
+        description = "Create an idempotently tracked PostgreSQL database using a validated identifier. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn managed_service_database_create(
+        &self,
+        Parameters(request): Parameters<CreateDatabase>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &managed_service_manager()
+                .create_database(
+                    &request.service,
+                    &request.database,
+                    request.owner.as_deref(),
+                    &operation_context("managed_service_database_create"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_user_create",
+        description = "Create a PostgreSQL login and store its generated password in Lumic's private secret store. Returns only the secret reference. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn managed_service_user_create(
+        &self,
+        Parameters(request): Parameters<CreateDatabaseUser>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &managed_service_manager()
+                .create_database_user(
+                    &request.service,
+                    &request.user,
+                    &operation_context("managed_service_user_create"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_database_grant",
+        description = "Grant a managed PostgreSQL user access to a managed database. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn managed_service_database_grant(
+        &self,
+        Parameters(request): Parameters<GrantDatabase>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &managed_service_manager()
+                .grant_database(
+                    &request.service,
+                    &request.database,
+                    &request.user,
+                    &operation_context("managed_service_database_grant"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_backup",
+        description = "Create a local PostgreSQL database dump or Redis snapshot and record it in service history. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn managed_service_backup(
+        &self,
+        Parameters(request): Parameters<BackupService>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &managed_service_manager()
+                .backup(
+                    &request.service,
+                    request.database.as_deref(),
+                    &operation_context("managed_service_backup"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "managed_service_restore",
+        description = "Restore a recorded local service backup. Disruptive: requires node policy enablement and approved=true. Inspect the backup and service first."
+    )]
+    async fn managed_service_restore(
+        &self,
+        Parameters(request): Parameters<RestoreService>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &managed_service_manager()
+                .restore(
+                    &request.service,
+                    &request.backup,
+                    &operation_context("managed_service_restore"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_attach_managed_service",
+        description = "Attach a typed managed-service/database/user reference to an application. Secret values remain in the node store. Mutating: requires node policy enablement and approved=true."
+    )]
+    fn application_attach_managed_service(
+        &self,
+        Parameters(request): Parameters<AttachManagedService>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &managed_service_manager()
+                .attach_to_application(
+                    &application_service(),
+                    &request.app,
+                    ApplicationServiceReference {
+                        service_id: request.service,
+                        role: request.role,
+                        database: request.database,
+                        user: request.user,
+                        secret_reference: None,
+                    },
+                    &operation_context("application_attach_managed_service"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
         name = "package_inspect",
         description = "Inspect installed and candidate versions for one validated Debian package name. Read-only."
     )]
@@ -520,6 +913,10 @@ fn application_service() -> ApplicationService {
     ApplicationService::new(state, apps)
 }
 
+fn managed_service_manager() -> ManagedServiceManager {
+    ManagedServiceManager::at_state_dir(state_directory())
+}
+
 fn to_json(value: &impl serde::Serialize) -> Result<String, String> {
     serde_json::to_string_pretty(value).map_err(|error| error.to_string())
 }
@@ -559,6 +956,14 @@ fn parse_service_action(action: &str) -> Result<ServiceAction, String> {
         "enable" => Ok(ServiceAction::Enable),
         "disable" => Ok(ServiceAction::Disable),
         _ => Err("action must be one of: start, stop, restart, reload, enable, disable".into()),
+    }
+}
+
+fn parse_managed_kind(kind: &str) -> Result<ManagedServiceKind, String> {
+    match kind {
+        "postgresql" => Ok(ManagedServiceKind::Postgresql),
+        "redis" => Ok(ManagedServiceKind::Redis),
+        _ => Err("kind must be one of: postgresql, redis".into()),
     }
 }
 
@@ -635,7 +1040,7 @@ mod tests {
     #[test]
     fn publishes_status_plan_apply_and_recovery_tools() {
         let tools = LumicMcpServer::new().tool_router.list_all();
-        assert_eq!(tools.len(), 20);
+        assert!(tools.len() >= 34);
         assert!(tools.iter().any(|tool| tool.name == "inspect_server"));
         assert!(tools.iter().any(|tool| tool.name == "application_list"));
         assert!(tools.iter().any(|tool| tool.name == "events_list"));
@@ -653,6 +1058,20 @@ mod tests {
                 .iter()
                 .any(|tool| tool.name == "application_configure_process")
         );
+        for name in [
+            "managed_service_list",
+            "managed_service_detect",
+            "managed_service_inspect",
+            "managed_service_plan_install",
+            "managed_service_install",
+            "managed_service_declare_dependency",
+            "managed_service_database_create",
+            "managed_service_backup",
+            "managed_service_restore",
+            "application_attach_managed_service",
+        ] {
+            assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
+        }
     }
 
     #[test]

@@ -85,7 +85,7 @@ Epic A release mechanism implemented: external Git mirror/fetch, isolated releas
 
 ## Phase 4 — Managed services and data
 
-Build the generic managed-service machinery first, then implement a minimal useful reference set.
+Epic B mechanism implemented: managed identity/configuration/secrets/dependencies, read-only native detection, plan/install/update/remove/lifecycle, health/log hooks, events/audits, PostgreSQL database/user/grant primitives, PostgreSQL/Redis local backup/restore and typed application references. PostgreSQL and Redis are the deliberately minimal reference set.
 
 - managed service lifecycle contract.
 - service configuration/state/secrets.
@@ -100,6 +100,8 @@ Nightly expands the catalog to MariaDB, Typesense, Meilisearch, Agnative, MinIO,
 **Exit:** services are first-class Lumic resources rather than ad-hoc packages.
 
 ## Phase 5 — Operator UI
+
+Epic B initial UI implemented as a loopback-only server-rendered Rust adapter with hashed admin-token authentication, in-memory sessions, CSRF-protected confirmations, security headers and shared-service actions.
 
 - Rust UI shell and authentication.
 - minimal black/white Lumic design system.

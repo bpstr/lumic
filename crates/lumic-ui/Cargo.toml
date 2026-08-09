@@ -1,19 +1,18 @@
 [package]
-name = "lumic-cli"
+name = "lumic-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "lumic"
-path = "src/main.rs"
-
 [dependencies]
-clap.workspace = true
+axum.workspace = true
 lumic-core = { path = "../lumic-core" }
 lumic-platform = { path = "../lumic-platform" }
-lumic-ui = { path = "../lumic-ui" }
-serde_json.workspace = true
+serde.workspace = true
+sha2.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

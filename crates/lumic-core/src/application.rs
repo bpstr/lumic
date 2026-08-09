@@ -2,6 +2,15 @@ use crate::{LumicError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationServiceReference {
+    pub service_id: String,
+    pub role: String,
+    pub database: Option<String>,
+    pub user: Option<String>,
+    pub secret_reference: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationRuntime {
@@ -78,6 +87,8 @@ pub struct Application {
     pub runtime: ApplicationRuntime,
     pub repository: Option<RepositoryConfig>,
     pub environment_references: BTreeMap<String, String>,
+    #[serde(default)]
+    pub service_references: Vec<ApplicationServiceReference>,
     pub health_check: HealthCheck,
     #[serde(default)]
     pub processes: Vec<ApplicationProcess>,

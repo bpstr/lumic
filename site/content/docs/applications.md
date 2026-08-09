@@ -9,7 +9,7 @@ status = "application lifecycle and intelligence implemented"
 
 In Lumic an application is more than an nginx site. It is the lifecycle boundary for deployable software.
 
-The nightly CLI persists application identity, domain, static/PHP/Node runtime, Git repository and branch, health configuration/state, worker/schedule definitions, typed managed-service references, nginx/TLS state, release retention, timestamps, and deployment history. It creates `releases/`, `shared/`, `repository/`, and an atomic `current` symlink under `/var/lib/lumic/apps/<name>`.
+The Lumic CLI persists application identity, domain, static/PHP/Node runtime, Git repository and branch, health configuration/state, worker/schedule definitions, typed managed-service references, nginx/TLS state, release retention, timestamps, and deployment history. It creates `releases/`, `shared/`, `repository/`, and an atomic `current` symlink under `/var/lib/lumic/apps/<name>`.
 
 Managed PostgreSQL/Redis resources can be attached with a semantic role plus optional database/user. Application metadata keeps only the secret reference; it does not copy credential values. Portable environment bundles clone this typed application definition between nodes with an explicit target tier, domain and secret/service-reference transforms. Application intelligence now discovers deployed Laravel/dotenv evidence and safely wires the single reference Redis integration; broader framework/service combinations remain nightly catalog work.
 
@@ -42,7 +42,7 @@ The goal is simple: describe a stack such as Node + PostgreSQL + Redis + workers
 
 ## Runtimes
 
-The reference deployment types are static repositories with a root `index.html`, and generic PHP repositories with a root `index.php`. PHP runs production Composer install flags when `composer.json` exists. Lumic installs nginx/PHP-FPM/PHP CLI/Composer through its apt policy, discovers the versioned PHP-FPM socket, writes a validated nginx configuration, and reloads the service. The Node foundation installs Node/nginx, runs `npm ci --omit=dev` when a lockfile is present, requires `package.json`, and proxies nginx to port 3000; richer Node process configuration is deliberately deferred.
+The reference deployment types are static repositories with a root `index.html`, and generic PHP repositories with a root `index.php`. PHP runs production Composer install flags when `composer.json` exists. Lumic installs nginx/PHP-FPM/PHP CLI/Composer through its apt policy, discovers the versioned PHP-FPM socket, writes and validates nginx configuration, enables nginx, and either starts an inactive service or reloads an active one. The Node foundation installs Node/nginx, runs `npm ci --omit=dev` when a lockfile is present, requires `package.json`, and proxies nginx to port 3000; richer Node process configuration is deliberately deferred.
 
 ## Peripheral dependencies
 
@@ -52,7 +52,7 @@ Runtime components are first-class. The current deliberately small PHP catalog i
 
 Each deployment records source, checkout, build, pre-activation, activation and health phases. Activation is an atomic symlink replacement. When an enabled local HTTP health check does not return the configured successful status range, Lumic immediately restores the previous release, records `failed_rolled_back`, emits deployment events and retains the evidence in the audit trail. Manual rollback uses the same activation primitive.
 
-nginx files use atomic sibling writes and retain a `.lumic-backup`. Lumic validates before reload and restores the previous file/link if validation or reload fails. Workers run as systemd services with restart-on-failure; schedules use persistent systemd timers.
+nginx files use atomic sibling writes and retain a `.lumic-backup`. Lumic restores the previous file/link if validation or service activation fails. Workers run as systemd services with restart-on-failure; schedules use persistent systemd timers.
 
 ## Application recipes
 

@@ -1,20 +1,20 @@
 +++
 title = "First VPS"
-description = "Install a nightly node, verify it, open the local UI and run the first attention check."
+description = "Install a stable node, verify it, open the local UI and run the first attention check."
 weight = 11
 [extra]
 kicker = "GUIDE"
-status = "nightly x86_64 Debian/Ubuntu"
+status = "stable 1.0 x86_64 Debian/Ubuntu"
 +++
 
 Start with a fresh x86_64 Debian 12/13 or Ubuntu 22.04/24.04 VPS. Lumic needs root for installation and host mutations; status commands can run without mutation approval.
 
 ## Install and verify
 
-There is no stable release yet, so select the nightly channel explicitly:
+The installer selects the stable channel by default:
 
 ```bash
-ssh root@server 'curl -fsSL https://lumic.cc/install | LUMIC_CHANNEL=nightly sh'
+ssh root@server 'curl -fsSL https://lumic.cc/install | sh'
 ssh root@server 'lumic version && lumic status && lumic how-are-you'
 ```
 

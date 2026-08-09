@@ -12,7 +12,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    process::Command,
+    process::{Child, Command},
     time::timeout,
 };
 
@@ -370,6 +370,8 @@ impl ProcessRunner {
         let mut command = Command::new(&spec.executable);
         command.args(&spec.args);
         command.envs(&spec.environment);
+        #[cfg(unix)]
+        command.process_group(0);
         if let Some(current_dir) = &spec.current_dir {
             command.current_dir(current_dir);
         }
@@ -418,10 +420,7 @@ impl ProcessRunner {
                 false,
             ),
             Err(_) => {
-                child.kill().await.map_err(|error| LumicError::Process {
-                    executable: spec.executable.clone(),
-                    message: format!("failed to terminate timed-out process: {error}"),
-                })?;
+                terminate_timed_out_process(&mut child, &spec.executable).await?;
                 let status = child.wait().await.map_err(|error| LumicError::Process {
                     executable: spec.executable.clone(),
                     message: format!("failed to reap timed-out process: {error}"),
@@ -449,6 +448,34 @@ impl ProcessRunner {
             stderr_truncated,
             timed_out,
             duration: started.elapsed(),
+        })
+    }
+}
+
+async fn terminate_timed_out_process(child: &mut Child, executable: &str) -> Result<()> {
+    #[cfg(unix)]
+    {
+        if let Some(pid) = child.id() {
+            // The child starts a fresh process group, so a negative PID terminates the
+            // command and every descendant that could still hold its output pipes open.
+            let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(LumicError::Process {
+                        executable: executable.into(),
+                        message: format!("failed to terminate timed-out process group: {error}"),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        child.kill().await.map_err(|error| LumicError::Process {
+            executable: executable.into(),
+            message: format!("failed to terminate timed-out process: {error}"),
         })
     }
 }

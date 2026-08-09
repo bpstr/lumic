@@ -9,7 +9,7 @@ status = "Epics A-G implemented"
 
 The CLI should stay predictable and map to Lumic's domain model.
 
-Implemented nightly commands include:
+Implemented commands include:
 
 ```text
 lumic app list

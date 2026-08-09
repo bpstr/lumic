@@ -21,7 +21,7 @@ Detection supports Debian 12/13 and Ubuntu 22.04/24.04 on x86_64 in the Phase 0 
 
 Lumic does not implement its own package manager. Debian/Ubuntu adapters invoke apt using validated executable arguments and policy.
 
-The nightly CLI implements these semantic operations:
+The Lumic CLI implements these semantic operations:
 
 ```text
 package.search

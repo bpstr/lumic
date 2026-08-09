@@ -87,24 +87,59 @@ impl NginxManager {
             return Err(error);
         }
         let services = SystemdServiceManager::at_state_dir(&self.state_dir);
-        if let Err(error) = services
-            .apply("nginx.service", ServiceAction::Reload, context)
+        let status = match services.inspect("nginx.service").await {
+            Ok(status) => status,
+            Err(error) => {
+                self.restore_configuration(&path, &enabled, enabled_created, &write)?;
+                return Err(error);
+            }
+        };
+        let enabled_by_lumic = !status.enabled;
+        let enable_changed = if enabled_by_lumic {
+            match services
+                .apply("nginx.service", ServiceAction::Enable, context)
+                .await
+            {
+                Ok(mutation) => mutation.changed,
+                Err(error) => {
+                    self.restore_configuration(&path, &enabled, enabled_created, &write)?;
+                    return Err(error);
+                }
+            }
+        } else {
+            false
+        };
+        let service_action = if status.active_state == "active" {
+            ServiceAction::Reload
+        } else {
+            ServiceAction::Start
+        };
+        let service_mutation = match services
+            .apply("nginx.service", service_action, context)
             .await
         {
-            self.restore_configuration(&path, &enabled, enabled_created, &write)?;
-            if self.validate().await.is_ok() {
-                let _ = services
-                    .apply("nginx.service", ServiceAction::Reload, context)
-                    .await;
+            Ok(mutation) => mutation,
+            Err(error) => {
+                self.restore_configuration(&path, &enabled, enabled_created, &write)?;
+                if enabled_by_lumic {
+                    let _ = services
+                        .apply("nginx.service", ServiceAction::Disable, context)
+                        .await;
+                }
+                if service_action == ServiceAction::Reload && self.validate().await.is_ok() {
+                    let _ = services
+                        .apply("nginx.service", ServiceAction::Reload, context)
+                        .await;
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
+        };
         Ok(WebConfigurationResult {
             application_id: application.id.clone(),
             configuration_path: path.to_string_lossy().into(),
-            changed: write.changed,
+            changed: write.changed || enable_changed || service_mutation.changed,
             validated: true,
-            reloaded: true,
+            reloaded: service_action == ServiceAction::Reload,
             backup_path: write.backup.map(|path| path.to_string_lossy().into()),
         })
     }

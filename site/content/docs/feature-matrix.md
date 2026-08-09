@@ -1,15 +1,15 @@
 +++
 title = "Feature matrix"
-description = "What the nightly actually implements and what remains deliberate expansion work."
+description = "What Lumic 1.0 implements and what remains deliberate expansion work."
 weight = 95
 [extra]
 kicker = "STATUS"
-status = "Epics A-G"
+status = "Lumic 1.0"
 +++
 
-| Area | Implemented nightly | Nightly expansion / not implemented |
+| Area | Implemented in 1.0 | Planned expansion / not implemented |
 |---|---|---|
-| Hosts | x86_64 Debian 12/13, Ubuntu 22.04/24.04; clean-image install smoke | aarch64 artifacts, other distributions, stable channel |
+| Hosts | x86_64 Debian 12/13, Ubuntu 22.04/24.04; clean-image install smoke | aarch64 artifacts, other distributions |
 | Install/update | stable/nightly channels; checksum-verified atomic install and self-update; backup and postflight restore | automated external real-VPS lifecycle gate |
 | Host operations | typed apt/systemd, accounts, UFW, filesystems, processes, timers, updates, logs, backups, remediation | broad provider/remediation catalog; generic shell is intentionally absent |
 | Applications | static/PHP release proof, Node foundation, nginx, TLS, health-gated deploy and rollback | arbitrary build hooks, database migrations, blue/green Node handoff |

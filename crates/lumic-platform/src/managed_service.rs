@@ -315,7 +315,7 @@ impl ManagedServiceManager {
             service,
             action: "install".into(),
             changed,
-            message,
+            message: format!("healthy: {message}"),
         })
     }
 
@@ -353,7 +353,7 @@ impl ManagedServiceManager {
                     message: format!("service failed post-{action:?} health validation: {message}"),
                 });
             }
-            message
+            format!("healthy: {message}")
         };
         if !context.dry_run {
             service.desired_state = if action == ServiceAction::Stop {
@@ -580,7 +580,7 @@ impl ManagedServiceManager {
             service,
             action: "configure".into(),
             changed: true,
-            message,
+            message: format!("healthy: {message}"),
         })
     }
 

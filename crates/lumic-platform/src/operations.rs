@@ -4,6 +4,7 @@ use crate::{
     atomic_file::write_atomic,
     audit_store::AuditStore,
     event_store::EventStore,
+    hex_encode, jsonl_store,
     managed_service::ManagedServiceManager,
     secret_store::SecretStore,
     systemd::{ServiceAction, SystemdServiceManager},
@@ -20,12 +21,10 @@ use lumic_core::{
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -300,7 +299,6 @@ impl OperationsService {
                     .until_unix_ms
                     .is_none_or(|value| signal.timestamp_unix_ms <= value)
         });
-        signals.reverse();
         signals.truncate(query.limit.clamp(1, MAX_TIMELINE_READ));
         Ok(signals)
     }
@@ -915,17 +913,7 @@ impl OperationsService {
     }
 
     fn append_timeline(&self, signal: &OperationalSignal) -> Result<()> {
-        if let Some(parent) = self.timeline_path.parent() {
-            fs::create_dir_all(parent).map_err(io_error)?;
-        }
-        let mut options = OpenOptions::new();
-        options.create(true).append(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut file = options.open(&self.timeline_path).map_err(io_error)?;
-        serde_json::to_writer(&mut file, signal).map_err(json_error)?;
-        file.write_all(b"\n").map_err(io_error)?;
-        file.sync_data().map_err(io_error)
+        jsonl_store::append(&self.timeline_path, signal, "operations timeline")
     }
 
     fn record_configuration(
@@ -952,18 +940,11 @@ impl OperationsService {
     }
 
     fn read_timeline(&self) -> Result<Vec<OperationalSignal>> {
-        if !self.timeline_path.exists() {
-            return Ok(Vec::new());
-        }
-        BufReader::new(
-            OpenOptions::new()
-                .read(true)
-                .open(&self.timeline_path)
-                .map_err(io_error)?,
+        jsonl_store::latest(
+            &self.timeline_path,
+            MAX_TIMELINE_READ,
+            "operations timeline",
         )
-        .lines()
-        .map(|line| serde_json::from_str(&line.map_err(io_error)?).map_err(json_error))
-        .collect()
     }
 }
 
@@ -1121,17 +1102,7 @@ fn hmac_sha256_hex(secret: &[u8], data: &[u8]) -> String {
     let mut outer = Sha256::new();
     outer.update(outer_pad);
     outer.update(inner);
-    hex(&outer.finalize())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
+    hex_encode(&outer.finalize())
 }
 
 fn unique_id(prefix: &str) -> String {

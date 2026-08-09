@@ -23,7 +23,7 @@ The token is shown once. Lumic persists only its SHA-256 digest in private state
 ssh -L 8080:127.0.0.1:8080 root@server
 ```
 
-Sessions are in-memory, HttpOnly, SameSite=Strict and expire after eight hours; daemon restart invalidates them. Mutating POSTs require a session-bound CSRF token. Responses carry a restrictive content-security policy, no-sniff, no-referrer and no-store headers.
+Sessions are in-memory, HttpOnly, SameSite=Strict and expire after eight hours. The session set is bounded, and daemon restart or admin-token rotation invalidates existing sessions. Mutating POSTs require a session-bound CSRF token. Responses carry a restrictive content-security policy, no-sniff, no-referrer and no-store headers.
 
 `lumicd` refuses a non-loopback `LUMIC_UI_BIND`. For remote/shared access, keep Lumic on loopback and place an authenticated TLS reverse proxy in front of it; direct unauthenticated exposure is unsupported.
 
@@ -48,4 +48,4 @@ Safe actions call the existing shared services and therefore retain their valida
 
 The attention card uses the same `AttentionService` as `lumic how-are-you` and MCP. A selected personality changes its phrasing, but the card always includes the complete factual summary and never suppresses a warning.
 
-The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure and application-intelligence mutations remain in CLI/MCP for now; the UI shows the deterministic fingerprint evidence and dependency graph without adding a second orchestration path. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, mobile polish and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.
+The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure and application-intelligence mutations remain in CLI/MCP for now; the UI shows the deterministic fingerprint evidence and dependency graph without adding a second orchestration path. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, login throttling, mobile polish and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.

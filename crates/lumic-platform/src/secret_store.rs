@@ -1,4 +1,4 @@
-use crate::atomic_file::write_atomic;
+use crate::{atomic_file::write_atomic, hex_encode};
 use lumic_core::{LumicError, Result, managed_service::validate_resource_id};
 use std::{
     fs,
@@ -29,7 +29,7 @@ impl SecretStore {
         let mut random = [0_u8; 32];
         let mut source = fs::File::open("/dev/urandom").map_err(secret_io)?;
         std::io::Read::read_exact(&mut source, &mut random).map_err(secret_io)?;
-        let value = hex(&random).into_bytes();
+        let value = hex_encode(&random).into_bytes();
         write_atomic(&path, &value, 0o600)?;
         Ok(reference.to_owned())
     }
@@ -74,16 +74,6 @@ impl SecretStore {
         validate_resource_id("secret_reference", reference)?;
         Ok(self.directory.join(reference))
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 fn secret_io(error: std::io::Error) -> LumicError {

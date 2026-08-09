@@ -1,6 +1,6 @@
 use crate::{
     ProcessRunner, ProcessSpec, application::ApplicationService, atomic_file::write_atomic,
-    audit_store::AuditStore, event_store::EventStore, secret_store::SecretStore,
+    audit_store::AuditStore, event_store::EventStore, hex_encode, secret_store::SecretStore,
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use lumic_core::{
@@ -1367,16 +1367,6 @@ fn runtime_name(runtime: lumic_core::application::ApplicationRuntime) -> &'stati
 
 fn fingerprint(bytes: &[u8]) -> String {
     format!("sha256:{}", hex_encode(&Sha256::digest(bytes)))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 fn decode_fixed<const N: usize>(value: &str, field: &str) -> Result<[u8; N]> {

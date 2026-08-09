@@ -26,6 +26,7 @@ pub mod diagnostics;
 pub mod event_store;
 pub mod infrastructure;
 pub mod intelligence;
+mod jsonl_store;
 pub mod managed_service;
 pub mod operations;
 pub mod recipe;
@@ -35,6 +36,16 @@ pub mod self_update;
 pub mod server;
 pub mod systemd;
 pub mod web;
+
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(DIGITS[(byte >> 4) as usize] as char);
+        output.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
 
 pub trait HostDataSource {
     fn os_release(&self) -> Result<String>;

@@ -28,6 +28,7 @@ use std::{
 };
 
 const SESSION_SECONDS: u64 = 8 * 60 * 60;
+const MAX_SESSIONS: usize = 1_024;
 const STYLE: &str = "body{margin:0;background:#f5f5f5;color:#111;font:15px system-ui,sans-serif}header{background:#111;color:#fff;padding:18px 4vw;display:flex;gap:28px;align-items:center}header a{color:#ddd;text-decoration:none}header strong{color:#fff;font-size:20px}main{max-width:1100px;margin:32px auto;padding:0 22px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.card,table,form.panel{background:#fff;border:1px solid #ccc;border-radius:5px;padding:20px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px;border-bottom:1px solid #ddd}th{color:#555;font-size:12px;text-transform:uppercase}.muted{color:#666}.ok{color:#176b2c}.bad{color:#9b1c1c}.mono,pre{font-family:ui-monospace,monospace}pre{white-space:pre-wrap;background:#111;color:#eee;padding:16px;overflow:auto}a{color:#111}button{background:#111;color:#fff;border:0;border-radius:3px;padding:10px 15px;cursor:pointer}input{padding:10px;border:1px solid #999;width:min(420px,90%)}.actions{display:flex;gap:12px;flex-wrap:wrap}.actions a{border:1px solid #333;padding:9px 13px;text-decoration:none;border-radius:3px}dt{font-weight:600;margin-top:12px}dd{margin:3px 0}.flash{border-left:4px solid #111;padding:12px;background:#fff}";
 
 #[derive(Debug, Clone)]
@@ -49,15 +50,23 @@ impl UiCredentialStore {
         Ok(token)
     }
 
-    fn verify(&self, token: &str) -> Result<bool> {
+    fn verified_revision(&self, token: &str) -> Result<Option<String>> {
+        let Some(expected) = self.revision()? else {
+            return Ok(None);
+        };
+        if constant_time_eq(expected.as_bytes(), digest(token.as_bytes()).as_bytes()) {
+            Ok(Some(expected))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn revision(&self) -> Result<Option<String>> {
         if !self.path.is_file() || self.path.is_symlink() {
-            return Ok(false);
+            return Ok(None);
         }
         let expected = fs::read_to_string(&self.path).map_err(ui_io)?;
-        Ok(constant_time_eq(
-            expected.trim().as_bytes(),
-            digest(token.as_bytes()).as_bytes(),
-        ))
+        Ok(Some(expected.trim().to_owned()))
     }
 
     pub fn configured(&self) -> bool {
@@ -69,6 +78,7 @@ impl UiCredentialStore {
 struct SessionRecord {
     csrf: String,
     expires_unix: u64,
+    credential_revision: String,
 }
 
 #[derive(Debug, Clone)]
@@ -197,12 +207,15 @@ struct LoginForm {
 }
 
 async fn login(State(state): State<UiState>, Form(form): Form<LoginForm>) -> Response {
-    let verified = UiCredentialStore::at_state_dir(&state.state_dir)
-        .verify(&form.token)
-        .unwrap_or(false);
-    if !verified {
-        return (StatusCode::UNAUTHORIZED, page("Sign in failed", "<h1>Sign in failed</h1><p>The token was not accepted.</p><p><a href=/login>Try again</a></p>", false)).into_response();
-    }
+    let credential_revision = match UiCredentialStore::at_state_dir(&state.state_dir)
+        .verified_revision(&form.token)
+    {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            return (StatusCode::UNAUTHORIZED, page("Sign in failed", "<h1>Sign in failed</h1><p>The token was not accepted.</p><p><a href=/login>Try again</a></p>", false)).into_response();
+        }
+        Err(error) => return error_response(error),
+    };
     let session = match random_token() {
         Ok(value) => value,
         Err(error) => return error_response(error),
@@ -211,17 +224,29 @@ async fn login(State(state): State<UiState>, Form(form): Form<LoginForm>) -> Res
         Ok(value) => value,
         Err(error) => return error_response(error),
     };
-    state
-        .sessions
-        .lock()
-        .expect("session lock poisoned")
-        .insert(
-            session.clone(),
-            SessionRecord {
-                csrf,
-                expires_unix: unix_seconds() + SESSION_SECONDS,
-            },
-        );
+    let mut sessions = match state.sessions.lock() {
+        Ok(value) => value,
+        Err(_) => return error_response(session_error()),
+    };
+    let now = unix_seconds();
+    sessions.retain(|_, record| record.expires_unix >= now);
+    if sessions.len() >= MAX_SESSIONS
+        && let Some(oldest) = sessions
+            .iter()
+            .min_by_key(|(_, record)| record.expires_unix)
+            .map(|(id, _)| id.clone())
+    {
+        sessions.remove(&oldest);
+    }
+    sessions.insert(
+        session.clone(),
+        SessionRecord {
+            csrf,
+            expires_unix: now + SESSION_SECONDS,
+            credential_revision,
+        },
+    );
+    drop(sessions);
     let cookie = format!(
         "lumic_session={session}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_SECONDS}"
     );
@@ -229,12 +254,10 @@ async fn login(State(state): State<UiState>, Form(form): Form<LoginForm>) -> Res
 }
 
 async fn logout(State(state): State<UiState>, headers: HeaderMap) -> Response {
-    if let Some(id) = session_cookie(&headers) {
-        state
-            .sessions
-            .lock()
-            .expect("session lock poisoned")
-            .remove(&id);
+    if let Some(id) = session_cookie(&headers)
+        && let Ok(mut sessions) = state.sessions.lock()
+    {
+        sessions.remove(&id);
     }
     (
         [(
@@ -804,8 +827,16 @@ fn confirm(state: &UiState, headers: &HeaderMap, title: &str, message: &str) -> 
 fn auth(state: &UiState, headers: &HeaderMap) -> Option<SessionRecord> {
     let id = session_cookie(headers)?;
     let mut sessions = state.sessions.lock().ok()?;
+    let now = unix_seconds();
+    sessions.retain(|_, record| record.expires_unix >= now);
     let session = sessions.get(&id)?.clone();
-    if session.expires_unix < unix_seconds() {
+    let current_revision = UiCredentialStore::at_state_dir(&state.state_dir)
+        .revision()
+        .ok()
+        .flatten();
+    if !current_revision.is_some_and(|revision| {
+        constant_time_eq(revision.as_bytes(), session.credential_revision.as_bytes())
+    }) {
         sessions.remove(&id);
         None
     } else {
@@ -953,6 +984,12 @@ fn ui_io(error: std::io::Error) -> LumicError {
     }
 }
 
+fn session_error() -> LumicError {
+    LumicError::Internal {
+        message: "operator UI session store is unavailable".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -972,8 +1009,8 @@ mod tests {
         let token = store.rotate().unwrap();
         let persisted = fs::read_to_string(directory.join("ui-admin-token.sha256")).unwrap();
         assert!(!persisted.contains(&token));
-        assert!(store.verify(&token).unwrap());
-        assert!(!store.verify("wrong").unwrap());
+        assert!(store.verified_revision(&token).unwrap().is_some());
+        assert!(store.verified_revision("wrong").unwrap().is_none());
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1023,6 +1060,7 @@ mod tests {
         );
         assert!(response.headers().contains_key("content-security-policy"));
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -1042,6 +1080,44 @@ mod tests {
             .unwrap();
         assert!(cookie.contains("HttpOnly"));
         assert!(cookie.contains("SameSite=Strict"));
+
+        UiCredentialStore::at_state_dir(&directory)
+            .rotate()
+            .unwrap();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/apps")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn session_store_is_bounded() {
+        let directory = temp_dir("session-bound");
+        let token = UiCredentialStore::at_state_dir(&directory)
+            .rotate()
+            .unwrap();
+        let state = UiState::new(&directory, directory.join("apps"));
+
+        for _ in 0..=MAX_SESSIONS {
+            let response = login(
+                State(state.clone()),
+                Form(LoginForm {
+                    token: token.clone(),
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        }
+
+        assert_eq!(state.sessions.lock().unwrap().len(), MAX_SESSIONS);
         fs::remove_dir_all(directory).unwrap();
     }
 }

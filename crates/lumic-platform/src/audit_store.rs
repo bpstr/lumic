@@ -1,11 +1,6 @@
-use lumic_core::{LumicError, Result, events::AuditRecord};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
-use std::{
-    fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Write},
-    path::{Path, PathBuf},
-};
+use crate::jsonl_store;
+use lumic_core::{Result, events::AuditRecord};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct AuditStore {
@@ -20,48 +15,11 @@ impl AuditStore {
     }
 
     pub fn append(&self, record: &AuditRecord) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(io_error)?;
-        }
-        let mut options = OpenOptions::new();
-        options.create(true).append(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut file = options.open(&self.path).map_err(io_error)?;
-        serde_json::to_writer(&mut file, record).map_err(json_error)?;
-        file.write_all(b"\n").map_err(io_error)?;
-        file.sync_data().map_err(io_error)
+        jsonl_store::append(&self.path, record, "audit")
     }
 
     pub fn list(&self, limit: usize) -> Result<Vec<AuditRecord>> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&self.path)
-            .map_err(io_error)?;
-        let mut records = BufReader::new(file)
-            .lines()
-            .map(|line| serde_json::from_str(&line.map_err(io_error)?).map_err(json_error))
-            .collect::<Result<Vec<_>>>()?;
-        if records.len() > limit {
-            records.drain(..records.len() - limit);
-        }
-        records.reverse();
-        Ok(records)
-    }
-}
-
-fn io_error(error: std::io::Error) -> LumicError {
-    LumicError::Internal {
-        message: format!("audit store I/O failed: {error}"),
-    }
-}
-
-fn json_error(error: serde_json::Error) -> LumicError {
-    LumicError::Internal {
-        message: format!("audit store data is invalid: {error}"),
+        jsonl_store::latest(&self.path, limit, "audit")
     }
 }
 
@@ -70,6 +28,7 @@ mod tests {
     use super::*;
     use lumic_core::{OperationContext, OperationInterface};
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn persists_structured_before_and_after_state() {

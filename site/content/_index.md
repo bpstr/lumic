@@ -1,4 +1,4 @@
 +++
-title = "Lumic"
+title = "Lumic Control Center"
 template = "index.html"
 +++

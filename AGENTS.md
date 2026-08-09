@@ -15,6 +15,32 @@ Build Lumic into a host-native Linux server operating layer for developers and o
 - Do not expose unrestricted shell execution as the default CLI/API/MCP model.
 - Keep UI, CLI, HTTP and MCP as adapters over the same application/core behavior.
 - Prefer additive architecture. New services, runtimes, recipes and integrations should implement contracts rather than require rewrites of core orchestration.
+- **Do not create a separate Lumic client binary.** The node's own CLI/UI/API/MCP surfaces are sufficient unless a concrete future requirement proves otherwise.
+- **Do not create a Lumic-specific AI skills package/repository.** Agent knowledge belongs in MCP schemas/descriptions, public docs, catalogs/recipes, inspection and suggestion capabilities.
+
+Avoid architectural work whose main effect is adding another installation step, release lifecycle or source of duplicated operational knowledge.
+
+## Core interaction model
+
+Prefer this conceptual flow for human and agent-facing features:
+
+```text
+STATUS  -> what exists now?
+SUGGEST -> what would make sense?
+PLAN    -> what exactly will change?
+APPLY   -> perform the approved change
+```
+
+Keep those responsibilities separate.
+
+- Status is evidence from the actual host/resources.
+- Suggest is read-only recommendation/detection with evidence.
+- Plan resolves a concrete intended mutation, risks and preconditions.
+- Apply is the mutation boundary.
+
+Suggestions inform; plans execute. Never hide mutation inside a suggestion operation.
+
+A first-class suggestion capability should support known stacks and repository-aware analysis, e.g. `lumic suggest laravel`, `lumic suggest nextjs`, `lumic suggest --path ...`, and an MCP `suggest_application_setup` tool. Significant recommendations must include evidence. The coding agent combines suggestions with live host status and performs the higher-level reasoning; do not overbuild a bespoke recommendation engine that tries to replace the LLM.
 
 ## Safety model
 

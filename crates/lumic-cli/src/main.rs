@@ -1,11 +1,17 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use lumic_core::{
     Architecture, HostFacts, OperationContext, OperationInterface,
-    application::ApplicationRuntime,
+    application::{ApplicationProcess, ApplicationProcessKind, ApplicationRuntime},
     package::{PackageMutation, PackageName, PackageRecord},
 };
 use lumic_platform::{
-    application::ApplicationService, apt::AptPackageManager, event_store::EventStore,
+    application::ApplicationService,
+    apt::AptPackageManager,
+    audit_store::AuditStore,
+    diagnostics::diagnose_host,
+    event_store::EventStore,
+    self_update::SelfUpdateManager,
+    systemd::{ServiceAction, SystemdServiceManager},
 };
 use std::path::PathBuf;
 
@@ -30,6 +36,16 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Diagnose host load, processes, memory pressure, and failed services.
+    Diagnose {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect and operate validated systemd units.
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
     /// Search, inspect, install, or remove trusted native packages.
     Package {
         #[command(subcommand)]
@@ -43,6 +59,18 @@ enum Command {
         /// Emit JSON instead of concise lines.
         #[arg(long)]
         json: bool,
+    },
+    /// Show the local before/after mutation audit trail.
+    Audit {
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply or schedule checksum-verified nightly binary updates.
+    SelfUpdate {
+        #[command(subcommand)]
+        command: SelfUpdateCommand,
     },
     /// Create, inspect, deploy, and roll back applications.
     App {
@@ -79,6 +107,7 @@ enum PackageCommand {
 enum RuntimeArg {
     Static,
     Php,
+    Node,
 }
 
 impl From<RuntimeArg> for ApplicationRuntime {
@@ -86,8 +115,44 @@ impl From<RuntimeArg> for ApplicationRuntime {
         match value {
             RuntimeArg::Static => Self::Static,
             RuntimeArg::Php => Self::Php,
+            RuntimeArg::Node => Self::Node,
         }
     }
+}
+
+#[derive(Subcommand)]
+enum ServiceCommand {
+    Inspect {
+        unit: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Start {
+        unit: String,
+    },
+    Stop {
+        unit: String,
+    },
+    Restart {
+        unit: String,
+    },
+    Reload {
+        unit: String,
+    },
+    Enable {
+        unit: String,
+    },
+    Disable {
+        unit: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SelfUpdateCommand {
+    /// Download, checksum, preflight, atomically replace, and postflight the nightly binary.
+    Apply,
+    /// Install and activate a persistent daily systemd update timer.
+    EnableNightly,
 }
 
 #[derive(Subcommand)]
@@ -120,6 +185,44 @@ enum AppCommand {
         #[command(subcommand)]
         command: RepositoryCommand,
     },
+    /// Import a named SSH private key into Lumic's private credential store.
+    Credential {
+        #[command(subcommand)]
+        command: CredentialCommand,
+    },
+    /// Install the runtime and configure nginx for an application.
+    Provision {
+        app: String,
+        #[arg(long = "component")]
+        components: Vec<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Configure the HTTP endpoint used to approve or roll back deployments.
+    Health {
+        app: String,
+        #[arg(long, default_value = "/")]
+        path: String,
+        #[arg(long, default_value_t = 80)]
+        port: u16,
+    },
+    /// Configure a supervised worker or systemd timer for an application.
+    Process {
+        #[command(subcommand)]
+        command: ProcessCommand,
+    },
+    /// Issue a Let's Encrypt certificate and enable HTTPS redirects.
+    Tls {
+        app: String,
+        #[arg(long)]
+        email: String,
+    },
+    /// Show the exact deployment changes, risks, validation, and recovery path.
+    Plan {
+        app: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Deploy a new isolated release and atomically activate it.
     Deploy {
         app: String,
@@ -140,6 +243,29 @@ enum AppCommand {
     },
     /// Remove metadata and move application files into Lumic trash.
     Delete { app: String },
+}
+
+#[derive(Subcommand)]
+enum CredentialCommand {
+    Import { name: String, source: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum ProcessCommand {
+    Worker {
+        app: String,
+        name: String,
+        #[arg(required = true, num_args = 1.., trailing_var_arg = true)]
+        command: Vec<String>,
+    },
+    Schedule {
+        app: String,
+        name: String,
+        #[arg(long)]
+        on_calendar: String,
+        #[arg(required = true, num_args = 1.., trailing_var_arg = true)]
+        command: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -170,6 +296,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print!("{}", render_status(&facts));
             }
         }
+        Command::Diagnose { json } => {
+            let report = diagnose_host().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Load: {:.2} {:.2} {:.2}; uptime: {}s",
+                    report.load.one_minute,
+                    report.load.five_minutes,
+                    report.load.fifteen_minutes,
+                    report.load.uptime_seconds
+                );
+                if report.findings.is_empty() {
+                    println!("No actionable host findings.");
+                } else {
+                    for finding in report.findings {
+                        println!(
+                            "{}: {} — {} ({})",
+                            finding.severity,
+                            finding.summary,
+                            finding.evidence,
+                            finding.recommendation
+                        );
+                    }
+                }
+            }
+        }
+        Command::Service { command } => run_service(command).await?,
         Command::Package { command } => run_package(command).await?,
         Command::Events { limit, json } => {
             let events = event_store().list(limit)?;
@@ -187,6 +341,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         event.entity_id,
                         event.actor
                     );
+                }
+            }
+        }
+        Command::Audit { limit, json } => {
+            let records = audit_store().list(limit)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&records)?);
+            } else if records.is_empty() {
+                println!("No audit records recorded.");
+            } else {
+                for record in records {
+                    println!(
+                        "{} {} {}:{} actor={} succeeded={}",
+                        record.timestamp_unix_ms,
+                        record.operation,
+                        record.entity,
+                        record.entity_id,
+                        record.actor,
+                        record.succeeded
+                    );
+                }
+            }
+        }
+        Command::SelfUpdate { command } => {
+            let manager = SelfUpdateManager::system(state_directory());
+            match command {
+                SelfUpdateCommand::Apply => {
+                    let result = manager.apply_nightly(&operation_context(false)).await?;
+                    println!(
+                        "{} at {} changed={}",
+                        result.version, result.destination, result.changed
+                    );
+                    if let Some(recovery) = result.recovery_binary {
+                        println!("Recovery binary: {recovery}");
+                    }
+                }
+                SelfUpdateCommand::EnableNightly => {
+                    let units = manager
+                        .enable_nightly_timer(&operation_context(false))
+                        .await?;
+                    println!("Enabled {}.", units.join(", "));
                 }
             }
         }
@@ -250,6 +445,91 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
                 );
             }
         },
+        AppCommand::Credential { command } => match command {
+            CredentialCommand::Import { name, source } => {
+                let reference =
+                    service.import_ssh_credential(&name, &source, &operation_context(false))?;
+                println!("Imported SSH credential reference {reference}.");
+            }
+        },
+        AppCommand::Provision {
+            app,
+            components,
+            json,
+        } => {
+            let result = service
+                .provision(&app, &components, &operation_context(false))
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Provisioned runtime and nginx for {app}.");
+            }
+        }
+        AppCommand::Health { app, path, port } => {
+            service.set_health_check(&app, &path, port, &operation_context(false))?;
+            println!("Health check for {app}: http://127.0.0.1:{port}{path}");
+        }
+        AppCommand::Process { command } => {
+            let (app, process) = match command {
+                ProcessCommand::Worker { app, name, command } => (
+                    app,
+                    ApplicationProcess {
+                        name,
+                        kind: ApplicationProcessKind::Worker,
+                        command,
+                        schedule: None,
+                        enabled: true,
+                    },
+                ),
+                ProcessCommand::Schedule {
+                    app,
+                    name,
+                    on_calendar,
+                    command,
+                } => (
+                    app,
+                    ApplicationProcess {
+                        name,
+                        kind: ApplicationProcessKind::Schedule,
+                        command,
+                        schedule: Some(on_calendar),
+                        enabled: true,
+                    },
+                ),
+            };
+            let configured = service
+                .add_process(&app, process, &operation_context(false))
+                .await?;
+            println!(
+                "Configured {}: {}.",
+                configured.process,
+                configured.units.join(", ")
+            );
+        }
+        AppCommand::Tls { app, email } => {
+            service
+                .enable_tls(&app, &email, &operation_context(false))
+                .await?;
+            println!("HTTPS enabled for {app}.");
+        }
+        AppCommand::Plan { app, json } => {
+            let plan = service.plan_deployment(&app)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            } else {
+                println!("{}", plan.summary);
+                for change in plan.changes {
+                    println!(
+                        "change: {} (reversible={})",
+                        change.summary, change.reversible
+                    );
+                }
+                for risk in plan.risks {
+                    println!("risk {:?}: {}", risk.level, risk.summary);
+                }
+            }
+        }
         AppCommand::Deploy { app, json } => {
             let deployment = service.deploy(&app, &operation_context(false)).await?;
             if json {
@@ -282,6 +562,43 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
         AppCommand::Delete { app } => {
             service.delete(&app, &operation_context(false))?;
             println!("Deleted {app}; files were moved to Lumic trash.");
+        }
+    }
+    Ok(())
+}
+
+async fn run_service(command: ServiceCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let manager = SystemdServiceManager::at_state_dir(state_directory());
+    match command {
+        ServiceCommand::Inspect { unit, json } => {
+            let status = manager.inspect(&unit).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!(
+                    "{} loaded={} active={} sub={} enabled={}",
+                    status.unit,
+                    status.load_state,
+                    status.active_state,
+                    status.sub_state,
+                    status.enabled
+                );
+            }
+        }
+        other => {
+            let (unit, action) = match other {
+                ServiceCommand::Start { unit } => (unit, ServiceAction::Start),
+                ServiceCommand::Stop { unit } => (unit, ServiceAction::Stop),
+                ServiceCommand::Restart { unit } => (unit, ServiceAction::Restart),
+                ServiceCommand::Reload { unit } => (unit, ServiceAction::Reload),
+                ServiceCommand::Enable { unit } => (unit, ServiceAction::Enable),
+                ServiceCommand::Disable { unit } => (unit, ServiceAction::Disable),
+                ServiceCommand::Inspect { .. } => unreachable!(),
+            };
+            let mutation = manager
+                .apply(&unit, action, &operation_context(false))
+                .await?;
+            println!("{:?} {} changed={}", action, unit, mutation.changed);
         }
     }
     Ok(())
@@ -380,16 +697,21 @@ fn operation_context(dry_run: bool) -> OperationContext {
 }
 
 fn event_store() -> EventStore {
-    let state_directory = std::env::var_os("LUMIC_STATE_DIR")
+    EventStore::at_state_dir(state_directory())
+}
+
+fn audit_store() -> AuditStore {
+    AuditStore::at_state_dir(state_directory())
+}
+
+fn state_directory() -> PathBuf {
+    std::env::var_os("LUMIC_STATE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib/lumic"));
-    EventStore::at_state_dir(state_directory)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/lumic"))
 }
 
 fn application_service() -> ApplicationService {
-    let state_directory = std::env::var_os("LUMIC_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib/lumic"));
+    let state_directory = state_directory();
     let apps_root = std::env::var_os("LUMIC_APPS_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| state_directory.join("apps"));

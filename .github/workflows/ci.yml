@@ -26,6 +26,9 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace --all-features
       - run: cargo build --locked --workspace --release
+      - run: tests/epic-a-smoke.sh
+        env:
+          LUMIC_TEST_BINARY: target/release/lumic
 
   audit:
     runs-on: ubuntu-latest

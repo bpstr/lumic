@@ -21,6 +21,12 @@ impl EventStore {
         Self::new(directory.as_ref().join("events.jsonl"))
     }
 
+    pub fn state_dir(&self) -> &Path {
+        self.path
+            .parent()
+            .expect("event store path always has a parent directory")
+    }
+
     pub fn append(&self, event: &Event) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(io_error)?;

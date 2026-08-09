@@ -28,3 +28,7 @@ Mutations should include actor/interface/correlation metadata. Capture before/af
 ## Agent safety
 
 MCP descriptions must make risk explicit. Prefer small typed tools to one omnipotent tool. AI reasoning is not a permission boundary; Lumic validates every operation independently.
+
+The local stdio MCP server denies all mutation tools unless its operator starts it with `LUMIC_MCP_ALLOW_MUTATIONS=1`; each mutation also requires `approved=true`. This is an initial coarse node policy, not remote authentication. Do not bridge the stdio server to a network. Repository tools exchange credential references only; private keys are imported locally with mode `0600` and audit arguments redact their values.
+
+Nightly self-update requires a release SHA-256 asset, verifies the candidate before replacement, retains the previous executable, verifies again after installation, and restores the backup on postflight failure. Current nightly artifacts are x86_64 only.

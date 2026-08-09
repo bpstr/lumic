@@ -39,7 +39,9 @@ install -d -m 0700 "$STATE_DIR"
 [ -w "$INSTALL_DIR" ] || fail "install directory is not writable: $INSTALL_DIR"
 DEST="$INSTALL_DIR/lumic"
 TMP="$(mktemp "$INSTALL_DIR/.lumic.XXXXXX")" || fail "cannot create temporary file in $INSTALL_DIR"
-trap 'rm -f "$TMP"' EXIT INT TERM
+CHECKSUM_FILE="$TMP.sha256"
+BACKUP="$INSTALL_DIR/.lumic.previous"
+trap 'rm -f "$TMP" "$CHECKSUM_FILE"' EXIT INT TERM
 
 if [ -n "$LOCAL_BINARY" ]; then
   [ -f "$LOCAL_BINARY" ] || fail "LUMIC_INSTALL_BINARY does not exist: $LOCAL_BINARY"
@@ -55,6 +57,12 @@ else
   fi
   info "downloading ${VERSION:-$CHANNEL} build for $ID/$ARCH"
   curl -fL --retry 3 "$URL" -o "$TMP" || fail "download failed from $URL; verify the channel/version and network access"
+  curl -fL --retry 3 "$URL.sha256" -o "$CHECKSUM_FILE" || fail "checksum download failed from $URL.sha256"
+  EXPECTED_CHECKSUM="$(awk 'NR == 1 { print $1 }' "$CHECKSUM_FILE")"
+  [ "${#EXPECTED_CHECKSUM}" -eq 64 ] || fail "release checksum file is invalid"
+  case "$EXPECTED_CHECKSUM" in *[!0-9a-fA-F]*) fail "release checksum file is invalid" ;; esac
+  ACTUAL_CHECKSUM="$(sha256sum "$TMP" | awk '{ print $1 }')"
+  [ "$EXPECTED_CHECKSUM" = "$ACTUAL_CHECKSUM" ] || fail "downloaded binary checksum does not match the release"
 fi
 
 chmod 0755 "$TMP"
@@ -67,8 +75,18 @@ fi
 if [ -f "$DEST" ] && cmp -s "$TMP" "$DEST"; then
   info "$INSTALLED_VERSION is already installed at $DEST"
 else
+  if [ -f "$DEST" ]; then
+    cp "$DEST" "$BACKUP"
+    chmod 0755 "$BACKUP"
+  fi
   mv -f "$TMP" "$DEST"
   chmod 0755 "$DEST"
+  if ! "$DEST" version >/dev/null 2>&1; then
+    if [ -f "$BACKUP" ]; then
+      mv -f "$BACKUP" "$DEST"
+    fi
+    fail "installed binary failed post-install verification; previous binary restored"
+  fi
   info "installed $INSTALLED_VERSION to $DEST"
 fi
 

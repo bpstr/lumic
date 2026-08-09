@@ -17,7 +17,9 @@ Pure domain model: node facts, capabilities, operation requests/results, suggest
 ### lumic-platform
 Linux host detection and adapters for package manager, service manager, process/filesystem/network/firewall mechanisms. Debian and Ubuntu first. Adapters execute native tools through argument-safe process APIs.
 
-The Phase 0 host-status service reads through a testable `HostDataSource`. The system adapter reads `/etc/os-release`, procfs, the process-visible CPU count, and root filesystem capacity. CLI and MCP call this same service. The internal async process runner accepts an executable and an argument vector, enforces a timeout, bounds both output streams, and records exit code/signal/truncation metadata; it is not itself a public capability.
+The host-status service reads through a testable `HostDataSource`. The system adapter reads `/etc/os-release`, procfs, the process-visible CPU count, and root filesystem capacity; diagnosis adds load, uptime, process and failed-systemd-unit evidence. CLI and MCP call these same services. The internal async process runner accepts an executable and an argument vector plus narrowly scoped environment, enforces a timeout, bounds both output streams, and records exit code/signal/truncation metadata; it is not itself a public capability.
+
+Epic A adds small concrete adapters rather than a plugin framework: apt package/runtime catalogs, systemd lifecycle, atomic recoverable files, nginx/TLS, application processes, and checksum-verified self-update. `ApplicationService` composes these adapters into persistent application provisioning and deployment. The release mechanism is runtime-neutral; static and generic PHP repositories are its reference proofs, while Node is only a foundation.
 
 ### lumic-daemon
 Long-running node process. Owns lifecycle wiring, state, event dispatch, scheduled host observation and interface servers. Business behavior must remain in reusable services rather than handlers.
@@ -28,7 +30,7 @@ Human interface. Commands translate arguments to the same capability/application
 ### lumic-mcp
 Agent adapter. MCP exposes resources and typed tools rather than generic shell. Tool descriptions should contain preconditions, risk and output schemas useful for coding agents.
 
-Phase 0 uses the official Rust `rmcp` SDK and stdio transport. Remote transport is deferred until authentication and encryption are implemented.
+The MCP adapter uses the official Rust `rmcp` SDK and stdio transport. Read tools are available by default. Apply tools require process-level `LUMIC_MCP_ALLOW_MUTATIONS=1` and per-call `approved=true`; remote transport remains deferred until authentication and encryption are implemented.
 
 ### UI/API
 Future crates/adapters. The UI is Rust-based and calls the same services. Do not place privileged host logic in browser-facing code.
@@ -171,6 +173,8 @@ Prefer data-driven catalogs where behavior is native/simple. Use Rust adapters o
 ## Zero-downtime deployment
 
 Deployment domain is independent of GitHub/GitLab and runtime. Stages: source resolution -> release preparation -> dependencies/build -> shared links -> pre-activation validation -> runtime-specific activation -> health -> post-activation -> retention. Activation strategy is supplied by runtime/application adapter.
+
+The current file-based strategy creates immutable releases and atomically replaces `current`. HTTP health failure restores the prior target before the failed release is removed. nginx configuration uses the same safety principle: sibling atomic write, backup, native validation, reload, and restoration on validation/reload failure. Deployment plans are read-only objects; deployment apply remains a distinct auditable operation.
 
 ## Multi-node
 

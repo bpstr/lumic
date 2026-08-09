@@ -11,7 +11,7 @@ A Lumic node models the real Linux machine rather than hiding it behind containe
 
 ## Host facts
 
-Lumic currently exposes live distro/version, architecture, hostname, kernel, logical CPU count, memory/swap and root-filesystem capacity. A complete mount inventory, load, networking, processes, packages and services follow in Phase 1.
+Lumic exposes live distro/version, architecture, hostname, kernel, logical CPU count, memory/swap and root-filesystem capacity. `lumic diagnose` adds load, uptime, memory pressure, high-RSS processes and failed systemd units with evidence and recovery suggestions. A complete mount and network inventory remains future work.
 
 These facts are shared by CLI, UI and MCP so an agent can inspect the machine before choosing an operation.
 
@@ -32,7 +32,19 @@ package.update_index
 
 not arbitrary `apt-get` strings.
 
-Package identifiers are validated as Debian names and the initial policy uses exact built-in entries. Unknown search results do not become trusted. Integrations may add reviewed exact packages to their policy instance. Mutations capture bounded native-tool output and emit local events; MCP package mutations remain disabled.
+Package identifiers are validated as Debian names and the initial policy uses exact built-in entries. Unknown search results do not become trusted. Integrations may add reviewed exact packages to their policy instance. Mutations capture bounded native-tool output and emit local events and audit records. MCP exposes package inspection and exact-catalog installation only when the local server enables mutations and the caller supplies explicit approval.
+
+## systemd lifecycle
+
+Lumic wraps systemd with validated unit names and direct `systemctl` argument vectors:
+
+```text
+service.inspect
+service.start / stop / restart / reload
+service.enable / disable
+```
+
+The same service adapter backs CLI and MCP. Application workers and schedules generate recoverable units under `/etc/systemd/system`, reload the manager, and enable/start the resulting service or timer. Lumic does not expose a generic shell capability.
 
 ## Integration levels
 
@@ -46,4 +58,4 @@ Lumic distinguishes:
 
 ## Diagnostics
 
-`lumic diagnose` is intended to return an evidence-backed snapshot of load, memory, disk, services, errors, deployments, network, OOM events and relevant service metrics. Lumic reports evidence; AI clients can reason over it.
+`lumic diagnose` returns the currently implemented evidence-backed host snapshot. Deployment history, application health, events and audit records are separate typed reads, so clients can combine them without Lumic pretending to diagnose subsystems it does not yet inspect.

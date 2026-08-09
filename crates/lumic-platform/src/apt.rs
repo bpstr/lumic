@@ -1,7 +1,7 @@
-use crate::{ProcessOutput, ProcessRunner, ProcessSpec};
+use crate::{ProcessOutput, ProcessRunner, ProcessSpec, audit_store::AuditStore};
 use lumic_core::{
     LumicError, OperationContext, Result,
-    events::Event,
+    events::{AuditRecord, Event},
     package::{PackageMutation, PackageName, PackagePolicy, PackageRecord},
 };
 use serde_json::json;
@@ -14,14 +14,17 @@ pub struct AptPackageManager {
     runner: ProcessRunner,
     policy: PackagePolicy,
     events: EventStore,
+    audit: AuditStore,
 }
 
 impl AptPackageManager {
     pub fn new(policy: PackagePolicy, events: EventStore) -> Self {
+        let audit = AuditStore::at_state_dir(events.state_dir());
         Self {
             runner: ProcessRunner,
             policy,
             events,
+            audit,
         }
     }
 
@@ -73,9 +76,12 @@ impl AptPackageManager {
     pub async fn update_index(&self, context: &OperationContext) -> Result<PackageMutation> {
         let mut spec = ProcessSpec::new("apt-get").args(["update"]);
         spec.timeout = Duration::from_secs(300);
-        let output = self.run(spec).await?;
+        let apt = PackageName::parse("apt")?;
+        let output = self
+            .run_mutation(spec, &apt, "update_index", context, None)
+            .await?;
         let mutation = PackageMutation {
-            package: PackageName::parse("apt")?,
+            package: apt,
             action: "update_index".into(),
             changed: true,
             output: clean_output(&output),
@@ -90,7 +96,8 @@ impl AptPackageManager {
         context: &OperationContext,
     ) -> Result<PackageMutation> {
         self.policy.authorize(package)?;
-        if self.installed_version(package).await?.is_some() {
+        let installed = self.installed_version(package).await?;
+        if installed.is_some() {
             return Ok(PackageMutation {
                 package: package.clone(),
                 action: "install".into(),
@@ -114,7 +121,9 @@ impl AptPackageManager {
             package.as_str(),
         ]);
         spec.timeout = Duration::from_secs(600);
-        let output = self.run(spec).await?;
+        let output = self
+            .run_mutation(spec, package, "install", context, installed)
+            .await?;
         let mutation = PackageMutation {
             package: package.clone(),
             action: "install".into(),
@@ -131,7 +140,8 @@ impl AptPackageManager {
         context: &OperationContext,
     ) -> Result<PackageMutation> {
         self.policy.authorize(package)?;
-        if self.installed_version(package).await?.is_none() {
+        let installed = self.installed_version(package).await?;
+        if installed.is_none() {
             return Ok(PackageMutation {
                 package: package.clone(),
                 action: "remove".into(),
@@ -150,7 +160,9 @@ impl AptPackageManager {
         let mut spec =
             ProcessSpec::new("apt-get").args(["remove", "--yes", "--", package.as_str()]);
         spec.timeout = Duration::from_secs(600);
-        let output = self.run(spec).await?;
+        let output = self
+            .run_mutation(spec, package, "remove", context, installed)
+            .await?;
         let mutation = PackageMutation {
             package: package.clone(),
             action: "remove".into(),
@@ -192,6 +204,34 @@ impl AptPackageManager {
         }
     }
 
+    async fn run_mutation(
+        &self,
+        spec: ProcessSpec,
+        package: &PackageName,
+        action: &str,
+        context: &OperationContext,
+        before_version: Option<String>,
+    ) -> Result<ProcessOutput> {
+        match self.run(spec).await {
+            Ok(output) => Ok(output),
+            Err(error) => {
+                self.audit.append(&AuditRecord::now(
+                    context,
+                    format!("package.{action}"),
+                    action,
+                    "package",
+                    package.as_str(),
+                    json!({"package": package}),
+                    before_version.map(|version| json!({"version": version})),
+                    None,
+                    false,
+                    error.to_string(),
+                ))?;
+                Err(error)
+            }
+        }
+    }
+
     fn emit(
         &self,
         event_type: &str,
@@ -206,6 +246,18 @@ impl AptPackageManager {
             mutation.package.as_str(),
             &context.correlation_id,
             json!({"action": mutation.action, "changed": mutation.changed}),
+        ))?;
+        self.audit.append(&AuditRecord::now(
+            context,
+            format!("package.{}", mutation.action),
+            &mutation.action,
+            "package",
+            mutation.package.as_str(),
+            json!({"package": mutation.package, "changed": mutation.changed}),
+            None,
+            Some(json!({"changed": mutation.changed})),
+            true,
+            "package operation completed",
         ))
     }
 }

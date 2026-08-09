@@ -4,7 +4,7 @@ description = "Structured infrastructure capabilities for Codex, Claude and othe
 weight = 70
 [extra]
 kicker = "AGENTS"
-status = "read-only stdio foundation implemented"
+status = "local policy-gated operations implemented"
 +++
 
 MCP is a first-class Lumic interface and the highest-leverage way to operate multiple nodes.
@@ -48,12 +48,38 @@ Mutating operations should carry actor/interface/correlation metadata into Lumic
 
 ## Current implementation
 
-Phase 0 provides an MCP server binary using the official Rust SDK over stdio:
+The MCP server uses the official Rust SDK over local stdio:
 
 ```bash
 cargo run -p lumic-mcp
 ```
 
-It publishes `lumic://server/status` and three read-only tools: `inspect_server`, `application_list`, and `events_list`. They use the same host/application/event services as the CLI and do not mutate the host. The server advertises no shell or mutation tool.
+It publishes `lumic://server/status` and these shared-service tools:
 
-Remote HTTP transport, authentication, TLS, `lumic mcp setup`, policy identities and audit integration are not implemented yet. Do not expose this stdio process remotely through an unauthenticated bridge.
+```text
+inspect_server                  diagnose_server
+service_inspect                 service_apply
+package_inspect                 package_install
+application_list                application_inspect
+application_plan_deployment     application_deployments
+application_create              application_configure_process
+application_set_repository      application_provision
+application_set_health_check    application_deploy
+application_rollback            application_enable_tls
+events_list                     audit_list
+```
+
+There is no shell tool. Read operations work by default. Every apply tool requires both:
+
+1. the MCP process was deliberately started with `LUMIC_MCP_ALLOW_MUTATIONS=1`;
+2. the individual call contains `approved: true` after status/plan review.
+
+For example:
+
+```bash
+LUMIC_MCP_ALLOW_MUTATIONS=1 LUMIC_MCP_ACTOR=codex cargo run -p lumic-mcp
+```
+
+Tool descriptions identify read-only versus mutating behavior. Apply operations use the same validated application, apt, systemd, nginx, TLS, health and rollback services as the CLI. Actor/interface/correlation data is written to `audit.jsonl`; Git credential values are neither accepted by the repository tool nor returned.
+
+Remote HTTP transport, authentication, TLS, `lumic mcp setup`, fine-grained identity scopes, self-update and credential import tools are not implemented yet. Do not expose this stdio process remotely through an unauthenticated bridge. Import credentials locally with the CLI, then pass only their reference to MCP. Application process commands are accepted only as an executable/argument array; shell command strings are not a supported escape hatch.

@@ -4,14 +4,14 @@ description = "Applications own runtime, Git, environment, web routing, workers,
 weight = 40
 [extra]
 kicker = "APPLICATIONS"
-status = "persistent nightly foundation"
+status = "Epic A nightly"
 +++
 
 In Lumic an application is more than an nginx site. It is the lifecycle boundary for deployable software.
 
-The nightly CLI currently persists application identity, domain, static/PHP runtime, Git repository and branch, health configuration/state, release retention, timestamps, and deployment history. It creates `releases/`, `shared/`, `repository/`, and an atomic `current` symlink under `/var/lib/lumic/apps/<name>`.
+The nightly CLI persists application identity, domain, static/PHP/Node runtime, Git repository and branch, health configuration/state, worker/schedule definitions, nginx/TLS state, release retention, timestamps, and deployment history. It creates `releases/`, `shared/`, `repository/`, and an atomic `current` symlink under `/var/lib/lumic/apps/<name>`.
 
-Repository URLs must use HTTPS, SSH/Git scp syntax, or `file://`. HTTPS credentials embedded in URLs are rejected; metadata stores only an optional credential reference. Secret-store resolution and deploy-key injection are not implemented yet.
+Repository URLs must use HTTPS, SSH/Git scp syntax, or `file://`. HTTPS credentials embedded in URLs are rejected; metadata stores only an optional credential reference. `app credential import` copies a validated private key into the private state directory with mode `0600`; Git receives the resolved key path through a scoped process environment and status/audit output remains redacted.
 
 An application can own:
 
@@ -36,11 +36,17 @@ The goal is simple: describe a stack such as Node + PostgreSQL + Redis + workers
 
 ## Runtimes
 
-The implemented deployment types are static repositories with a root `index.html`, and generic PHP repositories with a root `index.php`. PHP runs production Composer install flags when `composer.json` exists. Runtime installation and PHP-FPM integration remain planned.
+The reference deployment types are static repositories with a root `index.html`, and generic PHP repositories with a root `index.php`. PHP runs production Composer install flags when `composer.json` exists. Lumic installs nginx/PHP-FPM/PHP CLI/Composer through its apt policy, discovers the versioned PHP-FPM socket, writes a validated nginx configuration, and reloads the service. The Node foundation installs Node/nginx, runs `npm ci --omit=dev` when a lockfile is present, requires `package.json`, and proxies nginx to port 3000; richer Node process configuration is deliberately deferred.
 
 ## Peripheral dependencies
 
-Runtime components are first-class. For PHP this includes extensions such as `intl`, `redis`, `imagick`, `pgsql`, `bcmath` and `zip`. Lumic resolves the appropriate native packages for the detected OS instead of making callers know package names.
+Runtime components are first-class. The current deliberately small PHP catalog is `curl`, `intl`, `mbstring`, `xml`, and `zip`. Lumic resolves each to an approved native package; unknown component names are denied.
+
+## Safe activation and recovery
+
+Each deployment records source, checkout, build, pre-activation, activation and health phases. Activation is an atomic symlink replacement. When an enabled local HTTP health check does not return the configured successful status range, Lumic immediately restores the previous release, records `failed_rolled_back`, emits deployment events and retains the evidence in the audit trail. Manual rollback uses the same activation primitive.
+
+nginx files use atomic sibling writes and retain a `.lumic-backup`. Lumic validates before reload and restores the previous file/link if validation or reload fails. Workers run as systemd services with restart-on-failure; schedules use persistent systemd timers.
 
 ## Application recipes
 

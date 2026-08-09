@@ -26,7 +26,9 @@ disk.threshold_exceeded
 repository.updated
 ```
 
-The nightly implementation appends structured JSON events to a mode-0600 local JSON-lines store for package, application, repository, deployment, rollback, and deletion mutations. `lumic events` shows concise output and `lumic events --json` returns the typed records. Actor, interface, entity, correlation ID, timestamp, and structured payload are retained. Generic webhook delivery is not implemented yet.
+The nightly implementation appends structured JSON events to a mode-0600 local JSON-lines store for package, systemd, application, repository, runtime, process, TLS, deployment, rollback, self-update and deletion mutations. `lumic events` shows concise output and `lumic events --json` returns the typed records. Actor, interface, entity, correlation ID, timestamp, and structured payload are retained. Generic webhook delivery is not implemented yet.
+
+A separate private audit JSON-lines store records every attempted mutation, including failed native-tool operations, capability, operation, redacted arguments, before/after data and outcome. `lumic audit` and the read-only MCP `audit_list` tool expose newest-first records. Audit is durable local evidence, not an authorization mechanism by itself.
 
 ## Destinations
 
@@ -40,4 +42,4 @@ Deterministic, policy-defined remediation is appropriate:
 service failure → restart → verify → notify on failure
 ```
 
-Open-ended AI changes triggered automatically by load or errors are not the default safety model. Agents can inspect the event history and recommend or execute explicitly permitted changes afterward.
+Open-ended AI changes triggered automatically by load or errors are not the default safety model. Agents can inspect status, diagnosis, event and audit history, then plan and execute only explicitly permitted typed changes.

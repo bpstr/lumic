@@ -20,27 +20,29 @@ A conventional application may use:
 └── current -> releases/<release>
 ```
 
-The generic lifecycle is:
+The implemented static/PHP lifecycle is:
 
 ```text
-fetch → checkout → dependencies → build → shared links → pre-activate
-      → health/preconditions → activate → reload/drain → verify → cleanup
+fetch → checkout → dependencies/build → pre-activate validation
+      → atomic activation → local HTTP health → retain or automatic rollback
 ```
 
-Activation is runtime-specific. PHP can use an atomic symlink switch and graceful FPM reload. A Node process may start a new process, pass a health check, switch reverse-proxy traffic, drain the old process and then stop it.
+Static and generic PHP applications use the same release mechanism and an atomic `current` symlink switch. Node is represented in the runtime catalog and Nginx configuration, but blue/green process handoff is not part of the Epic A reference implementation.
 
 ## Plan before apply
 
-Dangerous deployment operations should expose a plan that reports detected migrations, worker changes, disk requirements, health checks, expected interruption class and rollback availability.
+`lumic app plan <app>` resolves the repository branch, active release, health gate, risks, preconditions, validation and recovery steps without changing the host. `lumic app deploy <app>` is the separate mutation boundary.
 
 ## Git sources and hosting
 
-Lumic supports external Git providers such as GitHub/GitLab, generic Git remotes, locally hosted bare repositories, and eventually local mirrors/caches for multi-node deployment.
+Lumic accepts a generic Git URL and branch. SSH keys are imported into Lumic's private state and attached by opaque credential reference; key material is never copied into application metadata, events, audit output or MCP responses. GitHub/GitLab-specific deploy keys, webhooks and multi-node mirrors are deferred ecosystem integrations.
 
 Hosted repositories are first-class infrastructure rather than a hidden implementation detail.
 
-## Current nightly behavior
+## Health and recovery
 
-`lumic app deploy` maintains a local bare mirror, resolves the configured branch to an exact commit, checks it out into a new release directory, validates the required entry point, and only then atomically replaces `current`. It never edits the active release. A failed pre-activation validation is recorded and the incomplete release is removed. `lumic app rollback` activates the prior retained successful release. Five releases are retained by default.
+`lumic app deploy` maintains a local bare mirror, resolves the configured branch to an exact commit, checks it out into a new release directory, runs only the runtime's bounded dependency/build convention, and validates the required entry point before activation. It never edits the active release.
 
-This is not the complete production deployment promise yet. HTTP post-activation health, automatic rollback after an HTTP failure, shared-path linking, Nginx/FPM reload, structured build hooks, and service-aware activation are still planned.
+After activation, an enabled health check sends a local HTTP request with the application's `Host` header. An unacceptable response marks the deployment `failed_rolled_back` and atomically restores the previous release. `lumic app rollback` provides the same recovery explicitly. Five releases are retained by default, and deployment history records every phase and whether rollback was automatic.
+
+Generic PHP installs dependencies with Composer when `composer.json` exists; Node runs `npm ci` only when a supported lockfile exists. Arbitrary project build hooks, database migrations, shared-path declarations and zero-downtime Node handoff remain future work rather than hidden shell execution.

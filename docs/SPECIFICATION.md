@@ -2,6 +2,10 @@
 
 This document is the implementation-level product contract. It is intentionally broader than the current code and narrower than a wishlist: new features should fit these domains instead of creating parallel abstractions.
 
+## Current implementation boundary
+
+Epic A implements the single-node vertical slice for x86_64 Debian/Ubuntu: host status/diagnosis, policy-controlled apt, validated systemd lifecycle, durable events/audits, recoverable file writes, static/PHP/Node application state, a deliberately small PHP component catalog, nginx, Certbot TLS, named SSH key references, isolated Git releases, build/validation phases, atomic activation, HTTP health rollback, workers/timers, deployment planning/history and verified nightly self-update. Static Git and generic PHP Git are the two reference applications. Framework recipes, broader components, managed databases, push webhooks and remote MCP identity are not part of this implementation.
+
 ## 1. Node and host
 
 A Lumic node is one Linux host running Lumic. The node reports live facts rather than relying on a stale inventory copy.

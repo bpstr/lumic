@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 pub enum ApplicationRuntime {
     Static,
     Php,
+    Node,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,7 +19,11 @@ pub struct RepositoryConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthCheck {
+    #[serde(default)]
+    pub enabled: bool,
     pub path: String,
+    #[serde(default = "default_health_port")]
+    pub port: u16,
     pub expected_status_min: u16,
     pub expected_status_max: u16,
     pub timeout_seconds: u64,
@@ -27,12 +32,40 @@ pub struct HealthCheck {
 impl Default for HealthCheck {
     fn default() -> Self {
         Self {
+            enabled: false,
             path: "/".into(),
+            port: default_health_port(),
             expected_status_min: 200,
             expected_status_max: 399,
             timeout_seconds: 10,
         }
     }
+}
+
+const fn default_health_port() -> u16 {
+    80
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationProcessKind {
+    Worker,
+    Schedule,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationProcess {
+    pub name: String,
+    pub kind: ApplicationProcessKind,
+    pub command: Vec<String>,
+    pub schedule: Option<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TlsState {
+    pub enabled: bool,
+    pub certificate_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +79,12 @@ pub struct Application {
     pub repository: Option<RepositoryConfig>,
     pub environment_references: BTreeMap<String, String>,
     pub health_check: HealthCheck,
+    #[serde(default)]
+    pub processes: Vec<ApplicationProcess>,
+    #[serde(default)]
+    pub web_configured: bool,
+    #[serde(default)]
+    pub tls: TlsState,
     pub release_retention: usize,
     pub health_status: String,
     pub created_at_unix_ms: u128,
@@ -59,6 +98,22 @@ pub enum DeploymentStatus {
     Completed,
     Failed,
     RolledBack,
+    FailedRolledBack,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentPhaseStatus {
+    Completed,
+    Failed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeploymentPhase {
+    pub name: String,
+    pub status: DeploymentPhaseStatus,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +126,10 @@ pub struct Deployment {
     pub healthy: bool,
     pub message: String,
     pub previous_release: Option<String>,
+    #[serde(default)]
+    pub phases: Vec<DeploymentPhase>,
+    #[serde(default)]
+    pub automatic_rollback: bool,
     pub started_at_unix_ms: u128,
     pub finished_at_unix_ms: Option<u128>,
 }
@@ -152,6 +211,25 @@ pub fn validate_repository_url(value: &str) -> Result<()> {
     }
 }
 
+pub fn validate_command(command: &[String]) -> Result<()> {
+    if command.is_empty()
+        || command.iter().any(|part| {
+            part.is_empty()
+                || part.contains('\0')
+                || part.contains('\n')
+                || part.contains('\r')
+                || part.len() > 4096
+        })
+    {
+        Err(LumicError::InvalidInput {
+            field: "command".into(),
+            message: "must be a non-empty argv vector without control characters".into(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
 pub fn unix_time_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -170,5 +248,7 @@ mod tests {
         assert!(validate_branch("--upload-pack=id").is_err());
         assert!(validate_repository_url("https://token@example.com/repo.git").is_err());
         assert!(validate_repository_url("https://example.com/repo.git").is_ok());
+        assert!(validate_command(&["php".into(), "artisan".into()]).is_ok());
+        assert!(validate_command(&["sh\n-c".into()]).is_err());
     }
 }

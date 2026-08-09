@@ -70,6 +70,41 @@ pub struct HostFacts {
     pub disks: Vec<DiskFacts>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoadFacts {
+    pub one_minute: f64,
+    pub five_minutes: f64,
+    pub fifteen_minutes: f64,
+    pub running_processes: u64,
+    pub total_processes: u64,
+    pub uptime_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessFacts {
+    pub pid: u32,
+    pub name: String,
+    pub state: String,
+    pub resident_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticFinding {
+    pub severity: String,
+    pub summary: String,
+    pub evidence: String,
+    pub recommendation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiagnosticReport {
+    pub host: HostFacts,
+    pub load: LoadFacts,
+    pub top_processes: Vec<ProcessFacts>,
+    pub failed_services: Vec<String>,
+    pub findings: Vec<DiagnosticFinding>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Capability(pub String);

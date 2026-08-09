@@ -41,7 +41,7 @@ Implemented: the foundation reports live distribution, node, kernel, CPU, memory
 
 ## Phase 1 — Trusted host operations
 
-In progress: the safe process executor is now used by an apt adapter with exact package policy, package CLI operations, durable structured events, and mutation correlation metadata. systemd, broader host facts, audit before/after records, and diagnosis remain.
+Epic A mechanism implemented: apt and systemd use validated typed adapters; host status includes CPU/memory/swap/disk and diagnosis adds live load/process/failed-service evidence; mutations write persistent events and before/after audit records; material file updates use atomic writes with recovery copies.
 
 - apt operations through typed policy-controlled capability.
 - systemd lifecycle operations.
@@ -54,6 +54,8 @@ In progress: the safe process executor is now used by an apt adapter with exact 
 **Exit:** Lumic can safely operate the Linux host without exposing arbitrary shell execution.
 
 ## Phase 2 — Applications and runtimes
+
+Epic A mechanism implemented with intentionally narrow catalogs: persistent static/PHP/Node application state, PHP-FPM and an explicit extension set, Node build/proxy foundation, validated nginx configuration/reload recovery, named SSH key references, Certbot TLS, and systemd workers/timers. Static Git and generic PHP Git are the only acceptance references.
 
 - application model and persistent state.
 - PHP runtime and extension/component management.
@@ -68,7 +70,7 @@ In progress: the safe process executor is now used by an apt adapter with exact 
 
 ## Phase 3 — Deployment engine
 
-In progress: Lumic includes persistent application metadata, external Git mirror/fetch, isolated static/generic-PHP releases, entry-point validation, atomic symlink activation, retention, history, and manual rollback. HTTP health and service-aware activation remain.
+Epic A release mechanism implemented: external Git mirror/fetch, isolated releases, typed build phases, entry-point validation, atomic activation, local HTTP health gates, automatic and manual rollback, retention, phase history, events and audits. Push/webhook triggers and runtime draining beyond the reference process model remain later work.
 
 - immutable release directories.
 - build lifecycle.

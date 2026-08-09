@@ -12,9 +12,17 @@ use std::{
 };
 use tokio::{io::AsyncReadExt, process::Command, time::timeout};
 
+pub mod app_process;
 pub mod application;
 pub mod apt;
+pub mod atomic_file;
+pub mod audit_store;
+pub mod diagnostics;
 pub mod event_store;
+pub mod runtime;
+pub mod self_update;
+pub mod systemd;
+pub mod web;
 
 pub trait HostDataSource {
     fn os_release(&self) -> Result<String>;
@@ -265,6 +273,7 @@ pub struct ProcessSpec {
     pub stdout_limit: usize,
     pub stderr_limit: usize,
     pub current_dir: Option<std::path::PathBuf>,
+    pub environment: BTreeMap<String, String>,
 }
 
 impl ProcessSpec {
@@ -276,6 +285,7 @@ impl ProcessSpec {
             stdout_limit: 64 * 1024,
             stderr_limit: 64 * 1024,
             current_dir: None,
+            environment: BTreeMap::new(),
         }
     }
 
@@ -286,6 +296,11 @@ impl ProcessSpec {
 
     pub fn current_dir(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.current_dir = Some(path.into());
+        self
+    }
+
+    pub fn environment(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.environment.insert(key.into(), value.into());
         self
     }
 }
@@ -323,6 +338,7 @@ impl ProcessRunner {
         let started = Instant::now();
         let mut command = Command::new(&spec.executable);
         command.args(&spec.args);
+        command.envs(&spec.environment);
         if let Some(current_dir) = &spec.current_dir {
             command.current_dir(current_dir);
         }

@@ -22,6 +22,14 @@ An application can own:
 - deployments, health checks and rollback history;
 - application logs and events.
 
+## Repository application intent with `lumic.yaml`
+
+Applications may include an optional [`lumic.yaml`](./lumic-yaml/) file at the repository root. It gives Lumic and coding agents durable context about the runtime, backing services, processes, build commands, domains, health checks and deployment needs of the application.
+
+The manifest is deliberately pragmatic rather than a rigid infrastructure DSL. Developers describe what the application needs and may omit obvious details that Lumic or a coding agent can safely infer from the repository. Lumic still inspects the application and target host and produces a plan before material changes.
+
+The goal is simple: describe a stack such as Node + PostgreSQL + Redis + workers once instead of explaining the full production environment every time an agent prepares a VPS.
+
 ## Runtimes
 
 Initial runtime targets are PHP, Node.js, Python, static applications and custom processes. Containerized applications are supported as another runtime/workload type, not the default.

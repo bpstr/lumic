@@ -4,7 +4,7 @@ This document is the implementation-level product contract. It is intentionally 
 
 ## Current implementation boundary
 
-Epics A–D implement the initial vertical slice for x86_64 Debian/Ubuntu: the single-node host/application/service/recipe/operator capabilities plus native Git hosting and mirrors, portable environments, public-key node identity/trust, explicit topology, replay-protected remote operations and externally orchestrated coordinated deployment. PostgreSQL and Redis prove the managed-service contract; `static-git` and a two-node static application prove composition and environment transformation. Framework/provider breadth and authenticated network MCP transport remain outside this implementation.
+Epics A–F implement the initial vertical slice for x86_64 Debian/Ubuntu: single-node host/application/service/recipe/operator capabilities; native Git hosting and mirrors; portable environments; public-key node identity/trust; explicit topology; replay-protected remote operations; externally orchestrated coordinated deployment; and evidence-backed application and incident intelligence. PostgreSQL and Redis prove the managed-service contract, `static-git` and a two-node static application prove composition and environment transformation, and Laravel + Redis proves safe framework/service integration. Framework/provider breadth and authenticated network MCP transport remain outside this implementation.
 
 ## 1. Node and host
 
@@ -202,6 +202,16 @@ Useful signals:
 `lumic diagnose` returns structured evidence and detected correlations, e.g. deployment timing near a worker spike or OOM event. AI clients can reason over this evidence.
 
 Implemented reference mechanism: `lumicd` captures host/process/application/managed-service state every five minutes, imports new Lumic events, ingests selected kernel/OOM journal lines and stores typed provider hooks in a private append-only operations timeline. Timeline and incident queries filter by time, event and resource. Incident output is an evidence package, not a guessed root cause. Broader network/runtime/nginx/provider metrics remain nightly expansion.
+
+### Application and incident intelligence
+
+`ApplicationIntelligence` is the implemented Phase 14 application service. A fingerprint reports recognized framework/CMS, declared runtime, environment files, manifests, worker/scheduler hints, configured key names, likely health endpoints, evidence and confidence. Detection reads the active managed deployment and requires both `composer.json`'s `laravel/framework` dependency and `artisan` for high-confidence Laravel.
+
+Dotenv inspection returns key names, sensitivity and duplicates without values. Integration planning returns only configured/unset state. Apply preserves unrelated lines/comments, rejects duplicate target keys, snapshots the original file privately, uses atomic writes, restarts only affected worker units and verifies managed-service plus application health. Snapshot rollback validates application ownership, target path and SHA-256 content integrity.
+
+The versioned compiled integration catalog currently contains only `laravel-redis@1`. Its plan selects an existing managed Redis service or includes installation, resolves loopback host/port, updates Redis/cache/session/queue settings, adds an application service reference and models `application -> Redis -> queue/Horizon worker` plus `application -> runtime -> nginx`. A password is intentionally unnecessary for the loopback-only reference service; future remote/authenticated adapters must use secret references rather than clear state.
+
+Incident context combines the existing factual operations report with affected dependency nodes and evidence IDs, truncates excessive signals and recursively redacts sensitive payload fields. Optional analysis sends this bounded context to an enabled signed webhook destination. It accepts only a closed structured response containing diagnosis, supplied evidence references and typed restart/configuration-rollback proposals. All output is advisory; execution remains a separate normal plan/apply operation under policy.
 
 ## 12. Events, notifications and webhooks
 

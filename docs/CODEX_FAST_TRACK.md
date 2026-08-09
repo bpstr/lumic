@@ -242,6 +242,8 @@ Nightly follow-up issues: notification destinations, more metrics/providers, mor
 
 **Covers Phase 14. This is a major product feature.**
 
+**Status: implemented.** The reusable mechanism is `ApplicationIntelligence`; `laravel-redis@1` is the minimum reference integration. Ecosystem breadth is tracked as nightly work.
+
 Goal: Lumic understands the relationship between hosted applications and infrastructure and can safely wire them together.
 
 Do not build an unrestricted LLM agent inside the daemon. Intelligence must operate over deterministic discovery, dependency models and normal typed Lumic operations.

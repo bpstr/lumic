@@ -244,6 +244,8 @@ Implemented in Epic E: new material operations configuration follows plan/apply 
 
 Lumic learns what the application and server mean together.
 
+Implemented in Epic F: `ApplicationIntelligence` provides evidence/confidence-based deployed-source fingerprinting, key-only dotenv inspection and comment-preserving mutation, integrity-checked snapshots/rollback, a typed dependency graph, compiled integration definitions, bounded/redacted incident context and an optional signed analysis adapter whose output is advisory and restricted to typed remediation proposals. `laravel-redis@1` is the deliberately narrow reference: it selects or installs managed Redis, previews redacted environment changes, restarts only detected queue/Horizon workers, verifies Redis and application health, attaches the typed service reference and records the mutation. Laravel/Typesense, Drupal and further combinations remain nightly catalog breadth.
+
 - framework/application fingerprinting.
 - environment/configuration discovery.
 - application <-> runtime <-> service dependency graph.

@@ -33,6 +33,7 @@ The black/white UI provides:
 
 - live server identity and resource overview;
 - application list/detail and typed service references;
+- evidence-backed application fingerprint and dependency graph panels;
 - deployment history, phases and commit detail;
 - managed-service list/detail, provider health and local data records;
 - events and bounded journal logs;
@@ -44,4 +45,4 @@ The black/white UI provides:
 
 Safe actions call the existing shared services and therefore retain their validation, health gates, rollback behavior, events and audits. Installation registers `lumicd.service`; inspect it with `systemctl status lumicd.service` and logs with `journalctl -u lumicd.service`.
 
-The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure mutations remain in CLI/MCP for now. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, mobile polish and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.
+The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure and application-intelligence mutations remain in CLI/MCP for now; the UI shows the deterministic fingerprint evidence and dependency graph without adding a second orchestration path. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, mobile polish and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.

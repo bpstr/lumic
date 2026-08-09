@@ -265,7 +265,7 @@ pub fn automation_plan(rule: &AutomationRule, impacted_resources: Vec<String>) -
     }
 }
 
-fn validate_systemd_unit(unit: &str) -> Result<(), LumicError> {
+pub fn validate_systemd_unit(unit: &str) -> Result<(), LumicError> {
     if unit.is_empty()
         || unit.len() > 128
         || unit.starts_with('-')

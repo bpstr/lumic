@@ -100,6 +100,11 @@ operations_rule_plan            operations_rule_apply
 operations_run_once             operations_observe
 operations_deliveries
 operations_configuration_rollback
+application_fingerprint         application_configuration_inspect
+application_dependency_graph   application_integration_catalog
+application_integration_plan   application_integration_apply
+application_configuration_rollback
+incident_context               incident_analyze
 events_list                     audit_list
 ```
 
@@ -113,10 +118,10 @@ For example:
 
 ```bash
 LUMIC_MCP_ALLOW_MUTATIONS=1 \
-LUMIC_MCP_SCOPES=mutations,operations.signal,operations.configure,operations.automate,operations.run \
+LUMIC_MCP_SCOPES=mutations,operations.signal,operations.configure,operations.automate,operations.run,application.integrate,incident.analyze \
 LUMIC_MCP_ACTOR=codex cargo run -p lumic-mcp
 ```
 
-Tool descriptions identify read-only versus mutating behavior. Existing mutation tools use the `mutations` compatibility scope. Epic E operations are separated into `operations.signal`, `operations.configure`, `operations.automate` and `operations.run`; `operations.*` grants that family and `*` grants all scopes. Apply operations use the same validated application, recipe, host-operator, apt, systemd, PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Timeline, incident, delivery history and backup verification are read-only. Actor/interface/correlation data is written to `audit.jsonl`; Git/database/recipe/notification secret values are neither accepted by ordinary reads nor returned.
+Tool descriptions identify read-only versus mutating behavior. Existing mutation tools use the `mutations` compatibility scope. Epic E operations are separated into `operations.signal`, `operations.configure`, `operations.automate` and `operations.run`; Epic F integration apply/rollback uses `application.integrate`, and external incident disclosure uses `incident.analyze`. `operations.*` grants that family and `*` grants all scopes. Apply operations use the same validated application, recipe, host-operator, apt, systemd, PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Fingerprints, key-only configuration inspection, dependency graphs, integration plans, incident context, timeline, delivery history and backup verification are read-only. Analysis is advisory and its proposed remediations must be executed separately through ordinary typed tools. Actor/interface/correlation data is written to `audit.jsonl`; Git/database/recipe/notification/dotenv secret values are neither accepted by ordinary reads nor returned.
 
 Node enrollment, trust and signed deploy/rollback envelopes are implemented independently of transport. An agent connected to two local stdio MCP endpoints can carry an envelope from `remote_operation_sign` to `remote_operation_apply`; expiry, target, trust, signature and replay protection are revalidated by the receiving node. These scopes constrain the local process, not authenticated per-client identities. Remote HTTP transport, authentication, TLS, `lumic mcp setup`, per-identity grants, self-update and credential import tools are not implemented yet. Do not expose this stdio process remotely through an unauthenticated bridge. Import credentials locally with the CLI, then pass only their reference to MCP. Application process commands are accepted only as an executable/argument array; shell command strings are not a supported escape hatch.

@@ -30,6 +30,7 @@ use lumic_platform::{
     diagnostics::diagnose_host,
     event_store::EventStore,
     infrastructure::InfrastructureService,
+    intelligence::ApplicationIntelligence,
     managed_service::ManagedServiceManager,
     operations::OperationsService,
     recipe::RecipeManager,
@@ -60,6 +61,51 @@ pub fn host_status() -> lumic_core::Result<HostFacts> {
 struct ApplicationId {
     /// Stable Lumic application identifier.
     app: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApplicationIntegration {
+    app: String,
+    /// Versioned integration definition; defaults to `laravel-redis@1`.
+    integration: Option<String>,
+    /// Existing Redis service identifier; omit to select one or plan installation of `redis`.
+    service: Option<String>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApprovedApplicationIntegration {
+    app: String,
+    /// Versioned integration definition; defaults to `laravel-redis@1`.
+    integration: Option<String>,
+    service: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApprovedConfigurationRollback {
+    app: String,
+    snapshot: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct IncidentContextRequest {
+    app: Option<String>,
+    since_unix_ms: Option<u128>,
+    until_unix_ms: Option<u128>,
+    #[serde(default = "default_timeline_limit")]
+    limit: usize,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct IncidentAnalysisRequest {
+    destination: String,
+    app: Option<String>,
+    since_unix_ms: Option<u128>,
+    until_unix_ms: Option<u128>,
+    #[serde(default = "default_timeline_limit")]
+    limit: usize,
+    approved: bool,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -698,6 +744,177 @@ impl LumicMcpServer {
         Parameters(ApplicationId { app }): Parameters<ApplicationId>,
     ) -> Result<String, String> {
         to_json(&application_service().inspect(&app).map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "application_fingerprint",
+        description = "Detect a managed application's framework/runtime, manifests, dotenv files, workers, scheduler hints and health endpoints with explicit evidence and confidence. Read-only; configuration values are never returned."
+    )]
+    fn application_fingerprint(
+        &self,
+        Parameters(ApplicationId { app }): Parameters<ApplicationId>,
+    ) -> Result<String, String> {
+        to_json(
+            &intelligence_service()
+                .fingerprint(&app)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_configuration_inspect",
+        description = "Inspect an application's active dotenv key names, sensitivity classification and duplicate keys without returning any values. Read-only."
+    )]
+    fn application_configuration_inspect(
+        &self,
+        Parameters(ApplicationId { app }): Parameters<ApplicationId>,
+    ) -> Result<String, String> {
+        to_json(
+            &intelligence_service()
+                .inspect_configuration(&app)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_dependency_graph",
+        description = "Return typed application, runtime, nginx, managed-service and process dependency nodes with evidence-bearing edges. Read-only."
+    )]
+    fn application_dependency_graph(
+        &self,
+        Parameters(ApplicationId { app }): Parameters<ApplicationId>,
+    ) -> Result<String, String> {
+        to_json(
+            &intelligence_service()
+                .dependency_graph(&app)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_integration_catalog",
+        description = "List compiled, versioned application integration definitions and their configuration and verification contracts. Read-only."
+    )]
+    fn application_integration_catalog(&self) -> Result<String, String> {
+        to_json(&intelligence_service().catalog())
+    }
+
+    #[tool(
+        name = "application_integration_plan",
+        description = "Resolve a Laravel-to-Redis integration plan with redacted dotenv diff, affected workers, dependency graph, risks, validation and recovery. Read-only; call before application_integration_apply."
+    )]
+    fn application_integration_plan(
+        &self,
+        Parameters(request): Parameters<ApplicationIntegration>,
+    ) -> Result<String, String> {
+        to_json(
+            &intelligence_service()
+                .plan_integration(
+                    request.integration.as_deref().unwrap_or("laravel-redis@1"),
+                    &request.app,
+                    request.service.as_deref(),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_integration_apply",
+        description = "Apply the reviewed Laravel-to-Redis integration through typed managed-service and application capabilities, snapshot dotenv, restart only affected workers, and verify health. Mutating: requires application.integrate scope and approved=true."
+    )]
+    async fn application_integration_apply(
+        &self,
+        Parameters(request): Parameters<ApprovedApplicationIntegration>,
+    ) -> Result<String, String> {
+        require_scope("application.integrate", request.approved)?;
+        to_json(
+            &intelligence_service()
+                .apply_integration(
+                    request.integration.as_deref().unwrap_or("laravel-redis@1"),
+                    &request.app,
+                    request.service.as_deref(),
+                    &operation_context("application_integration_apply"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_configuration_rollback",
+        description = "Restore an integrity-checked Lumic-owned dotenv snapshot for its application. Mutating: requires application.integrate scope and approved=true."
+    )]
+    fn application_configuration_rollback(
+        &self,
+        Parameters(request): Parameters<ApprovedConfigurationRollback>,
+    ) -> Result<String, String> {
+        require_scope("application.integrate", request.approved)?;
+        intelligence_service()
+            .restore_snapshot(
+                &request.app,
+                &request.snapshot,
+                &operation_context("application_configuration_rollback"),
+            )
+            .map_err(string_error)?;
+        to_json(
+            &serde_json::json!({"application_id": request.app, "snapshot_id": request.snapshot, "restored": true}),
+        )
+    }
+
+    #[tool(
+        name = "incident_context",
+        description = "Build a bounded, redacted factual incident evidence package and map affected resources onto an optional application's dependency graph. Read-only; it does not assert a root cause."
+    )]
+    fn incident_context(
+        &self,
+        Parameters(request): Parameters<IncidentContextRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &intelligence_service()
+                .incident_context(
+                    TimelineQuery {
+                        entity: None,
+                        entity_id: request.app.clone(),
+                        event_type: None,
+                        since_unix_ms: request.since_unix_ms,
+                        until_unix_ms: request.until_unix_ms,
+                        limit: request.limit,
+                    },
+                    request.app.as_deref(),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "incident_analyze",
+        description = "Send a bounded redacted incident context to a configured HTTPS analysis destination and validate its diagnosis, evidence citations, and typed advisory remediations. No remediation is executed. External disclosure requires incident.analyze scope and approved=true."
+    )]
+    async fn incident_analyze(
+        &self,
+        Parameters(request): Parameters<IncidentAnalysisRequest>,
+    ) -> Result<String, String> {
+        require_scope("incident.analyze", request.approved)?;
+        let service = intelligence_service();
+        let context = service
+            .incident_context(
+                TimelineQuery {
+                    entity: None,
+                    entity_id: request.app.clone(),
+                    event_type: None,
+                    since_unix_ms: request.since_unix_ms,
+                    until_unix_ms: request.until_unix_ms,
+                    limit: request.limit,
+                },
+                request.app.as_deref(),
+            )
+            .map_err(string_error)?;
+        to_json(
+            &service
+                .analyze_incident(&context, &request.destination)
+                .await
+                .map_err(string_error)?,
+        )
     }
 
     #[tool(
@@ -2274,6 +2491,14 @@ fn application_service() -> ApplicationService {
         .map(Into::into)
         .unwrap_or_else(|| state.join("apps"));
     ApplicationService::new(state, apps)
+}
+
+fn intelligence_service() -> ApplicationIntelligence {
+    let state = state_directory();
+    let apps = std::env::var_os("LUMIC_APPS_ROOT")
+        .map(Into::into)
+        .unwrap_or_else(|| state.join("apps"));
+    ApplicationIntelligence::new(state, apps)
 }
 
 fn infrastructure_service() -> InfrastructureService {

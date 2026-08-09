@@ -113,6 +113,15 @@ lumic operations rule-plan|rule-apply <id> <event-type> <unit> [--entity-id <id>
 lumic operations run-once
 lumic operations deliveries
 lumic operations rollback-configuration
+lumic intelligence catalog
+lumic intelligence fingerprint <application>
+lumic intelligence config <application>
+lumic intelligence graph <application>
+lumic intelligence plan <application> [--integration laravel-redis@1] [--service <redis-id>]
+lumic intelligence apply <application> [--integration laravel-redis@1] [--service <redis-id>]
+lumic intelligence rollback <application> <snapshot-id>
+lumic intelligence incident [--app <application>] [--since-ms <unix-ms>] [--until-ms <unix-ms>]
+lumic intelligence analyze <destination> [--app <application>]
 lumic service inspect nginx.service
 lumic service restart nginx.service
 lumic self-update apply

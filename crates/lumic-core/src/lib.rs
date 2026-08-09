@@ -5,6 +5,7 @@ use thiserror::Error;
 pub mod application;
 pub mod events;
 pub mod infrastructure;
+pub mod intelligence;
 pub mod managed_service;
 pub mod operations;
 pub mod package;

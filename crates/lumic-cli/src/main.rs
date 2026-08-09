@@ -28,6 +28,7 @@ use lumic_platform::{
     diagnostics::diagnose_host,
     event_store::EventStore,
     infrastructure::InfrastructureService,
+    intelligence::ApplicationIntelligence,
     managed_service::ManagedServiceManager,
     operations::OperationsService,
     recipe::RecipeManager,
@@ -98,6 +99,11 @@ enum Command {
     Operations {
         #[command(subcommand)]
         command: OperationsCommand,
+    },
+    /// Detect application stacks, inspect configuration, graph dependencies, and apply typed integrations.
+    Intelligence {
+        #[command(subcommand)]
+        command: IntelligenceCommand,
     },
     /// Apply or schedule checksum-verified nightly binary updates.
     SelfUpdate {
@@ -850,6 +856,59 @@ enum OperationsCommand {
 }
 
 #[derive(Subcommand)]
+enum IntelligenceCommand {
+    Catalog,
+    Fingerprint {
+        app: String,
+    },
+    Config {
+        app: String,
+    },
+    Graph {
+        app: String,
+    },
+    Plan {
+        app: String,
+        #[arg(long, default_value = "laravel-redis@1")]
+        integration: String,
+        #[arg(long)]
+        service: Option<String>,
+    },
+    Apply {
+        app: String,
+        #[arg(long, default_value = "laravel-redis@1")]
+        integration: String,
+        #[arg(long)]
+        service: Option<String>,
+    },
+    Rollback {
+        app: String,
+        snapshot: String,
+    },
+    Incident {
+        #[arg(long)]
+        app: Option<String>,
+        #[arg(long)]
+        since_ms: Option<u128>,
+        #[arg(long)]
+        until_ms: Option<u128>,
+        #[arg(long, default_value_t = 250)]
+        limit: usize,
+    },
+    Analyze {
+        destination: String,
+        #[arg(long)]
+        app: Option<String>,
+        #[arg(long)]
+        since_ms: Option<u128>,
+        #[arg(long)]
+        until_ms: Option<u128>,
+        #[arg(long, default_value_t = 250)]
+        limit: usize,
+    },
+}
+
+#[derive(Subcommand)]
 enum SelfUpdateCommand {
     /// Download, checksum, preflight, atomically replace, and postflight the nightly binary.
     Apply,
@@ -1068,6 +1127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::Operations { command } => run_operations(command).await?,
+        Command::Intelligence { command } => run_intelligence(command).await?,
         Command::SelfUpdate { command } => {
             let manager = SelfUpdateManager::system(state_directory());
             match command {
@@ -1105,6 +1165,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
     }
+    Ok(())
+}
+
+async fn run_intelligence(command: IntelligenceCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let service = intelligence_service();
+    let value = match command {
+        IntelligenceCommand::Catalog => serde_json::to_value(service.catalog())?,
+        IntelligenceCommand::Fingerprint { app } => {
+            serde_json::to_value(service.fingerprint(&app)?)?
+        }
+        IntelligenceCommand::Config { app } => {
+            serde_json::to_value(service.inspect_configuration(&app)?)?
+        }
+        IntelligenceCommand::Graph { app } => {
+            serde_json::to_value(service.dependency_graph(&app)?)?
+        }
+        IntelligenceCommand::Plan {
+            app,
+            integration,
+            service: selected,
+        } => serde_json::to_value(service.plan_integration(
+            &integration,
+            &app,
+            selected.as_deref(),
+        )?)?,
+        IntelligenceCommand::Apply {
+            app,
+            integration,
+            service: selected,
+        } => serde_json::to_value(
+            service
+                .apply_integration(
+                    &integration,
+                    &app,
+                    selected.as_deref(),
+                    &operation_context(false),
+                )
+                .await?,
+        )?,
+        IntelligenceCommand::Rollback { app, snapshot } => {
+            service.restore_snapshot(&app, &snapshot, &operation_context(false))?;
+            serde_json::json!({"application_id": app, "snapshot_id": snapshot, "restored": true})
+        }
+        IntelligenceCommand::Incident {
+            app,
+            since_ms,
+            until_ms,
+            limit,
+        } => serde_json::to_value(service.incident_context(
+            TimelineQuery {
+                entity: None,
+                entity_id: app.clone(),
+                event_type: None,
+                since_unix_ms: since_ms,
+                until_unix_ms: until_ms,
+                limit,
+            },
+            app.as_deref(),
+        )?)?,
+        IntelligenceCommand::Analyze {
+            destination,
+            app,
+            since_ms,
+            until_ms,
+            limit,
+        } => {
+            let context = service.incident_context(
+                TimelineQuery {
+                    entity: None,
+                    entity_id: app.clone(),
+                    event_type: None,
+                    since_unix_ms: since_ms,
+                    until_unix_ms: until_ms,
+                    limit,
+                },
+                app.as_deref(),
+            )?;
+            serde_json::to_value(service.analyze_incident(&context, &destination).await?)?
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
 
@@ -2231,6 +2372,14 @@ fn application_service() -> ApplicationService {
         .map(PathBuf::from)
         .unwrap_or_else(|| state_directory.join("apps"));
     ApplicationService::new(state_directory, apps_root)
+}
+
+fn intelligence_service() -> ApplicationIntelligence {
+    let state_directory = state_directory();
+    let apps_root = std::env::var_os("LUMIC_APPS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state_directory.join("apps"));
+    ApplicationIntelligence::new(state_directory, apps_root)
 }
 
 fn infrastructure_service() -> InfrastructureService {

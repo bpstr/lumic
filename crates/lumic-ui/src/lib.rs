@@ -12,8 +12,9 @@ use lumic_core::{
 };
 use lumic_platform::{
     application::ApplicationService, atomic_file::write_atomic, event_store::EventStore,
-    infrastructure::InfrastructureService, managed_service::ManagedServiceManager,
-    recipe::RecipeManager, server::HostOperator, systemd::ServiceAction,
+    infrastructure::InfrastructureService, intelligence::ApplicationIntelligence,
+    managed_service::ManagedServiceManager, recipe::RecipeManager, server::HostOperator,
+    systemd::ServiceAction,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -102,6 +103,10 @@ impl UiState {
 
     fn infrastructure(&self) -> InfrastructureService {
         InfrastructureService::new(&self.state_dir, self.apps_root.clone())
+    }
+
+    fn intelligence(&self) -> ApplicationIntelligence {
+        ApplicationIntelligence::new(&self.state_dir, self.apps_root.clone())
     }
 }
 
@@ -494,7 +499,15 @@ async fn application_detail(
             )
         })
         .collect::<String>();
-    page(&app.name, &format!("<h1>{}</h1><p>{} · {:?} · <span class=mono>{}</span></p><div class=actions><a href=/actions/app/{}/deploy>Deploy</a><a href=/actions/app/{}/rollback>Rollback</a></div><div class=grid><dl class=card><dt>Health</dt><dd>{}</dd><dt>Root</dt><dd class=mono>{}</dd><dt>Repository</dt><dd>{}</dd></dl><div class=card><h2>Service references</h2><ul>{}</ul></div></div><h2>Deployments</h2><table><tr><th>ID</th><th>Status</th><th>Commit</th></tr>{deployment_rows}</table>", escape(&app.name), escape(&app.domain), app.runtime, escape(&app.id), url_segment(&id), url_segment(&id), escape(&app.health_status), escape(&app.root), app.repository.as_ref().map(|repo| format!("{} · {}", escape(&repo.url), escape(&repo.branch))).unwrap_or_else(|| "Not configured".into()), references), true).into_response()
+    let intelligence = state.intelligence();
+    let fingerprint = intelligence.fingerprint(&id).ok();
+    let graph = intelligence.dependency_graph(&id).ok();
+    let intelligence_panel = fingerprint.map(|fingerprint| {
+        let evidence = fingerprint.evidence.iter().map(|item| format!("<li><span class=mono>{}</span>: {}</li>", escape(&item.source), escape(&item.observation))).collect::<String>();
+        let dependencies = graph.as_ref().map(|graph| graph.edges.iter().map(|edge| format!("<li><span class=mono>{}</span> → <span class=mono>{}</span> ({})</li>", escape(&edge.from), escape(&edge.to), escape(&edge.relationship))).collect::<String>()).unwrap_or_default();
+        format!("<h2>Application intelligence</h2><div class=grid><div class=card><h3>Fingerprint</h3><p>{} · {:?} confidence · {} runtime</p><ul>{evidence}</ul></div><div class=card><h3>Dependencies</h3><ul>{dependencies}</ul><p class=muted>Use CLI or MCP to review and apply integration plans.</p></div></div>", escape(fingerprint.framework.as_deref().unwrap_or("unrecognized")), fingerprint.confidence, escape(&fingerprint.runtime))
+    }).unwrap_or_else(|| "<h2>Application intelligence</h2><p class=muted>No deployed-source evidence is available yet.</p>".into());
+    page(&app.name, &format!("<h1>{}</h1><p>{} · {:?} · <span class=mono>{}</span></p><div class=actions><a href=/actions/app/{}/deploy>Deploy</a><a href=/actions/app/{}/rollback>Rollback</a></div><div class=grid><dl class=card><dt>Health</dt><dd>{}</dd><dt>Root</dt><dd class=mono>{}</dd><dt>Repository</dt><dd>{}</dd></dl><div class=card><h2>Service references</h2><ul>{}</ul></div></div>{intelligence_panel}<h2>Deployments</h2><table><tr><th>ID</th><th>Status</th><th>Commit</th></tr>{deployment_rows}</table>", escape(&app.name), escape(&app.domain), app.runtime, escape(&app.id), url_segment(&id), url_segment(&id), escape(&app.health_status), escape(&app.root), app.repository.as_ref().map(|repo| format!("{} · {}", escape(&repo.url), escape(&repo.branch))).unwrap_or_else(|| "Not configured".into()), references), true).into_response()
 }
 
 async fn services(State(state): State<UiState>, headers: HeaderMap) -> Response {

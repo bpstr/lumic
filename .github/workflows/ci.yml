@@ -41,6 +41,9 @@ jobs:
       - run: tests/epic-e-smoke.sh
         env:
           LUMIC_TEST_BINARY: target/release/lumic
+      - run: tests/epic-f-smoke.sh
+        env:
+          LUMIC_TEST_BINARY: target/release/lumic
 
   audit:
     runs-on: ubuntu-latest
@@ -106,6 +109,8 @@ jobs:
       - run: sudo apt-get update
       - name: PostgreSQL and Redis live lifecycle smoke test
         run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_MANAGED_SERVICE_LIVE=1 "$PWD/tests/epic-b-smoke.sh"
+      - name: Laravel and Redis intelligence apply and rollback smoke test
+        run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_EPIC_F_LIVE=1 "$PWD/tests/epic-f-smoke.sh"
 
   recipes-host-operator:
     runs-on: ubuntu-24.04

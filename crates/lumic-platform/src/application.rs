@@ -1393,6 +1393,11 @@ impl ApplicationService {
             })?
     }
 
+    pub async fn verify_application_health(&self, id: &str) -> Result<String> {
+        let application = self.inspect(id)?;
+        self.verify_health(&application).await
+    }
+
     fn audit_deployment(
         &self,
         deployment: &Deployment,

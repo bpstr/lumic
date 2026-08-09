@@ -1,15 +1,15 @@
-# Lumic v2 product brief
+# Lumic Control Center v2 product brief
 
 ## Definition
 
-Lumic is a self-hosted, host-native server, application and infrastructure management system for Linux. It combines the useful outcomes of a control panel, OS manager, infrastructure tool, deployment service and Installatron-style application installer in a clean Rust product designed for both humans and coding agents.
+**Lumic Control Center** (short name: **Lumic**) is a self-hosted, host-native server, application and infrastructure management system for Linux. Its public home is [lumic.cc](https://lumic.cc). It combines the useful outcomes of a control panel, OS manager, infrastructure tool, deployment service and Installatron-style application installer in a clean Rust product designed for both humans and coding agents.
 
 The core promise is: **from empty VPS to managed infrastructure in one command.**
 
 ## Primary user journey
 
 1. Buy a blank Linux VPS.
-2. Run `ssh root@server 'curl -fsSL https://lumic.cc/install | sh'`.
+2. Run `ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'`.
 3. Lumic detects OS/architecture/resources and installs itself as a long-running node service.
 4. Open the minimal UI, use the CLI, or register the node as an MCP server in Codex/Claude.
 5. Describe desired applications/environments/services.
@@ -17,6 +17,8 @@ The core promise is: **from empty VPS to managed infrastructure in one command.*
 7. Routine SSH administration becomes exceptional, not normal.
 
 With two VPS nodes, an operator should be able to connect both to Codex and request production + staging environments, application requirements, Git deployment and HTTPS without manually debugging install scripts over SSH.
+
+Lumic nodes are autonomous. The normal architecture must not depend on a Lumic-operated relay, central cloud account, or Lumic-owned DNS entry.
 
 ## Product surfaces
 

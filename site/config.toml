@@ -8,7 +8,6 @@ build_search_index = false
 generate_feeds = false
 
 [markdown]
-highlight_code = true
 smart_punctuation = true
 
 [extra]

@@ -9,7 +9,10 @@ pub struct HostFacts {
 
 impl HostFacts {
     pub fn new(os: impl Into<String>, architecture: impl Into<String>) -> Self {
-        Self { os: os.into(), architecture: architecture.into() }
+        Self {
+            os: os.into(),
+            architecture: architecture.into(),
+        }
     }
 }
 

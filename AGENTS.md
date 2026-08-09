@@ -1,10 +1,19 @@
 # Agent instructions
 
-These instructions apply to Codex, Claude and other coding agents working on Lumic.
+These instructions apply to Codex, Claude and other coding agents working on Lumic Control Center (Lumic).
+
+## Product identity
+
+- The full product name is **Lumic Control Center**.
+- **Lumic** is the normal short name used in prose, commands, binaries, crate names and technical identifiers.
+- The canonical public site and documentation origin is **https://lumic.cc**.
+- The canonical public installer URL is **https://lumic.cc/install.sh**. The root repository `install.sh` is the single source of truth and the Pages build publishes it; do not maintain a second installer implementation under `site/`.
+- `https://lumic.cc/install` may remain as a compatibility alias, but new documentation should use `/install.sh`.
+- Lumic is open source and each node is autonomous. Do not introduce a mandatory Lumic relay, account, hosted control plane or Lumic-owned DNS dependency into the normal node/MCP architecture.
 
 ## Mission
 
-Build Lumic into a host-native Linux server operating layer for developers and operators. The defining workflow is: install Lumic on a fresh VPS once; afterwards humans and coding agents manage the machine through structured Lumic capabilities instead of routine SSH administration.
+Build Lumic Control Center into a host-native Linux server operating layer for developers and operators. The defining workflow is: install Lumic on a fresh VPS once; afterwards humans and coding agents manage the machine through structured Lumic capabilities instead of routine SSH administration.
 
 ## Non-negotiable product boundaries
 

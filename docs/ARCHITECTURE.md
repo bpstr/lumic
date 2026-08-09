@@ -12,7 +12,7 @@ MCP ─┘                        lumic-platform
 ```
 
 ### lumic-core
-Pure domain model: node facts, capabilities, operation requests/results, plans, policy decisions, events, audit records and abstractions. No transport/UI/Linux command syntax.
+Pure domain model: node facts, capabilities, operation requests/results, suggestions, plans, policy decisions, events, audit records and abstractions. No transport/UI/Linux command syntax.
 
 ### lumic-platform
 Linux host detection and adapters for package manager, service manager, process/filesystem/network/firewall mechanisms. Debian and Ubuntu first. Adapters execute native tools through argument-safe process APIs.
@@ -29,12 +29,91 @@ Agent adapter. MCP exposes resources and typed tools rather than generic shell. 
 ### UI/API
 Future crates/adapters. The UI is Rust-based and calls the same services. Do not place privileged host logic in browser-facing code.
 
+## No companion client or skills layer
+
+Lumic deliberately does **not** have a separate remote client binary and does **not** require a Lumic-specific AI skills package.
+
+A Lumic node exposes its own operational surface through CLI, UI, HTTP/API where needed, and MCP. Remote coding agents connect directly to the node MCP endpoint. Do not create `lumic-client`, SDK-like command wrappers, generated remote CLIs, or a separate skills repository unless a concrete future requirement cannot be solved through the node interfaces.
+
+Operational knowledge should stay close to the product through:
+
+- MCP tool/resource schemas and descriptions;
+- public Lumic documentation;
+- runtime/service/application catalogs and recipes;
+- host and application inspection;
+- structured suggestion results.
+
+This avoids duplicated knowledge, version skew, extra installation steps, and a second release lifecycle.
+
+## Core interaction model
+
+For humans and agents, Lumic should converge on four conceptual stages:
+
+```text
+STATUS
+What exists now?
+
+SUGGEST
+What would make sense for this project/host?
+
+PLAN
+What exactly would change?
+
+APPLY
+Perform the approved change.
+```
+
+These are different responsibilities and must remain separate.
+
+- **Status** reports evidence from the actual host and managed resources.
+- **Suggest** is read-only reasoning support. It detects likely project requirements and returns recommendations with evidence. It never mutates the host.
+- **Plan** resolves a concrete desired change against current state, policy, risks and preconditions.
+- **Apply** performs the validated plan and records the result.
+
+Suggestions inform; plans execute.
+
+## Suggestion model
+
+`suggest` exists so an LLM can quickly understand the likely infrastructure requirements of a known stack or inspected repository without Lumic becoming the LLM itself.
+
+Representative human interface:
+
+```text
+lumic suggest laravel
+lumic suggest nextjs
+lumic suggest --path /srv/app
+```
+
+Representative MCP capability:
+
+```text
+suggest_application_setup
+```
+
+Possible inputs include an explicit stack/framework, repository/application path, or target role. Repository-aware suggestion should inspect relevant manifests and framework signals such as `composer.json`, `package.json`, `Cargo.toml`, `pyproject.toml`, lock files, environment examples, migration/config files, worker/scheduler hints and runtime version files.
+
+Results are structured and evidence-backed. Example fields:
+
+```text
+detected framework/runtime/package manager
+required runtime/components
+recommended services
+web/runtime process model
+workers/scheduler
+persistent paths
+deployment strategy
+source evidence
+```
+
+Suggestion should identify requirements and recommendations, not make hidden sizing or mutation decisions. The agent can combine suggestion output with live server status to decide the final topology and configuration.
+
 ## Capability model
 
 Operations should be typed:
 
 ```text
 inspect host
+suggest application setup
 search/install/remove package
 inspect/start/stop/restart service
 install runtime/component

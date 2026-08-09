@@ -4,7 +4,7 @@ description = "The human console over the same typed capabilities used by UI and
 weight = 100
 [extra]
 kicker = "REFERENCE"
-status = "Epic C nightly"
+status = "Epics A-D implemented"
 +++
 
 The CLI should stay predictable and map to Lumic's domain model.
@@ -68,6 +68,26 @@ lumic server backup-schedule <id> <service> --on-calendar daily [--database <nam
 lumic server remediate-restart <unit>
 lumic server remediate-terminate <pid>
 lumic server remediate-journal --older-than-days <days>
+
+lumic git host <repository> [--branch main]
+lumic git mirror <mirror> <url> [--credential-reference <reference>]
+lumic git trigger <repository> <application> [--branch main]
+
+lumic environment secret-generate <reference>
+lumic environment reference-set <application> <NAME> <reference>
+lumic environment export <application> <environment> --tier production|staging|development --output <file>
+lumic environment import <bundle> --target <application> --tier <tier> --domain <domain> [--env NAME=reference] [--service source=target]
+lumic environment diff <source-bundle> <target-bundle>
+
+lumic infrastructure init <node> --name <name> --role app [--role git]
+lumic infrastructure enrollment --endpoint <https-url> --output <file>
+lumic infrastructure register <peer-enrollment-file>
+lumic infrastructure status
+lumic infrastructure endpoint <id> --provider-node <node> --provider-kind <kind> --provider <id> --consumer-node <node> --consumer-kind <kind> --consumer <id> --protocol tcp --host <host> --port <port>
+lumic infrastructure membership --kind worker|reverse_proxy --environment <environment> --application <app> --node <node>
+lumic infrastructure coordinate <environment> --member node=application [--member node=application]
+lumic infrastructure sign --target <trusted-node> --operation application.deploy|application.rollback --application <app> --output <file>
+lumic infrastructure apply <signed-request-file>
 
 lumic ui token rotate
 

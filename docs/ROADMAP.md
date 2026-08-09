@@ -155,6 +155,8 @@ Eliminate the remaining common reasons to SSH into the VPS.
 
 ## Phase 8 — Git and environment management
 
+Implemented: Lumic creates native bare repositories, refreshes native mirrors with optional imported credential references, installs a fixed validated push-to-deploy hook, and exports versioned portable application definitions. Import requires an explicit tier/domain plus target-local secret and service transforms; configuration diff redacts secret references. The static Git workflow is the reference integration.
+
 - hosted bare Git repositories.
 - deploy keys and credentials.
 - repository mirrors/caches.
@@ -166,6 +168,8 @@ Eliminate the remaining common reasons to SSH into the VPS.
 **Exit:** Lumic can host source when desired and reproduce/clone managed application environments.
 
 ## Phase 9 — Multi-node foundation
+
+Implemented: each node has a persistent Ed25519 identity and public enrollment document, explicit trust/revocation, typed roles, peer health evidence, resource endpoints, worker/reverse-proxy memberships, and a consolidated infrastructure read model. Signed remote requests are short-lived, target-bound, allowlisted and replay-protected; nodes remain autonomous and the agent transports requests between endpoints.
 
 Keep this conventional and simple; do not build Kubernetes.
 
@@ -179,6 +183,8 @@ Keep this conventional and simple; do not build Kubernetes.
 **Exit:** multiple autonomous Lumic nodes can be reasoned about and operated as one explicit infrastructure topology.
 
 ## Phase 10 — Environments and coordinated deployment
+
+Implemented: production/staging/development bundles share application configuration while requiring transformed domains and target-local secret/service references. Coordination records an explicit member plan, node-local outcomes, health and a stop-on-first-failure/targeted-rollback boundary; it is not a distributed scheduler. The CI smoke test constructs production and staging nodes, deploys both, and completes coordination without SSH.
 
 - production/staging/development environment model.
 - clone/transform environment workflows.

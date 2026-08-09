@@ -23,6 +23,7 @@ pub mod atomic_file;
 pub mod audit_store;
 pub mod diagnostics;
 pub mod event_store;
+pub mod infrastructure;
 pub mod managed_service;
 pub mod recipe;
 pub mod runtime;

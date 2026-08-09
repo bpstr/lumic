@@ -11,7 +11,9 @@ In Lumic an application is more than an nginx site. It is the lifecycle boundary
 
 The nightly CLI persists application identity, domain, static/PHP/Node runtime, Git repository and branch, health configuration/state, worker/schedule definitions, typed managed-service references, nginx/TLS state, release retention, timestamps, and deployment history. It creates `releases/`, `shared/`, `repository/`, and an atomic `current` symlink under `/var/lib/lumic/apps/<name>`.
 
-Managed PostgreSQL/Redis resources can be attached with a semantic role plus optional database/user. Application metadata keeps only the secret reference; it does not copy credential values. Environment-file discovery and automatic connection-variable wiring are intentionally reserved for the later application-integration epic.
+Managed PostgreSQL/Redis resources can be attached with a semantic role plus optional database/user. Application metadata keeps only the secret reference; it does not copy credential values. Portable environment bundles now clone this typed application definition between nodes with an explicit target tier, domain and secret/service-reference transforms. Environment-file discovery and automatic connection-variable wiring are intentionally reserved for the later application-integration epic.
+
+Exports never include secret values. Before import creates or updates an application, Lumic verifies that every final environment, service and repository credential reference exists in private state on the target node. `lumic environment diff` redacts sensitive references while still showing whether the source and target are configured differently.
 
 Repository URLs must use HTTPS, SSH/Git scp syntax, or `file://`. HTTPS credentials embedded in URLs are rejected; metadata stores only an optional credential reference. `app credential import` copies a validated private key into the private state directory with mode `0600`; Git receives the resolved key path through a scoped process environment and status/audit output remains redacted.
 

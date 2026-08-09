@@ -1,5 +1,5 @@
 use axum::{
-    Form, Router,
+    Form, Json, Router,
     extract::{Path as RoutePath, Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     middleware::{self, Next},
@@ -12,8 +12,8 @@ use lumic_core::{
 };
 use lumic_platform::{
     application::ApplicationService, atomic_file::write_atomic, event_store::EventStore,
-    managed_service::ManagedServiceManager, recipe::RecipeManager, server::HostOperator,
-    systemd::ServiceAction,
+    infrastructure::InfrastructureService, managed_service::ManagedServiceManager,
+    recipe::RecipeManager, server::HostOperator, systemd::ServiceAction,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -99,6 +99,10 @@ impl UiState {
     fn host_operator(&self) -> HostOperator {
         HostOperator::at_state_dir(&self.state_dir)
     }
+
+    fn infrastructure(&self) -> InfrastructureService {
+        InfrastructureService::new(&self.state_dir, self.apps_root.clone())
+    }
 }
 
 pub fn router(state: UiState) -> Router {
@@ -113,6 +117,8 @@ pub fn router(state: UiState) -> Router {
         .route("/services/{id}/logs", get(service_logs))
         .route("/recipes", get(recipes))
         .route("/host", get(host_operator))
+        .route("/infrastructure", get(infrastructure))
+        .route("/api/infrastructure", get(infrastructure_api))
         .route("/deployments/{app}/{id}", get(deployment_detail))
         .route("/events", get(events))
         .route(
@@ -256,7 +262,86 @@ async fn overview(State(state): State<UiState>, headers: HeaderMap) -> Response 
             )
         })
         .collect::<String>();
-    page("Overview", &format!("<h1>{}</h1><p class=muted>{} · {:?} · kernel {}</p><div class=grid><div class=card><h2>Applications</h2><p>{}</p><a href=/apps>Inspect applications</a></div><div class=card><h2>Services</h2><p>{}</p><a href=/services>Inspect services</a></div><div class=card><h2>Resources</h2><p>{} CPUs · {} MiB available</p></div></div><h2>Recent events</h2><table><tr><th>Time</th><th>Event</th><th>Entity</th></tr>{event_rows}</table>", escape(&host.hostname), escape(&host.distribution.version_name), host.architecture, escape(&host.kernel_release), apps.len(), services.len(), host.cpu_count, host.memory.available_bytes / 1024 / 1024), true).into_response()
+    let infrastructure = state.infrastructure().read_model().ok();
+    let peer_count = infrastructure.as_ref().map_or(0, |model| model.nodes.len());
+    page("Overview", &format!("<h1>{}</h1><p class=muted>{} · {:?} · kernel {}</p><div class=grid><div class=card><h2>Applications</h2><p>{}</p><a href=/apps>Inspect applications</a></div><div class=card><h2>Services</h2><p>{}</p><a href=/services>Inspect services</a></div><div class=card><h2>Infrastructure</h2><p>{peer_count} trusted or revoked peers</p><a href=/infrastructure>Inspect topology</a></div><div class=card><h2>Resources</h2><p>{} CPUs · {} MiB available</p></div></div><h2>Recent events</h2><table><tr><th>Time</th><th>Event</th><th>Entity</th></tr>{event_rows}</table>", escape(&host.hostname), escape(&host.distribution.version_name), host.architecture, escape(&host.kernel_release), apps.len(), services.len(), host.cpu_count, host.memory.available_bytes / 1024 / 1024), true).into_response()
+}
+
+async fn infrastructure(State(state): State<UiState>, headers: HeaderMap) -> Response {
+    if auth(&state, &headers).is_none() {
+        return Redirect::to("/login").into_response();
+    }
+    let model = match state.infrastructure().read_model() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let nodes = model
+        .nodes
+        .iter()
+        .map(|node| {
+            let health = node
+                .last_health
+                .as_ref()
+                .map(|health| {
+                    if health.healthy {
+                        "healthy"
+                    } else {
+                        "unhealthy"
+                    }
+                })
+                .unwrap_or("unchecked");
+            format!(
+                "<tr><td>{}</td><td>{:?}</td><td>{}</td><td>{}</td></tr>",
+                escape(&node.identity.name),
+                node.trust_status,
+                escape(&node.endpoint),
+                health
+            )
+        })
+        .collect::<String>();
+    let environments = model
+        .environments
+        .iter()
+        .map(|environment| {
+            format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                escape(&environment.id),
+                escape(environment.tier.as_str()),
+                escape(&environment.application.id),
+                escape(&environment.application.domain)
+            )
+        })
+        .collect::<String>();
+    page(
+        "Infrastructure",
+        &format!(
+            "<h1>Infrastructure</h1><p class=muted>Node <span class=mono>{}</span> · roles {:?}</p><div class=grid><div class=card><h2>Git</h2><p>{} hosted · {} mirrors · {} push triggers</p></div><div class=card><h2>Topology</h2><p>{} endpoints · {} memberships</p></div><div class=card><h2>Deployments</h2><p>{} coordinated waves</p></div></div><h2>Nodes</h2><table><tr><th>Node</th><th>Trust</th><th>Endpoint</th><th>Health</th></tr>{nodes}</table><h2>Environments</h2><table><tr><th>Environment</th><th>Tier</th><th>Application</th><th>Domain</th></tr>{environments}</table>",
+            escape(&model.local_node.id),
+            model.local_node.roles,
+            model.repositories.len(),
+            model.mirrors.len(),
+            model.triggers.len(),
+            model.endpoints.len(),
+            model.memberships.len(),
+            model.deployments.len(),
+        ),
+        true,
+    )
+    .into_response()
+}
+
+async fn infrastructure_api(State(state): State<UiState>, headers: HeaderMap) -> Response {
+    if auth(&state, &headers).is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match state.infrastructure().read_model() {
+        Ok(model) => Json(model).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 async fn applications(State(state): State<UiState>, headers: HeaderMap) -> Response {
@@ -773,7 +858,7 @@ fn deployment_html(item: &Deployment) -> String {
 
 fn page(title: &str, body: &str, navigation: bool) -> Html<String> {
     let header = if navigation {
-        "<header><strong>Lumic</strong><a href=/>Overview</a><a href=/apps>Applications</a><a href=/services>Services</a><a href=/recipes>Recipes</a><a href=/host>Host</a><a href=/events>Events</a><form method=post action=/logout><button>Sign out</button></form></header>"
+        "<header><strong>Lumic</strong><a href=/>Overview</a><a href=/apps>Applications</a><a href=/services>Services</a><a href=/recipes>Recipes</a><a href=/infrastructure>Infrastructure</a><a href=/host>Host</a><a href=/events>Events</a><form method=post action=/logout><button>Sign out</button></form></header>"
     } else {
         "<header><strong>Lumic</strong></header>"
     };
@@ -879,6 +964,7 @@ mod tests {
             "/apps",
             "/recipes",
             "/host",
+            "/infrastructure",
             "/actions/host/security-updates",
         ] {
             let response = app
@@ -888,6 +974,17 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::SEE_OTHER);
         }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/infrastructure")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         let response = app
             .clone()
             .oneshot(Request::builder().uri("/apps").body(Body::empty()).unwrap())

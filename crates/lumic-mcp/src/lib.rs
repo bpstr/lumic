@@ -6,6 +6,11 @@ use lumic_core::{
         ApplicationProcess, ApplicationProcessKind, ApplicationRuntime,
         ApplicationServiceReference, Deployment,
     },
+    infrastructure::{
+        DeploymentMemberStatus, EnvironmentBundle, EnvironmentTier, EnvironmentTransform,
+        MembershipKind, NodeEnrollment, NodeRole, RemoteOperation, ResourceEndpoint,
+        SignedRemoteRequest,
+    },
     managed_service::{ManagedServiceKind, ServiceConfiguration},
     package::PackageName,
     recipe::RecipeInstallRequest,
@@ -20,6 +25,7 @@ use lumic_platform::{
     audit_store::AuditStore,
     diagnostics::diagnose_host,
     event_store::EventStore,
+    infrastructure::InfrastructureService,
     managed_service::ManagedServiceManager,
     recipe::RecipeManager,
     server::HostOperator,
@@ -49,6 +55,181 @@ pub fn host_status() -> lumic_core::Result<HostFacts> {
 struct ApplicationId {
     /// Stable Lumic application identifier.
     app: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct InitializeNode {
+    id: String,
+    name: String,
+    /// One or more of: app, worker, database, cache, git, media, backup, edge.
+    roles: Vec<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct NodeEndpoint {
+    /// HTTPS MCP/API endpoint, or explicit loopback HTTP for local testing.
+    endpoint: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct NodeId {
+    node: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApprovedNode {
+    node: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RegisterNode {
+    /// Exact JSON returned by node_enrollment on the peer.
+    enrollment_json: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct CreateHostedRepository {
+    repository: String,
+    #[serde(default = "default_branch")]
+    branch: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct SyncRepositoryMirror {
+    mirror: String,
+    source_url: String,
+    #[serde(default = "default_branch")]
+    branch: String,
+    credential_reference: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ConfigurePushTrigger {
+    repository: String,
+    application: String,
+    #[serde(default = "default_branch")]
+    branch: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ExportEnvironment {
+    application: String,
+    environment: String,
+    /// One of: production, staging, development.
+    tier: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct GenerateSecret {
+    reference: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct SetEnvironmentReference {
+    application: String,
+    name: String,
+    reference: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ImportEnvironment {
+    /// Exact JSON returned by environment_export.
+    bundle_json: String,
+    target: String,
+    /// One of: production, staging, development.
+    tier: String,
+    domain: String,
+    /// Source environment name to an existing target-local secret reference.
+    #[serde(default)]
+    environment_reference_overrides: BTreeMap<String, String>,
+    /// Source managed-service id to target managed-service id.
+    #[serde(default)]
+    service_id_overrides: BTreeMap<String, String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct DiffEnvironments {
+    source_bundle_json: String,
+    target_bundle_json: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RegisterEndpoint {
+    id: String,
+    provider_node_id: String,
+    provider_kind: String,
+    provider_id: String,
+    consumer_node_id: String,
+    consumer_kind: String,
+    consumer_id: String,
+    /// One of: tcp, http, https.
+    protocol: String,
+    host: String,
+    port: u16,
+    health_path: Option<String>,
+    secret_reference: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ConfigureMembership {
+    /// One of: worker, reverse_proxy.
+    kind: String,
+    environment: String,
+    application: String,
+    node: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct BeginCoordination {
+    environment: String,
+    /// Map of trusted/local node ids to their node-local application ids.
+    members: BTreeMap<String, String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ReportCoordination {
+    coordination: String,
+    node: String,
+    /// One of: pending, running, succeeded, failed, rolled_back.
+    status: String,
+    healthy: Option<bool>,
+    deployment: Option<String>,
+    message: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct SignRemoteOperation {
+    target: String,
+    /// One of: application.deploy, application.rollback.
+    operation: String,
+    application: String,
+    #[serde(default = "default_remote_ttl")]
+    ttl_seconds: u64,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApplyRemoteOperation {
+    /// Exact JSON returned by remote_operation_sign on a trusted peer.
+    signed_request_json: String,
+    approved: bool,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -355,6 +536,9 @@ const fn default_health_port() -> u16 {
 const fn default_true() -> bool {
     true
 }
+const fn default_remote_ttl() -> u64 {
+    60
+}
 fn default_any() -> String {
     "any".into()
 }
@@ -620,6 +804,421 @@ impl LumicMcpServer {
                     process,
                     &operation_context("application_configure_process"),
                 )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "infrastructure_status",
+        description = "Read the local node identity and the persistent cross-node read model: trusted peers, Git repositories/mirrors/triggers, environments, explicit endpoints, worker/proxy memberships, and coordinated deployments. Read-only; secrets and signing keys are never returned."
+    )]
+    fn infrastructure_status(&self) -> Result<String, String> {
+        to_json(
+            &infrastructure_service()
+                .read_model()
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "node_initialize",
+        description = "Create this node's stable identity and private Ed25519 signing key with explicit roles. One-time mutation: requires node policy enablement and approved=true."
+    )]
+    fn node_initialize(
+        &self,
+        Parameters(request): Parameters<InitializeNode>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let roles = request
+            .roles
+            .iter()
+            .map(|role| NodeRole::parse(role).map_err(string_error))
+            .collect::<Result<Vec<_>, _>>()?;
+        to_json(
+            &infrastructure_service()
+                .initialize_node(
+                    &request.id,
+                    &request.name,
+                    roles,
+                    &operation_context("node_initialize"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "node_enrollment",
+        description = "Export this node's non-secret identity, HTTPS endpoint and Ed25519 verification key for explicit exchange with another Lumic node. Read-only."
+    )]
+    fn node_enrollment(
+        &self,
+        Parameters(NodeEndpoint { endpoint }): Parameters<NodeEndpoint>,
+    ) -> Result<String, String> {
+        to_json(
+            &infrastructure_service()
+                .enrollment(&endpoint)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "node_register",
+        description = "Validate and trust a peer's public enrollment package. Mutating trust boundary: requires node policy enablement and approved=true. Private signing material is never exchanged."
+    )]
+    fn node_register(
+        &self,
+        Parameters(request): Parameters<RegisterNode>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let enrollment: NodeEnrollment =
+            serde_json::from_str(&request.enrollment_json).map_err(string_error)?;
+        to_json(
+            &infrastructure_service()
+                .register_node(enrollment, &operation_context("node_register"))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "node_revoke",
+        description = "Revoke a peer so future signed remote requests from it are rejected. Mutating trust boundary: requires node policy enablement and approved=true."
+    )]
+    fn node_revoke(
+        &self,
+        Parameters(ApprovedNode { node, approved }): Parameters<ApprovedNode>,
+    ) -> Result<String, String> {
+        require_mutation(approved)?;
+        to_json(
+            &infrastructure_service()
+                .revoke_node(&node, &operation_context("node_revoke"))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "node_health",
+        description = "Check whether a trusted peer's declared Lumic endpoint accepts a bounded TCP connection and persist the evidence. Read-only with respect to the remote node."
+    )]
+    async fn node_health(
+        &self,
+        Parameters(NodeId { node }): Parameters<NodeId>,
+    ) -> Result<String, String> {
+        to_json(
+            &infrastructure_service()
+                .check_node_health(&node)
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "git_repository_host",
+        description = "Create an idempotent native bare Git repository under Lumic state using direct git argv. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn git_repository_host(
+        &self,
+        Parameters(request): Parameters<CreateHostedRepository>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &infrastructure_service()
+                .create_hosted_repository(
+                    &request.repository,
+                    &request.branch,
+                    &operation_context("git_repository_host"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "git_mirror_sync",
+        description = "Create or refresh a native bare Git mirror with an optional imported credential reference. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn git_mirror_sync(
+        &self,
+        Parameters(request): Parameters<SyncRepositoryMirror>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &infrastructure_service()
+                .sync_mirror(
+                    &request.mirror,
+                    &request.source_url,
+                    &request.branch,
+                    request.credential_reference,
+                    &operation_context("git_mirror_sync"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "git_push_deploy_configure",
+        description = "Attach a fixed post-receive hook that invokes only Lumic's validated receive capability for one branch/application mapping. Mutating: requires node policy enablement and approved=true."
+    )]
+    fn git_push_deploy_configure(
+        &self,
+        Parameters(request): Parameters<ConfigurePushTrigger>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &infrastructure_service()
+                .set_push_trigger(
+                    &request.repository,
+                    &request.application,
+                    &request.branch,
+                    request.enabled,
+                    &operation_context("git_push_deploy_configure"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "environment_secret_generate",
+        description = "Generate a private random target-local secret and return only its stable reference. Mutating: requires policy enablement and approved=true. Secret values are never returned or logged."
+    )]
+    fn environment_secret_generate(
+        &self,
+        Parameters(request): Parameters<GenerateSecret>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &infrastructure_service()
+                .generate_secret(
+                    &request.reference,
+                    &operation_context("environment_secret_generate"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_environment_reference_set",
+        description = "Attach an existing target-local secret reference to an application environment name. Mutating: requires policy enablement and approved=true. Fails closed for missing secrets."
+    )]
+    fn application_environment_reference_set(
+        &self,
+        Parameters(request): Parameters<SetEnvironmentReference>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &application_service()
+                .set_environment_reference(
+                    &request.application,
+                    &request.name,
+                    &request.reference,
+                    &operation_context("application_environment_reference_set"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "environment_export",
+        description = "Export a versioned portable application/environment bundle containing runtime, repository, health, processes, managed-service references and secret references—but never secret values. Mutating only to persist the named environment snapshot; requires policy enablement and approved=true."
+    )]
+    fn environment_export(
+        &self,
+        Parameters(request): Parameters<ExportEnvironment>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &infrastructure_service()
+                .export_environment(
+                    &request.application,
+                    &request.environment,
+                    EnvironmentTier::parse(&request.tier).map_err(string_error)?,
+                    &operation_context("environment_export"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "environment_import",
+        description = "Clone a portable bundle into a target application/environment with explicit tier, domain, target-local secret-reference and service-id transforms. Mutating: requires policy enablement and approved=true. Missing target secrets fail closed."
+    )]
+    fn environment_import(
+        &self,
+        Parameters(request): Parameters<ImportEnvironment>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let bundle: EnvironmentBundle =
+            serde_json::from_str(&request.bundle_json).map_err(string_error)?;
+        to_json(
+            &infrastructure_service()
+                .import_environment(
+                    &bundle,
+                    &EnvironmentTransform {
+                        target_id: request.target,
+                        target_tier: EnvironmentTier::parse(&request.tier).map_err(string_error)?,
+                        target_domain: request.domain,
+                        environment_reference_overrides: request.environment_reference_overrides,
+                        service_id_overrides: request.service_id_overrides,
+                    },
+                    &operation_context("environment_import"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "environment_diff",
+        description = "Compare two portable environment bundles. Returns domain, tier, runtime, service mapping and redacted secret-reference differences. Read-only."
+    )]
+    fn environment_diff(
+        &self,
+        Parameters(request): Parameters<DiffEnvironments>,
+    ) -> Result<String, String> {
+        let source: EnvironmentBundle =
+            serde_json::from_str(&request.source_bundle_json).map_err(string_error)?;
+        let target: EnvironmentBundle =
+            serde_json::from_str(&request.target_bundle_json).map_err(string_error)?;
+        to_json(&infrastructure_service().diff_environments(&source, &target))
+    }
+
+    #[tool(
+        name = "resource_endpoint_register",
+        description = "Register an explicit producer-to-consumer service/application endpoint with protocol, host, port, health path and optional secret reference. Mutating: requires policy enablement and approved=true."
+    )]
+    fn resource_endpoint_register(
+        &self,
+        Parameters(request): Parameters<RegisterEndpoint>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &infrastructure_service()
+                .register_endpoint(
+                    ResourceEndpoint {
+                        id: request.id,
+                        provider_node_id: request.provider_node_id,
+                        provider_kind: request.provider_kind,
+                        provider_id: request.provider_id,
+                        consumer_node_id: request.consumer_node_id,
+                        consumer_kind: request.consumer_kind,
+                        consumer_id: request.consumer_id,
+                        protocol: request.protocol,
+                        host: request.host,
+                        port: request.port,
+                        health_path: request.health_path,
+                        secret_reference: request.secret_reference,
+                    },
+                    &operation_context("resource_endpoint_register"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "node_membership_configure",
+        description = "Declare explicit worker or reverse-proxy membership for an application environment. Mutating: requires policy enablement and approved=true. This is topology state, not an implicit scheduler."
+    )]
+    fn node_membership_configure(
+        &self,
+        Parameters(request): Parameters<ConfigureMembership>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &infrastructure_service()
+                .register_membership(
+                    MembershipKind::parse(&request.kind).map_err(string_error)?,
+                    &request.environment,
+                    &request.application,
+                    &request.node,
+                    request.enabled,
+                    &operation_context("node_membership_configure"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "coordinated_deployment_begin",
+        description = "Create an externally orchestrated deployment wave across explicit local/trusted node members. It records the stop-and-rollback failure boundary but performs no hidden remote mutation. Requires policy enablement and approved=true."
+    )]
+    fn coordinated_deployment_begin(
+        &self,
+        Parameters(request): Parameters<BeginCoordination>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &infrastructure_service()
+                .begin_coordination(
+                    &request.environment,
+                    request.members.into_iter().collect(),
+                    &operation_context("coordinated_deployment_begin"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "coordinated_deployment_report",
+        description = "Record one node-local deployment result and health outcome. The coordination succeeds only when all members explicitly report healthy success; first failure closes the wave as failed. Requires policy enablement and approved=true."
+    )]
+    fn coordinated_deployment_report(
+        &self,
+        Parameters(request): Parameters<ReportCoordination>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let status = parse_member_status(&request.status)?;
+        to_json(
+            &infrastructure_service()
+                .report_coordination_member(
+                    &request.coordination,
+                    &request.node,
+                    status,
+                    request.healthy,
+                    request.deployment,
+                    request.message,
+                    &operation_context("coordinated_deployment_report"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "remote_operation_sign",
+        description = "Create a short-lived Ed25519-signed typed request for application.deploy or application.rollback on a target node. Read-only locally; does not contact or mutate the target."
+    )]
+    fn remote_operation_sign(
+        &self,
+        Parameters(request): Parameters<SignRemoteOperation>,
+    ) -> Result<String, String> {
+        to_json(
+            &infrastructure_service()
+                .sign_remote_request(
+                    &request.target,
+                    RemoteOperation {
+                        kind: request.operation,
+                        resource_id: request.application,
+                        arguments: BTreeMap::new(),
+                    },
+                    request.ttl_seconds,
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "remote_operation_apply",
+        description = "Verify origin trust, target, expiry, Ed25519 signature, nonce replay protection and the closed operation allowlist, then invoke the normal node-local deploy/rollback contract. Mutating: requires policy enablement and approved=true."
+    )]
+    async fn remote_operation_apply(
+        &self,
+        Parameters(request): Parameters<ApplyRemoteOperation>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let signed: SignedRemoteRequest =
+            serde_json::from_str(&request.signed_request_json).map_err(string_error)?;
+        to_json(
+            &infrastructure_service()
+                .execute_remote_request(&signed, &operation_context("remote_operation_apply"))
                 .await
                 .map_err(string_error)?,
         )
@@ -1344,6 +1943,25 @@ fn application_service() -> ApplicationService {
     ApplicationService::new(state, apps)
 }
 
+fn infrastructure_service() -> InfrastructureService {
+    let state = state_directory();
+    let apps = std::env::var_os("LUMIC_APPS_ROOT")
+        .map(Into::into)
+        .unwrap_or_else(|| state.join("apps"));
+    InfrastructureService::new(state, apps)
+}
+
+fn parse_member_status(value: &str) -> Result<DeploymentMemberStatus, String> {
+    match value {
+        "pending" => Ok(DeploymentMemberStatus::Pending),
+        "running" => Ok(DeploymentMemberStatus::Running),
+        "succeeded" => Ok(DeploymentMemberStatus::Succeeded),
+        "failed" => Ok(DeploymentMemberStatus::Failed),
+        "rolled_back" => Ok(DeploymentMemberStatus::RolledBack),
+        _ => Err("status must be pending, running, succeeded, failed, or rolled_back".into()),
+    }
+}
+
 fn recipe_manager() -> RecipeManager {
     let state = state_directory();
     let apps = std::env::var_os("LUMIC_APPS_ROOT")
@@ -1538,6 +2156,26 @@ mod tests {
             "host_updates_apply",
             "host_backup_schedule",
             "host_remediate",
+            "infrastructure_status",
+            "node_initialize",
+            "node_enrollment",
+            "node_register",
+            "node_revoke",
+            "node_health",
+            "git_repository_host",
+            "git_mirror_sync",
+            "git_push_deploy_configure",
+            "environment_secret_generate",
+            "application_environment_reference_set",
+            "environment_export",
+            "environment_import",
+            "environment_diff",
+            "resource_endpoint_register",
+            "node_membership_configure",
+            "coordinated_deployment_begin",
+            "coordinated_deployment_report",
+            "remote_operation_sign",
+            "remote_operation_apply",
         ] {
             assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
         }

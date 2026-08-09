@@ -159,6 +159,8 @@ Nightly follow-up issues: Laravel, Drupal, WordPress, Symfony, Ghost, Forgejo an
 
 **Covers Phases 8–10.**
 
+**Status:** implemented on `main` with the intentionally narrow two-node static Git reference workflow. Provider breadth and network transport hardening remain nightly follow-ups.
+
 Goal: two or more Lumic nodes can be treated as explicit infrastructure without Kubernetes-like complexity.
 
 Build:

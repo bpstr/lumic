@@ -4,6 +4,11 @@ use lumic_core::{
     application::{
         ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, ApplicationServiceReference,
     },
+    infrastructure::{
+        DeploymentMemberStatus, EnvironmentBundle, EnvironmentTier, EnvironmentTransform,
+        MembershipKind, NodeEnrollment, NodeRole, RemoteOperation, ResourceEndpoint,
+        SignedRemoteRequest,
+    },
     managed_service::ManagedServiceKind,
     package::{PackageMutation, PackageName, PackageRecord},
     recipe::RecipeInstallRequest,
@@ -18,13 +23,14 @@ use lumic_platform::{
     audit_store::AuditStore,
     diagnostics::diagnose_host,
     event_store::EventStore,
+    infrastructure::InfrastructureService,
     managed_service::ManagedServiceManager,
     recipe::RecipeManager,
     self_update::SelfUpdateManager,
     server::HostOperator,
     systemd::{ServiceAction, SystemdServiceManager},
 };
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, fs, io::Read, path::PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -93,6 +99,21 @@ enum Command {
         #[command(subcommand)]
         command: AppCommand,
     },
+    /// Host and mirror native Git repositories, or handle a validated push trigger.
+    Git {
+        #[command(subcommand)]
+        command: GitCommand,
+    },
+    /// Export, transform, import, and diff portable application environments.
+    Environment {
+        #[command(subcommand)]
+        command: EnvironmentCommand,
+    },
+    /// Manage node identity, trust, topology, and coordinated deployment state.
+    Infrastructure {
+        #[command(subcommand)]
+        command: InfrastructureCommand,
+    },
     /// Catalog, plan, install, update, and uninstall versioned application recipes.
     Recipe {
         #[command(subcommand)]
@@ -107,6 +128,211 @@ enum Command {
     Ui {
         #[command(subcommand)]
         command: UiCommand,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum EnvironmentTierArg {
+    Production,
+    Staging,
+    Development,
+}
+
+impl From<EnvironmentTierArg> for EnvironmentTier {
+    fn from(value: EnvironmentTierArg) -> Self {
+        match value {
+            EnvironmentTierArg::Production => Self::Production,
+            EnvironmentTierArg::Staging => Self::Staging,
+            EnvironmentTierArg::Development => Self::Development,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum NodeRoleArg {
+    App,
+    Worker,
+    Database,
+    Cache,
+    Git,
+    Media,
+    Backup,
+    Edge,
+}
+
+impl From<NodeRoleArg> for NodeRole {
+    fn from(value: NodeRoleArg) -> Self {
+        match value {
+            NodeRoleArg::App => Self::App,
+            NodeRoleArg::Worker => Self::Worker,
+            NodeRoleArg::Database => Self::Database,
+            NodeRoleArg::Cache => Self::Cache,
+            NodeRoleArg::Git => Self::Git,
+            NodeRoleArg::Media => Self::Media,
+            NodeRoleArg::Backup => Self::Backup,
+            NodeRoleArg::Edge => Self::Edge,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum GitCommand {
+    Host {
+        repository: String,
+        #[arg(long, default_value = "main")]
+        branch: String,
+    },
+    Mirror {
+        mirror: String,
+        url: String,
+        #[arg(long, default_value = "main")]
+        branch: String,
+        #[arg(long)]
+        credential_reference: Option<String>,
+    },
+    Trigger {
+        repository: String,
+        application: String,
+        #[arg(long, default_value = "main")]
+        branch: String,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    #[command(hide = true)]
+    Receive { repository: String },
+}
+
+#[derive(Subcommand)]
+enum EnvironmentCommand {
+    SecretGenerate {
+        reference: String,
+    },
+    ReferenceSet {
+        application: String,
+        name: String,
+        reference: String,
+    },
+    Export {
+        application: String,
+        environment: String,
+        #[arg(long, value_enum)]
+        tier: EnvironmentTierArg,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    Import {
+        bundle: PathBuf,
+        #[arg(long)]
+        target: String,
+        #[arg(long, value_enum)]
+        tier: EnvironmentTierArg,
+        #[arg(long)]
+        domain: String,
+        #[arg(long = "env", value_parser = parse_key_value)]
+        environment: Vec<(String, String)>,
+        #[arg(long = "service", value_parser = parse_key_value)]
+        services: Vec<(String, String)>,
+    },
+    Diff {
+        source: PathBuf,
+        target: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum InfrastructureCommand {
+    Status,
+    Init {
+        id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long = "role", value_enum, required = true)]
+        roles: Vec<NodeRoleArg>,
+    },
+    Enrollment {
+        #[arg(long)]
+        endpoint: String,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    Register {
+        enrollment: PathBuf,
+    },
+    Revoke {
+        node: String,
+    },
+    Endpoint {
+        id: String,
+        #[arg(long)]
+        provider_node: String,
+        #[arg(long)]
+        provider_kind: String,
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        consumer_node: String,
+        #[arg(long)]
+        consumer_kind: String,
+        #[arg(long)]
+        consumer: String,
+        #[arg(long)]
+        protocol: String,
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        port: u16,
+        #[arg(long)]
+        health_path: Option<String>,
+        #[arg(long)]
+        secret_reference: Option<String>,
+    },
+    Membership {
+        #[arg(long, value_parser = ["worker", "reverse_proxy"])]
+        kind: String,
+        #[arg(long)]
+        environment: String,
+        #[arg(long)]
+        application: String,
+        #[arg(long)]
+        node: String,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    Health {
+        node: String,
+    },
+    Coordinate {
+        environment: String,
+        #[arg(long = "member", value_parser = parse_key_value, required = true)]
+        members: Vec<(String, String)>,
+    },
+    Report {
+        coordination: String,
+        #[arg(long)]
+        node: String,
+        #[arg(long, value_parser = ["pending", "running", "succeeded", "failed", "rolled_back"])]
+        status: String,
+        #[arg(long)]
+        healthy: Option<bool>,
+        #[arg(long)]
+        deployment: Option<String>,
+        #[arg(long)]
+        message: String,
+    },
+    Sign {
+        #[arg(long)]
+        target: String,
+        #[arg(long, value_parser = ["application.deploy", "application.rollback"])]
+        operation: String,
+        #[arg(long)]
+        application: String,
+        #[arg(long, default_value_t = 60)]
+        ttl: u64,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    Apply {
+        request: PathBuf,
     },
 }
 
@@ -729,6 +955,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::App { command } => run_app(command).await?,
+        Command::Git { command } => run_git(command).await?,
+        Command::Environment { command } => run_environment(command)?,
+        Command::Infrastructure { command } => run_infrastructure(command).await?,
         Command::Recipe { command } => run_recipe(command).await?,
         Command::Server { command } => run_server(command).await?,
         Command::Ui { command } => match command {
@@ -740,6 +969,284 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Lumic UI admin token (shown once): {token}");
             }
         },
+    }
+    Ok(())
+}
+
+async fn run_git(command: GitCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let infrastructure = infrastructure_service();
+    let context = operation_context(false);
+    let value = match command {
+        GitCommand::Host { repository, branch } => serde_json::to_value(
+            infrastructure
+                .create_hosted_repository(&repository, &branch, &context)
+                .await?,
+        )?,
+        GitCommand::Mirror {
+            mirror,
+            url,
+            branch,
+            credential_reference,
+        } => serde_json::to_value(
+            infrastructure
+                .sync_mirror(&mirror, &url, &branch, credential_reference, &context)
+                .await?,
+        )?,
+        GitCommand::Trigger {
+            repository,
+            application,
+            branch,
+            enabled,
+        } => serde_json::to_value(infrastructure.set_push_trigger(
+            &repository,
+            &application,
+            &branch,
+            enabled,
+            &context,
+        )?)?,
+        GitCommand::Receive { repository } => {
+            let mut updates = String::new();
+            std::io::stdin().read_to_string(&mut updates)?;
+            serde_json::to_value(
+                infrastructure
+                    .receive_push(&repository, &updates, &context)
+                    .await?,
+            )?
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn run_environment(command: EnvironmentCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let infrastructure = infrastructure_service();
+    let context = operation_context(false);
+    match command {
+        EnvironmentCommand::SecretGenerate { reference } => {
+            let reference = infrastructure.generate_secret(&reference, &context)?;
+            println!("Generated target-local secret reference: {reference}");
+        }
+        EnvironmentCommand::ReferenceSet {
+            application,
+            name,
+            reference,
+        } => {
+            let application = application_service().set_environment_reference(
+                &application,
+                &name,
+                &reference,
+                &context,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&application)?);
+        }
+        EnvironmentCommand::Export {
+            application,
+            environment,
+            tier,
+            output,
+        } => {
+            let bundle = infrastructure.export_environment(
+                &application,
+                &environment,
+                tier.into(),
+                &context,
+            )?;
+            write_or_print_json(&bundle, output.as_deref())?;
+        }
+        EnvironmentCommand::Import {
+            bundle,
+            target,
+            tier,
+            domain,
+            environment,
+            services,
+        } => {
+            let bundle: EnvironmentBundle = read_json(&bundle)?;
+            let application = infrastructure.import_environment(
+                &bundle,
+                &EnvironmentTransform {
+                    target_id: target,
+                    target_tier: tier.into(),
+                    target_domain: domain,
+                    environment_reference_overrides: environment.into_iter().collect(),
+                    service_id_overrides: services.into_iter().collect(),
+                },
+                &context,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&application)?);
+        }
+        EnvironmentCommand::Diff { source, target } => {
+            let source: EnvironmentBundle = read_json(&source)?;
+            let target: EnvironmentBundle = read_json(&target)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&infrastructure.diff_environments(&source, &target))?
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn run_infrastructure(
+    command: InfrastructureCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let infrastructure = infrastructure_service();
+    let context = operation_context(false);
+    let value = match command {
+        InfrastructureCommand::Status => serde_json::to_value(infrastructure.read_model()?)?,
+        InfrastructureCommand::Init { id, name, roles } => {
+            serde_json::to_value(infrastructure.initialize_node(
+                &id,
+                &name,
+                roles.into_iter().map(Into::into).collect(),
+                &context,
+            )?)?
+        }
+        InfrastructureCommand::Enrollment { endpoint, output } => {
+            let enrollment = infrastructure.enrollment(&endpoint)?;
+            write_or_print_json(&enrollment, output.as_deref())?;
+            return Ok(());
+        }
+        InfrastructureCommand::Register { enrollment } => {
+            let enrollment: NodeEnrollment = read_json(&enrollment)?;
+            serde_json::to_value(infrastructure.register_node(enrollment, &context)?)?
+        }
+        InfrastructureCommand::Revoke { node } => {
+            serde_json::to_value(infrastructure.revoke_node(&node, &context)?)?
+        }
+        InfrastructureCommand::Endpoint {
+            id,
+            provider_node,
+            provider_kind,
+            provider,
+            consumer_node,
+            consumer_kind,
+            consumer,
+            protocol,
+            host,
+            port,
+            health_path,
+            secret_reference,
+        } => serde_json::to_value(infrastructure.register_endpoint(
+            ResourceEndpoint {
+                id,
+                provider_node_id: provider_node,
+                provider_kind,
+                provider_id: provider,
+                consumer_node_id: consumer_node,
+                consumer_kind,
+                consumer_id: consumer,
+                protocol,
+                host,
+                port,
+                health_path,
+                secret_reference,
+            },
+            &context,
+        )?)?,
+        InfrastructureCommand::Membership {
+            kind,
+            environment,
+            application,
+            node,
+            enabled,
+        } => serde_json::to_value(infrastructure.register_membership(
+            MembershipKind::parse(&kind)?,
+            &environment,
+            &application,
+            &node,
+            enabled,
+            &context,
+        )?)?,
+        InfrastructureCommand::Health { node } => {
+            serde_json::to_value(infrastructure.check_node_health(&node).await?)?
+        }
+        InfrastructureCommand::Coordinate {
+            environment,
+            members,
+        } => serde_json::to_value(infrastructure.begin_coordination(
+            &environment,
+            members,
+            &context,
+        )?)?,
+        InfrastructureCommand::Report {
+            coordination,
+            node,
+            status,
+            healthy,
+            deployment,
+            message,
+        } => serde_json::to_value(infrastructure.report_coordination_member(
+            &coordination,
+            &node,
+            deployment_status(&status)?,
+            healthy,
+            deployment,
+            message,
+            &context,
+        )?)?,
+        InfrastructureCommand::Sign {
+            target,
+            operation,
+            application,
+            ttl,
+            output,
+        } => {
+            let request = infrastructure.sign_remote_request(
+                &target,
+                RemoteOperation {
+                    kind: operation,
+                    resource_id: application,
+                    arguments: BTreeMap::new(),
+                },
+                ttl,
+            )?;
+            write_or_print_json(&request, output.as_deref())?;
+            return Ok(());
+        }
+        InfrastructureCommand::Apply { request } => {
+            let request: SignedRemoteRequest = read_json(&request)?;
+            serde_json::to_value(
+                infrastructure
+                    .execute_remote_request(&request, &context)
+                    .await?,
+            )?
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn deployment_status(value: &str) -> Result<DeploymentMemberStatus, lumic_core::LumicError> {
+    match value {
+        "pending" => Ok(DeploymentMemberStatus::Pending),
+        "running" => Ok(DeploymentMemberStatus::Running),
+        "succeeded" => Ok(DeploymentMemberStatus::Succeeded),
+        "failed" => Ok(DeploymentMemberStatus::Failed),
+        "rolled_back" => Ok(DeploymentMemberStatus::RolledBack),
+        _ => Err(lumic_core::LumicError::InvalidInput {
+            field: "status".into(),
+            message: "unsupported deployment member status".into(),
+        }),
+    }
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(
+    path: &PathBuf,
+) -> Result<T, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
+fn write_or_print_json(
+    value: &impl serde::Serialize,
+    output: Option<&std::path::Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rendered = format!("{}\n", serde_json::to_string_pretty(value)?);
+    if let Some(output) = output {
+        fs::write(output, rendered)?;
+        println!("Wrote {}", output.display());
+    } else {
+        print!("{rendered}");
     }
     Ok(())
 }
@@ -1417,6 +1924,14 @@ fn application_service() -> ApplicationService {
         .map(PathBuf::from)
         .unwrap_or_else(|| state_directory.join("apps"));
     ApplicationService::new(state_directory, apps_root)
+}
+
+fn infrastructure_service() -> InfrastructureService {
+    let state_directory = state_directory();
+    let apps_root = std::env::var_os("LUMIC_APPS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state_directory.join("apps"));
+    InfrastructureService::new(state_directory, apps_root)
 }
 
 fn recipe_manager() -> RecipeManager {

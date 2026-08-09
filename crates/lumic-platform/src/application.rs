@@ -5,6 +5,7 @@ use crate::{
     audit_store::AuditStore,
     event_store::EventStore,
     runtime::{RuntimeInstallResult, RuntimeManager},
+    secret_store::SecretStore,
     web::{NginxManager, TlsManager, WebConfigurationResult},
 };
 use lumic_core::{
@@ -16,6 +17,7 @@ use lumic_core::{
         validate_repository_url, validate_slug,
     },
     events::{AuditRecord, Event},
+    infrastructure::PortableApplication,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1086,6 +1088,12 @@ impl ApplicationService {
     ) -> Result<Application> {
         lumic_core::recipe::validate_environment_name(name)?;
         lumic_core::managed_service::validate_resource_id("secret_reference", reference)?;
+        if !SecretStore::at_state_dir(&self.state_dir).exists(reference)? {
+            return Err(LumicError::InvalidInput {
+                field: "secret_reference".into(),
+                message: "must identify an existing target-local secret".into(),
+            });
+        }
         let application = self.update_application(id, |application| {
             application
                 .environment_references
@@ -1109,6 +1117,145 @@ impl ApplicationService {
             true,
             "application environment secret reference configured",
         ))?;
+        Ok(application)
+    }
+
+    pub fn apply_portable_configuration(
+        &self,
+        id: &str,
+        configuration: &PortableApplication,
+        context: &OperationContext,
+    ) -> Result<Application> {
+        validate_slug("application", id)?;
+        validate_domain(&configuration.domain)?;
+        if configuration.release_retention == 0 || configuration.release_retention > 100 {
+            return Err(LumicError::InvalidInput {
+                field: "release_retention".into(),
+                message: "must be between 1 and 100".into(),
+            });
+        }
+        if let Some(repository) = &configuration.repository {
+            validate_repository_url(&repository.url)?;
+            validate_branch(&repository.branch)?;
+            if let Some(reference) = &repository.credential_reference {
+                lumic_core::managed_service::validate_resource_id(
+                    "credential_reference",
+                    reference,
+                )?;
+            }
+        }
+        for (name, reference) in &configuration.environment_references {
+            lumic_core::recipe::validate_environment_name(name)?;
+            lumic_core::managed_service::validate_resource_id("secret_reference", reference)?;
+        }
+        for reference in &configuration.service_references {
+            lumic_core::managed_service::validate_resource_id("service", &reference.service_id)?;
+            if let Some(database) = &reference.database {
+                lumic_core::managed_service::validate_resource_id("database", database)?;
+            }
+            if let Some(user) = &reference.user {
+                lumic_core::managed_service::validate_resource_id("user", user)?;
+            }
+            if let Some(secret_reference) = &reference.secret_reference {
+                lumic_core::managed_service::validate_resource_id(
+                    "secret_reference",
+                    secret_reference,
+                )?;
+            }
+            if reference.role.is_empty()
+                || reference.role.len() > 64
+                || !reference
+                    .role
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            {
+                return Err(LumicError::InvalidInput {
+                    field: "role".into(),
+                    message: "must be a lowercase role containing letters, digits, or underscores"
+                        .into(),
+                });
+            }
+        }
+        for process in &configuration.processes {
+            validate_slug("process", &process.name)?;
+            validate_command(&process.command)?;
+            if process.kind == lumic_core::application::ApplicationProcessKind::Schedule
+                && !process.schedule.as_deref().is_some_and(|schedule| {
+                    !schedule.is_empty()
+                        && schedule.len() <= 128
+                        && !schedule.contains(['\n', '\r', '\0'])
+                })
+            {
+                return Err(LumicError::InvalidInput {
+                    field: "schedule".into(),
+                    message: "scheduled processes require a safe systemd OnCalendar expression"
+                        .into(),
+                });
+            }
+            if process.kind == lumic_core::application::ApplicationProcessKind::Worker
+                && process.schedule.is_some()
+            {
+                return Err(LumicError::InvalidInput {
+                    field: "schedule".into(),
+                    message: "worker processes cannot have a schedule".into(),
+                });
+            }
+        }
+        if configuration.health_check.enabled
+            && (!configuration.health_check.path.starts_with('/')
+                || configuration.health_check.path.contains(['\n', '\r'])
+                || configuration.health_check.port == 0)
+        {
+            return Err(LumicError::InvalidInput {
+                field: "health".into(),
+                message: "path must start with '/' and port must be non-zero".into(),
+            });
+        }
+
+        let before = self.inspect(id)?;
+        if self
+            .list()?
+            .iter()
+            .any(|application| application.id != id && application.domain == configuration.domain)
+        {
+            return Err(LumicError::InvalidInput {
+                field: "domain".into(),
+                message: format!(
+                    "{} is already assigned to another application",
+                    configuration.domain
+                ),
+            });
+        }
+        let application = self.update_application(id, |application| {
+            application.name = configuration.name.clone();
+            application.domain = configuration.domain.clone();
+            application.www_alias = configuration.www_alias;
+            application.runtime = configuration.runtime;
+            application.repository = configuration.repository.clone();
+            application.environment_references = configuration.environment_references.clone();
+            application.service_references = configuration.service_references.clone();
+            application.health_check = configuration.health_check.clone();
+            application.processes = configuration.processes.clone();
+            application.release_retention = configuration.release_retention;
+        })?;
+        self.audit.append(&AuditRecord::now(
+            context,
+            "application.environment.import",
+            "apply_portable_configuration",
+            "application",
+            id,
+            json!({"source_application": configuration.id, "secret_values": "not_exported"}),
+            serde_json::to_value(before).ok(),
+            serde_json::to_value(&application).ok(),
+            true,
+            "portable application configuration applied",
+        ))?;
+        self.emit(
+            "application.environment_imported",
+            id,
+            context,
+            json!({"source_application": configuration.id}),
+        )?;
         Ok(application)
     }
 

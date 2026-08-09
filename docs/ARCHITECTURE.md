@@ -180,4 +180,6 @@ The current file-based strategy creates immutable releases and atomically replac
 
 ## Multi-node
 
-Each node remains autonomous. Cross-node orchestration may initially be performed by an external agent connected to multiple MCP servers. A future Lumic Hub may coordinate fleets but cannot become mandatory for single-node correctness.
+Each node remains autonomous. `InfrastructureService` composes private state, the secret store, Ed25519 identity/trust, native Git, portable application configuration and the existing application deployment service. CLI and MCP are adapters over it; the UI and authenticated HTTP endpoint expose its read model.
+
+Cross-node orchestration is performed by an external agent connected to multiple MCP servers. The coordinator creates a durable member/failure-boundary record, asks each target to execute a short-lived signed allowlisted request, and records the node-local deployment/health result. There is no node-to-node control loop, consensus system or generic remote executor. A future Lumic Hub may coordinate fleets but cannot become mandatory for single-node correctness.

@@ -39,8 +39,9 @@ The black/white UI provides:
 - expert systemd unit, configuration/data paths, version, bind address and port;
 - recipe catalog and installed-version state;
 - host accounts, listeners, mounts, timers and pending updates;
+- infrastructure identity, trusted/revoked peers, Git repositories/mirrors, portable environments, endpoints, memberships and coordinated deployment state;
 - confirmed restart, deploy, rollback and security-update actions.
 
 Safe actions call the existing shared services and therefore retain their validation, health gates, rollback behavior, events and audits. Installation registers `lumicd.service`; inspect it with `systemctl status lumicd.service` and logs with `journalctl -u lumicd.service`.
 
-The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, mobile polish and fleet views. Those are follow-up work rather than a reason to introduce a large frontend framework.
+The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure mutations remain in CLI/MCP for now. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, mobile polish and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.

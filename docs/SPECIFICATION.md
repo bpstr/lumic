@@ -4,7 +4,7 @@ This document is the implementation-level product contract. It is intentionally 
 
 ## Current implementation boundary
 
-Epics A–C implement the single-node vertical slice for x86_64 Debian/Ubuntu: host status/richer diagnosis, policy-controlled apt, validated systemd lifecycle, durable events/audits, recoverable file writes, static/PHP/Node application state, a deliberately small PHP component catalog, nginx, Certbot TLS, named SSH key references, isolated Git releases, health-gated deployment/rollback, workers/timers and verified nightly self-update. PostgreSQL and Redis prove the managed-service contract; a versioned declarative recipe engine with `static-git` proves composition; the typed host operator covers common accounts, network, storage, processes, timers, updates, logs, backup scheduling and deterministic remediation. Framework recipe breadth, broader components/services, push webhooks, remote MCP identity and multi-node infrastructure are not part of this implementation.
+Epics A–D implement the initial vertical slice for x86_64 Debian/Ubuntu: the single-node host/application/service/recipe/operator capabilities plus native Git hosting and mirrors, portable environments, public-key node identity/trust, explicit topology, replay-protected remote operations and externally orchestrated coordinated deployment. PostgreSQL and Redis prove the managed-service contract; `static-git` and a two-node static application prove composition and environment transformation. Framework/provider breadth and authenticated network MCP transport remain outside this implementation.
 
 ## 1. Node and host
 
@@ -110,10 +110,12 @@ Git is first-class infrastructure.
 Modes:
 
 1. external deployment source (GitHub/GitLab/generic Git);
-2. Lumic-hosted bare repositories exposed through controlled SSH/HTTP later;
+2. Lumic-hosted native bare repositories, currently consumed through the host's explicitly configured Git transport;
 3. local mirror/cache used as deployment source for multiple nodes.
 
 Credentials are secret references and must never be casually surfaced through status/log/MCP output.
+
+The hosted repository hook executes only `lumic git receive <validated-repository>` and accepts only the configured branch mapping. It does not accept a command string. Mirror synchronization invokes Git with separated arguments and resolves an optional credential reference from private node state.
 
 ## 7. Deployment
 
@@ -361,6 +363,12 @@ Candidate recipes after primitives are mature: Laravel, Symfony, WordPress, Drup
 ## 19. Infrastructure and multiple nodes
 
 Primary scale is ordinary VPS infrastructure, roughly one to ten nodes. Roles may include app, worker, database, cache, Git, media/storage, backup and edge. Nodes remain autonomous; Codex/Claude can initially be the orchestrator across multiple MCP endpoints.
+
+The implemented node identity is an Ed25519 signing key stored as a mode-`0600` target-local secret plus a public enrollment document containing node identity, roles, endpoint, public verification key and fingerprint. Registration is explicit and revocable. Remote requests are signed by a trusted origin, bound to one trusted target, expire within five minutes, use one-time nonces and permit only typed application deploy/rollback operations. Carrying the request between nodes does not grant arbitrary command execution.
+
+Portable environment bundles contain application configuration and secret references, never secret values. Import is an apply boundary: it requires an explicit production/staging/development target, domain, resource transforms and the existence of every final credential/secret reference on the target. The diff read model reports secret presence changes as redacted sensitive fields.
+
+Coordinated deployment is deliberately a durable plan and result ledger. Each node performs its normal node-local deployment and health gate, then reports a typed result. After a failure, unstarted members stop and only releases changed by that coordination are candidates for normal node-local rollback. Lumic does not implement consensus, leader election, overlay networking or a cluster scheduler.
 
 A future optional Lumic Hub may provide inventory, central UI, policies/identity and notification aggregation. It must not become required to use a Lumic node.
 

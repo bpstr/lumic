@@ -4,6 +4,7 @@ use thiserror::Error;
 
 pub mod application;
 pub mod events;
+pub mod infrastructure;
 pub mod managed_service;
 pub mod package;
 pub mod recipe;

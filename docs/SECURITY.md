@@ -31,6 +31,10 @@ MCP descriptions must make risk explicit. Prefer small typed tools to one omnipo
 
 The local stdio MCP server denies all mutation tools unless its operator starts it with `LUMIC_MCP_ALLOW_MUTATIONS=1`; each mutation also requires `approved=true`. This is an initial coarse node policy, not remote authentication. Do not bridge the stdio server to a network. Repository tools exchange credential references only; private keys are imported locally with mode `0600` and audit arguments redact their values.
 
+Multi-node trust uses target-local Ed25519 signing keys and public enrollment documents. Registration and revocation are explicit. A remote operation is accepted only from a trusted public key, for the local target, before a maximum five-minute expiry and once per nonce. The allowlist is currently application deploy and rollback; signatures cannot authorize arbitrary argv or shell. Transporting these envelopes between local stdio MCP endpoints is implemented, while authenticated encrypted network MCP transport remains deferred. Compromise of one node therefore does not expose another node's private signing key or secret values; revoke the peer and rotate/reinitialize compromised node credentials during recovery.
+
+Portable environment exports contain references, not secret material. Import fails before application creation if any final environment, service or repository credential reference is absent on the target. Generated environment secrets are random mode-`0600` files, and configuration diff reports only configured/missing state for sensitive fields. Endpoint records reject embedded credentials and non-loopback plaintext management URLs.
+
 Nightly self-update requires a release SHA-256 asset, verifies the candidate before replacement, retains the previous executable, verifies again after installation, and restores the backup on postflight failure. Current nightly artifacts are x86_64 only.
 
 ## Managed services and operator UI

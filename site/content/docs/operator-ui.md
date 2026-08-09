@@ -29,7 +29,15 @@ Sessions are in-memory, HttpOnly, SameSite=Strict and expire after eight hours. 
 
 ## Current views and actions
 
-The black/white UI provides:
+The black/white UI uses a responsive, grouped sidenav modeled on Rust/UI's
+`Sidenav with Grouped Sections` block. Monitor, workload and system capabilities
+remain visually separate; the active destination is identified in both markup and
+presentation. On narrow screens the same navigation is available from a
+keyboard-operable disclosure panel. The shell is still rendered by Rust/Axum, so
+this improvement does not add a browser application runtime or duplicate Lumic's
+application behavior.
+
+The UI provides:
 
 - the canonical conversational attention card, including severity, evidence and recommended actions;
 - live server identity and resource overview;
@@ -48,4 +56,4 @@ Safe actions call the existing shared services and therefore retain their valida
 
 The attention card uses the same `AttentionService` as `lumic how-are-you` and MCP. A selected personality changes its phrasing, but the card always includes the complete factual summary and never suppresses a warning.
 
-The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure and application-intelligence mutations remain in CLI/MCP for now; the UI shows the deterministic fingerprint evidence and dependency graph without adding a second orchestration path. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, login throttling, mobile polish and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.
+The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure and application-intelligence mutations remain in CLI/MCP for now; the UI shows the deterministic fingerprint evidence and dependency graph without adding a second orchestration path. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, login throttling and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.

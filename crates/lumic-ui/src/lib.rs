@@ -29,7 +29,23 @@ use std::{
 
 const SESSION_SECONDS: u64 = 8 * 60 * 60;
 const MAX_SESSIONS: usize = 1_024;
-const STYLE: &str = "body{margin:0;background:#f5f5f5;color:#111;font:15px system-ui,sans-serif}header{background:#111;color:#fff;padding:18px 4vw;display:flex;gap:28px;align-items:center}header a{color:#ddd;text-decoration:none}header strong{color:#fff;font-size:20px}main{max-width:1100px;margin:32px auto;padding:0 22px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.card,table,form.panel{background:#fff;border:1px solid #ccc;border-radius:5px;padding:20px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px;border-bottom:1px solid #ddd}th{color:#555;font-size:12px;text-transform:uppercase}.muted{color:#666}.ok{color:#176b2c}.bad{color:#9b1c1c}.mono,pre{font-family:ui-monospace,monospace}pre{white-space:pre-wrap;background:#111;color:#eee;padding:16px;overflow:auto}a{color:#111}button{background:#111;color:#fff;border:0;border-radius:3px;padding:10px 15px;cursor:pointer}input{padding:10px;border:1px solid #999;width:min(420px,90%)}.actions{display:flex;gap:12px;flex-wrap:wrap}.actions a{border:1px solid #333;padding:9px 13px;text-decoration:none;border-radius:3px}dt{font-weight:600;margin-top:12px}dd{margin:3px 0}.flash{border-left:4px solid #111;padding:12px;background:#fff}";
+const STYLE: &str = r#"
+:root{color-scheme:light;--background:#f7f7f6;--surface:#fff;--foreground:#151515;--muted:#6b6b68;--border:#deded9;--accent:#ecece8;--sidenav:#f1f1ee;--sidenav-width:17rem;--radius:.7rem;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--background);color:var(--foreground);font-size:15px;line-height:1.55}a{color:inherit}.skip-link{position:fixed;z-index:100;left:1rem;top:-4rem;background:#111;color:#fff;padding:.65rem 1rem;border-radius:.4rem}.skip-link:focus{top:1rem}.shell{min-height:100vh}.sidenav{position:fixed;inset:0 auto 0 0;z-index:20;width:var(--sidenav-width);display:flex;flex-direction:column;background:var(--sidenav);border-right:1px solid var(--border)}.sidenav-header,.sidenav-footer{padding:1rem}.brand{display:flex;align-items:center;gap:.75rem;text-decoration:none;font-weight:700;letter-spacing:-.02em}.brand-mark{display:grid;place-items:center;width:2rem;height:2rem;border-radius:.55rem;background:#151515;color:#fff;font-size:.82rem}.brand-copy{display:flex;flex-direction:column;line-height:1.2}.brand-copy small{color:var(--muted);font-size:.7rem;font-weight:500;letter-spacing:.04em;text-transform:uppercase}.node-chip{margin-top:1rem;padding:.55rem .65rem;border:1px solid var(--border);border-radius:.5rem;background:rgba(255,255,255,.55);font-size:.78rem;color:var(--muted)}.sidenav-content{flex:1;overflow:auto;padding:.25rem .75rem}.sidenav-group{padding:.55rem 0}.sidenav-label{padding:.25rem .65rem;color:#777772;font-size:.68rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase}.sidenav-menu{display:grid;gap:.15rem;margin-top:.25rem}.sidenav-link{display:flex;align-items:center;gap:.7rem;min-height:2.45rem;padding:.5rem .65rem;border-radius:.48rem;text-decoration:none;color:#4c4c49;font-weight:520}.sidenav-link:hover{background:rgba(255,255,255,.7);color:#111}.sidenav-link[aria-current=page]{background:#fff;color:#111;box-shadow:0 1px 2px rgba(0,0,0,.05)}.nav-icon{display:grid;place-items:center;width:1.25rem;color:#777;font-family:ui-monospace,monospace;font-size:.72rem}.sidenav-link[aria-current=page] .nav-icon{color:#111}.sidenav-footer{border-top:1px solid var(--border)}.operator{display:flex;align-items:center;gap:.65rem;margin-bottom:.75rem}.avatar{display:grid;place-items:center;width:2rem;height:2rem;border-radius:50%;background:#d9d9d4;font-size:.72rem;font-weight:700}.operator-copy{display:flex;flex-direction:column;line-height:1.25}.operator-copy small{color:var(--muted)}.signout{width:100%;background:transparent;color:#444;border:1px solid var(--border);border-radius:.48rem;padding:.55rem .7rem;text-align:left}.signout:hover{background:#fff;color:#111}.content{min-width:0;margin-left:var(--sidenav-width)}main{max-width:1260px;margin:0 auto;padding:2.75rem clamp(1.25rem,4vw,3.5rem) 5rem}.mobile-bar{display:none}h1{margin:.1rem 0 .35rem;font-size:clamp(1.75rem,3vw,2.3rem);line-height:1.15;letter-spacing:-.035em}h2{margin:2rem 0 .75rem;font-size:1.05rem;letter-spacing:-.015em}h3{font-size:.95rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:1rem}.card,table,form.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 1px 2px rgba(0,0,0,.025)}.card,form.panel{padding:1.25rem}.card h2,.card h3{margin-top:0}table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden}th,td{text-align:left;padding:.8rem .9rem;border-bottom:1px solid #ecece8;vertical-align:top}tr:last-child td{border-bottom:0}th{color:var(--muted);font-size:.69rem;letter-spacing:.065em;text-transform:uppercase}tbody tr:hover{background:#fafaf8}.muted{color:var(--muted)}.ok{color:#176b2c}.bad{color:#9b1c1c}.mono,pre{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}pre{white-space:pre-wrap;background:#171717;color:#eee;padding:1rem;border-radius:var(--radius);overflow:auto}button{background:#171717;color:#fff;border:0;border-radius:.48rem;padding:.62rem .9rem;font:inherit;font-weight:600;cursor:pointer}input{padding:.65rem .75rem;border:1px solid #aaa;border-radius:.45rem;width:min(420px,100%);font:inherit}.actions{display:flex;gap:.6rem;flex-wrap:wrap;margin:1rem 0}.actions a{background:#fff;border:1px solid #aaa;padding:.52rem .78rem;text-decoration:none;border-radius:.48rem;font-weight:600}.actions a:first-child{background:#171717;color:#fff;border-color:#171717}dt{font-weight:650;margin-top:.75rem}dd{margin:.15rem 0;color:#555}.flash{border:1px solid var(--border);border-left:3px solid #111;padding:.85rem 1rem;background:#fff;border-radius:.3rem}a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid rgba(35,95,190,.35);outline-offset:2px}.login-shell{min-height:100vh;display:grid;place-items:center;padding:2rem}.login-panel{width:min(28rem,100%)}.login-brand{margin-bottom:1.5rem}.mobile-nav{display:none}
+@media(max-width:800px){.sidenav{display:none}.content{margin-left:0}.mobile-bar{display:flex;position:sticky;top:0;z-index:30;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:rgba(247,247,246,.94);border-bottom:1px solid var(--border);backdrop-filter:blur(12px)}.mobile-nav{display:block}.mobile-nav summary{list-style:none;cursor:pointer;border:1px solid var(--border);border-radius:.45rem;padding:.4rem .65rem;background:#fff;font-weight:650}.mobile-nav summary::-webkit-details-marker{display:none}.mobile-nav[open] .mobile-sheet{position:fixed;z-index:40;inset:0 auto 0 0;width:min(19rem,88vw);display:flex;flex-direction:column;background:var(--sidenav);border-right:1px solid var(--border);box-shadow:10px 0 35px rgba(0,0,0,.16)}.mobile-nav[open]::after{content:"";position:fixed;z-index:35;inset:0;background:rgba(0,0,0,.32)}.mobile-sheet .sidenav-content{padding:0 .75rem}.mobile-sheet .sidenav-footer{margin-top:auto}main{padding-top:1.75rem}.card,form.panel{padding:1rem}table{display:block;overflow-x:auto;white-space:nowrap}}
+@media(prefers-reduced-motion:no-preference){.sidenav-link,.actions a,button{transition:background-color .15s ease,color .15s ease,border-color .15s ease}}
+"#;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NavSection {
+    Overview,
+    Applications,
+    Services,
+    Recipes,
+    Infrastructure,
+    Host,
+    Events,
+}
 
 #[derive(Debug, Clone)]
 pub struct UiCredentialStore {
@@ -912,15 +928,96 @@ fn deployment_html(item: &Deployment) -> String {
 }
 
 fn page(title: &str, body: &str, navigation: bool) -> Html<String> {
-    let header = if navigation {
-        "<header><strong>Lumic</strong><a href=/>Overview</a><a href=/apps>Applications</a><a href=/services>Services</a><a href=/recipes>Recipes</a><a href=/infrastructure>Infrastructure</a><a href=/host>Host</a><a href=/events>Events</a><form method=post action=/logout><button>Sign out</button></form></header>"
+    let section = navigation.then(|| nav_section_for_page(title, body));
+    page_for(title, body, section)
+}
+
+fn page_for(title: &str, body: &str, section: Option<NavSection>) -> Html<String> {
+    let title = escape(title);
+    let content = if let Some(section) = section {
+        let navigation = navigation(section);
+        format!(
+            "<a class=skip-link href=#main-content>Skip to content</a><div class=shell><aside class=sidenav aria-label=Primary>{navigation}</aside><div class=content><div class=mobile-bar><a class=brand href=/><span class=brand-mark>L</span><span>Lumic</span></a><details class=mobile-nav><summary aria-label=\"Open navigation\">Menu</summary><div class=mobile-sheet>{navigation}</div></details></div><main id=main-content tabindex=-1>{body}</main></div></div>"
+        )
     } else {
-        "<header><strong>Lumic</strong></header>"
+        format!(
+            "<div class=login-shell><main class=login-panel id=main-content><a class=\"brand login-brand\" href=/><span class=brand-mark>L</span><span class=brand-copy>Lumic<small>Node operator</small></span></a>{body}</main></div>"
+        )
     };
     Html(format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{} · Lumic</title><style>{STYLE}</style></head><body>{header}<main>{body}</main></body></html>",
-        escape(title)
+        "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta name=color-scheme content=light><title>{title} · Lumic</title><style>{STYLE}</style></head><body>{content}</body></html>"
     ))
+}
+
+fn nav_section_for_page(title: &str, body: &str) -> NavSection {
+    match title {
+        "Applications"
+        | "Deployment"
+        | "Deployment complete"
+        | "Deploy application"
+        | "Rollback complete"
+        | "Roll back application"
+        | "Not found" => NavSection::Applications,
+        "Services" | "Service logs" | "Restart service" | "Service restarted" => {
+            NavSection::Services
+        }
+        "Recipes" => NavSection::Recipes,
+        "Infrastructure" => NavSection::Infrastructure,
+        "Host operator" | "Apply security updates" | "Security updates complete" => {
+            NavSection::Host
+        }
+        "Events" => NavSection::Events,
+        _ if body.contains("href=/actions/app/") || body.contains("href=/deployments/") => {
+            NavSection::Applications
+        }
+        _ if body.contains("href=/actions/service/") || body.contains("href=/services/") => {
+            NavSection::Services
+        }
+        _ => NavSection::Overview,
+    }
+}
+
+fn navigation(active: NavSection) -> String {
+    fn link(
+        active: NavSection,
+        section: NavSection,
+        href: &str,
+        icon: &str,
+        label: &str,
+    ) -> String {
+        let current = if active == section {
+            " aria-current=page"
+        } else {
+            ""
+        };
+        format!(
+            "<a class=sidenav-link href={href}{current}><span class=nav-icon aria-hidden=true>{icon}</span><span>{label}</span></a>"
+        )
+    }
+
+    let monitor = link(active, NavSection::Overview, "/", "01", "Overview");
+    let applications = link(
+        active,
+        NavSection::Applications,
+        "/apps",
+        "02",
+        "Applications",
+    );
+    let services = link(active, NavSection::Services, "/services", "03", "Services");
+    let recipes = link(active, NavSection::Recipes, "/recipes", "04", "Recipes");
+    let infrastructure = link(
+        active,
+        NavSection::Infrastructure,
+        "/infrastructure",
+        "05",
+        "Infrastructure",
+    );
+    let host = link(active, NavSection::Host, "/host", "06", "Host");
+    let events = link(active, NavSection::Events, "/events", "07", "Events");
+
+    format!(
+        "<div class=sidenav-header><a class=brand href=/><span class=brand-mark>L</span><span class=brand-copy>Lumic<small>Node operator</small></span></a><div class=node-chip>Local node</div></div><nav class=sidenav-content><section class=sidenav-group aria-labelledby=nav-monitor><div class=sidenav-label id=nav-monitor>Monitor</div><div class=sidenav-menu>{monitor}</div></section><section class=sidenav-group aria-labelledby=nav-workloads><div class=sidenav-label id=nav-workloads>Workloads</div><div class=sidenav-menu>{applications}{services}{recipes}</div></section><section class=sidenav-group aria-labelledby=nav-system><div class=sidenav-label id=nav-system>System</div><div class=sidenav-menu>{infrastructure}{host}{events}</div></section></nav><div class=sidenav-footer><div class=operator><span class=avatar aria-hidden=true>OP</span><span class=operator-copy><strong>Operator</strong><small>Local administrator</small></span></div><form method=post action=/logout><button class=signout type=submit>Sign out</button></form></div>"
+    )
 }
 
 fn escape(value: &str) -> String {
@@ -1119,5 +1216,42 @@ mod tests {
 
         assert_eq!(state.sessions.lock().unwrap().len(), MAX_SESSIONS);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn authenticated_shell_uses_grouped_route_aware_sidenav() {
+        let html = page(
+            "Applications",
+            "<h1>Applications</h1><p>Managed workloads</p>",
+            true,
+        )
+        .0;
+
+        assert!(html.contains("class=sidenav"));
+        assert!(html.contains("id=nav-monitor>Monitor"));
+        assert!(html.contains("id=nav-workloads>Workloads"));
+        assert!(html.contains("id=nav-system>System"));
+        assert!(html.contains("href=/apps aria-current=page"));
+        assert!(html.contains("class=mobile-nav"));
+        assert!(html.contains("href=#main-content>Skip to content"));
+    }
+
+    #[test]
+    fn detail_pages_keep_their_parent_navigation_active() {
+        let application = page(
+            "Example application",
+            "<a href=/actions/app/example/deploy>Deploy</a>",
+            true,
+        )
+        .0;
+        let service = page(
+            "PostgreSQL",
+            "<a href=/services/postgresql/logs>Logs</a>",
+            true,
+        )
+        .0;
+
+        assert!(application.contains("href=/apps aria-current=page"));
+        assert!(service.contains("href=/services aria-current=page"));
     }
 }

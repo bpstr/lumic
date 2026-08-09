@@ -1,0 +1,3 @@
+interface:
+  display_name: "Rust/UI"
+  short_description: "Builds and composes accessible Rust/UI interfaces for Rust and Leptos."

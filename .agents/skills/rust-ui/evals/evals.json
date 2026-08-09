@@ -1,0 +1,45 @@
+{
+  "skill_name": "rust-ui",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Build a responsive Leptos admin shell from Rust/UI's Grouped Sections sidenav block. Use Monitor, Workloads, and System groups, preserve route-aware active states, reuse navigation in a mobile Sheet, and do not invent fake account data. Provide representative Rust code and accessibility notes.",
+      "expected_output": "A Rust/Leptos composition that follows sidenav01 structure and adapts its demo data to real routes.",
+      "files": [],
+      "expectations": [
+        "Uses Leptos/Rust syntax rather than React, TypeScript, JSX className, or npm imports",
+        "Preserves SidenavWrapper, Sidenav, Header, Content, grouped menu, and Footer composition",
+        "Uses the requested Monitor, Workloads, and System group labels",
+        "Derives active state from routing and communicates it accessibly",
+        "Uses a Sheet-based keyboard-operable mobile navigation pattern",
+        "Does not ship demo route constants, fake account data, or a nonfunctional decorative search field"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Create a Leptos node settings form using Rust/UI with a node-name input, update-channel select, three independent notification checkboxes, server validation, accessible errors, pending state, success feedback, and semantic theme styling. Provide representative Rust code and a brief self-check.",
+      "expected_output": "An accessible Rust/UI Field-based Leptos form with semantic controls and reactive state.",
+      "files": [],
+      "expectations": [
+        "Uses FieldGroup, Field, labels, descriptions, and errors instead of generic layout markup",
+        "Uses a Select for update channel and Checkbox controls for independent preferences",
+        "Connects visual invalid and disabled states to ARIA/native form semantics",
+        "Uses a Rust/UI Spinner and disabled button for pending state",
+        "Uses Leptos signals/actions and Rust syntax without React APIs"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Review a Leptos operations dashboard that hand-rolls cards, status pills, loading animations, a large selectable table, and destructive confirmation markup. Recommend the correct Rust/UI primitives and show the improved component structure.",
+      "expected_output": "A precise Rust/UI review mapping custom UI to Card, Badge/Status, Skeleton, DataGrid or DataTable, and AlertDialog.",
+      "files": [],
+      "expectations": [
+        "Selects DataGrid for large interactive datasets and explains when DataTable would suffice",
+        "Uses full Card composition, Status or Badge, and Skeleton instead of hand-rolled equivalents",
+        "Uses AlertDialog with an accessible title for destructive confirmation",
+        "Uses semantic theme variables and existing variants instead of raw state colors",
+        "Keeps business mutation and server validation outside presentation-only components"
+      ]
+    }
+  ]
+}

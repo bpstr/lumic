@@ -38,6 +38,16 @@ Use the clean Rust management UI when you want visibility or direct control. CLI
 
 Those three actions define Lumic. The growing collection of server capabilities is deliberately secondary: packages, runtimes, PHP extensions, Git hosting, databases, Redis, TLS, deployments, workers, events, diagnostics, notifications, webhooks and multi-node infrastructure should increasingly feel like things Lumic simply already knows how to do.
 
+## Describe the application once
+
+Application repositories can include an optional [`lumic.yaml`](./lumic-yaml/) file. It records the useful production intent that otherwise has to be explained repeatedly to coding agents: runtime, services, build commands, web process, workers, scheduled jobs, domains, secrets, health checks and deployment hooks.
+
+The file is intentionally not a strict infrastructure language. Lumic and the coding agent should combine it with repository evidence and target-node state, fill in safe obvious details, then show a plan before material changes.
+
+A typical request can therefore be short:
+
+> Read `lumic.yaml`, inspect this repository and prepare this Lumic node for production. Fill in safe obvious details from the repository, show the infrastructure plan before material changes, deploy the application and verify its health.
+
 ## Give Codex a complete VPS task
 
 After MCP is connected, the ideal Lumic workflow looks like this:

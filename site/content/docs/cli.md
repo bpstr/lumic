@@ -159,7 +159,7 @@ SSH keys are copied into Lumic's mode-`0600` credential store and application me
 
 ## Nightly updates
 
-`lumic self-update apply` downloads the x86_64 nightly artifact and its SHA-256 file, verifies the checksum, runs the candidate's version preflight, preserves the previous executable, atomically replaces Lumic, and performs a post-install check with automatic restoration on failure. `enable-nightly` installs a persistent daily systemd timer. Nightly release publishing includes the checksum asset. AArch64 release artifacts are not published yet.
+`lumic self-update apply` follows the channel recorded by the installer (stable by default), downloads the x86_64 artifact and its SHA-256 file, verifies the checksum, runs the candidate's version preflight, preserves the previous executable, atomically replaces Lumic, and performs a post-install check with automatic restoration on failure. `enable-nightly` installs a persistent daily systemd timer pinned to the nightly channel. Release publishing includes checksum assets. AArch64 release artifacts are not published yet.
 
 Generic outbound webhooks and framework-specific recipe breadth are later work and are not part of this capability set. The implemented `static-git` recipe proves versioned validation, plan/install/update/uninstall, generated secret references, health/TLS composition and idempotency.
 

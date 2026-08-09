@@ -30,6 +30,21 @@ pub struct SelfUpdateManager {
     unit_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateChannel {
+    Stable,
+    Nightly,
+}
+
+impl UpdateChannel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Nightly => "nightly",
+        }
+    }
+}
+
 impl SelfUpdateManager {
     pub fn system(state_dir: impl Into<PathBuf>) -> Self {
         Self {
@@ -38,7 +53,7 @@ impl SelfUpdateManager {
         }
     }
 
-    pub async fn apply_nightly(&self, context: &OperationContext) -> Result<UpdateResult> {
+    pub async fn apply(&self, context: &OperationContext) -> Result<UpdateResult> {
         let destination = std::env::current_exe().map_err(io_error)?;
         if destination
             .symlink_metadata()
@@ -55,7 +70,8 @@ impl SelfUpdateManager {
         }
         let target = release_target()?;
         let name = format!("lumic-{target}");
-        let url = format!("https://github.com/bpstr/lumic/releases/download/nightly/{name}");
+        let channel = selected_channel()?;
+        let url = release_url(channel, &name);
         let parent = destination.parent().ok_or_else(|| LumicError::Internal {
             message: "Lumic executable has no parent directory".into(),
         })?;
@@ -69,11 +85,11 @@ impl SelfUpdateManager {
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                self.record_failure(context, &error)?;
+                self.record_failure(channel, context, &error)?;
                 return Err(error);
             }
         };
-        self.record(&result, context)?;
+        self.record(channel, &result, context)?;
         Ok(result)
     }
 
@@ -110,7 +126,7 @@ impl SelfUpdateManager {
             .next()
             .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .ok_or_else(|| LumicError::Inspection {
-                fact: "nightly_checksum".into(),
+                fact: "release_checksum".into(),
                 message: "release checksum file is invalid".into(),
             })?
             .to_ascii_lowercase();
@@ -122,7 +138,7 @@ impl SelfUpdateManager {
             .to_ascii_lowercase();
         if actual != expected {
             return Err(LumicError::Inspection {
-                fact: "nightly_checksum".into(),
+                fact: "release_checksum".into(),
                 message: format!("checksum mismatch for {artifact_name}"),
             });
         }
@@ -134,7 +150,7 @@ impl SelfUpdateManager {
             .to_owned();
         if !version.starts_with("lumic ") {
             return Err(LumicError::Inspection {
-                fact: "nightly_binary".into(),
+                fact: "release_binary".into(),
                 message: "downloaded executable returned an invalid version".into(),
             });
         }
@@ -160,7 +176,7 @@ impl SelfUpdateManager {
                 fs::rename(&recovery, destination).map_err(io_error)?;
             }
             return Err(LumicError::Inspection {
-                fact: "nightly_binary".into(),
+                fact: "release_binary".into(),
                 message: "post-install verification failed; previous binary restored".into(),
             });
         }
@@ -175,7 +191,7 @@ impl SelfUpdateManager {
     pub async fn enable_nightly_timer(&self, context: &OperationContext) -> Result<Vec<String>> {
         let executable = std::env::current_exe().map_err(io_error)?;
         let service = format!(
-            "# Managed by Lumic\n[Unit]\nDescription=Lumic verified nightly self-update\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart={} self-update apply\n",
+            "# Managed by Lumic\n[Unit]\nDescription=Lumic verified nightly self-update\nAfter=network-online.target\n\n[Service]\nType=oneshot\nEnvironment=LUMIC_CHANNEL=nightly\nExecStart={} self-update apply\n",
             systemd_quote(path_text(&executable)?)
         );
         let timer = "# Managed by Lumic\n[Unit]\nDescription=Run Lumic nightly self-update\n\n[Timer]\nOnCalendar=daily\nRandomizedDelaySec=2h\nPersistent=true\nUnit=lumic-self-update.service\n\n[Install]\nWantedBy=timers.target\n";
@@ -203,7 +219,12 @@ impl SelfUpdateManager {
         ])
     }
 
-    fn record(&self, result: &UpdateResult, context: &OperationContext) -> Result<()> {
+    fn record(
+        &self,
+        channel: UpdateChannel,
+        result: &UpdateResult,
+        context: &OperationContext,
+    ) -> Result<()> {
         EventStore::at_state_dir(&self.state_dir).append(&Event::now(
             "lumic.updated",
             &context.actor,
@@ -219,27 +240,68 @@ impl SelfUpdateManager {
             "self_update",
             "lumic",
             "self",
-            json!({"channel": "nightly"}),
+            json!({"channel": channel.as_str()}),
             None,
             Some(json!({"version": result.version, "changed": result.changed, "recovery_binary": result.recovery_binary})),
             true,
-            "verified nightly binary installed",
+            format!("verified {} binary installed", channel.as_str()),
         ))
     }
 
-    fn record_failure(&self, context: &OperationContext, error: &LumicError) -> Result<()> {
+    fn record_failure(
+        &self,
+        channel: UpdateChannel,
+        context: &OperationContext,
+        error: &LumicError,
+    ) -> Result<()> {
         AuditStore::at_state_dir(&self.state_dir).append(&AuditRecord::now(
             context,
             "lumic.self_update",
             "self_update",
             "lumic",
             "self",
-            json!({"channel": "nightly"}),
+            json!({"channel": channel.as_str()}),
             None,
             None,
             false,
             error.to_string(),
         ))
+    }
+}
+
+fn selected_channel() -> Result<UpdateChannel> {
+    if let Some(channel) = std::env::var_os("LUMIC_CHANNEL") {
+        return parse_channel(&channel.to_string_lossy());
+    }
+    let config_dir = std::env::var_os("LUMIC_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/lumic"));
+    match fs::read_to_string(config_dir.join("channel")) {
+        Ok(channel) => parse_channel(channel.trim()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(UpdateChannel::Stable),
+        Err(error) => Err(io_error(error)),
+    }
+}
+
+fn parse_channel(value: &str) -> Result<UpdateChannel> {
+    match value {
+        "stable" => Ok(UpdateChannel::Stable),
+        "nightly" => Ok(UpdateChannel::Nightly),
+        value => Err(LumicError::InvalidInput {
+            field: "channel".into(),
+            message: format!("unknown update channel '{value}'"),
+        }),
+    }
+}
+
+fn release_url(channel: UpdateChannel, artifact_name: &str) -> String {
+    match channel {
+        UpdateChannel::Stable => {
+            format!("https://github.com/bpstr/lumic/releases/latest/download/{artifact_name}")
+        }
+        UpdateChannel::Nightly => {
+            format!("https://github.com/bpstr/lumic/releases/download/nightly/{artifact_name}")
+        }
     }
 }
 
@@ -260,7 +322,7 @@ fn release_target() -> Result<&'static str> {
     match std::env::consts::ARCH {
         "x86_64" => Ok("x86_64-unknown-linux-musl"),
         architecture => Err(LumicError::UnsupportedPlatform {
-            platform: format!("nightly release artifact for architecture {architecture}"),
+            platform: format!("release artifact for architecture {architecture}"),
         }),
     }
 }
@@ -322,5 +384,9 @@ mod tests {
         let quoted = systemd_quote("/usr/local/bin/lumic");
         assert_eq!(quoted, "\"/usr/local/bin/lumic\"");
         assert!(!quoted.contains("sh -c"));
+        assert!(release_url(UpdateChannel::Stable, "lumic-test").contains("/latest/download/"));
+        assert!(release_url(UpdateChannel::Nightly, "lumic-test").contains("/nightly/"));
+        assert_eq!(parse_channel("stable").unwrap(), UpdateChannel::Stable);
+        assert!(parse_channel("invalid").is_err());
     }
 }

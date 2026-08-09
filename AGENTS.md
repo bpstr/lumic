@@ -102,6 +102,23 @@ Do not turn every apt package into a managed service.
 
 ## Development requirements
 
+### Commit messages
+
+Write commit subjects as concise imperative sentences without conventional-commit or category prefixes. Use `Harden state persistence`, not `fix: harden state persistence`, `feat(ui): ...`, or similar prefixed forms.
+
+### Versioning and releases
+
+Lumic follows Semantic Versioning. Treat the version reported by every binary, release tag, installer, updater, release artifact, and public document as one coordinated contract.
+
+- Use `MAJOR.MINOR.PATCH` release tags without a `v` prefix.
+- Increment `MAJOR` for incompatible public CLI, API, MCP, configuration, state-format, or operational-contract changes.
+- Increment `MINOR` for backward-compatible capabilities.
+- Increment `PATCH` for backward-compatible fixes and hardening.
+- Never reuse, move, or publish a release tag with a version that disagrees with the Cargo workspace version.
+- Never decrease a released version or publish unrelated builds under the same version.
+- Before tagging, verify the release workflow, installer, and self-updater all resolve the exact tag and artifacts. A release is incomplete until existing Lumic servers can discover and install it through their configured channel.
+- Update public release and installation documentation in the same commit as any release-contract change.
+
 Before finishing a change:
 
 ```bash
@@ -139,7 +156,3 @@ Never leave docs claiming a feature is implemented when it is only planned. If c
 ## UX direction
 
 The UI is black/white/gray, restrained, fast and stable. It should feel like a serious appliance console, not a crowded hosting dashboard. Progressive disclosure is preferred: simple status/actions first, underlying service/config/process details available to experts.
-
-## Nightly development
-
-Nightly work must improve the product without destabilizing architecture. Prefer one coherent vertical slice, bug fix, test expansion or documented capability per run. Never manufacture features just to create activity. CI must be green before merging. See `docs/CODEX_NIGHTLY.md`.

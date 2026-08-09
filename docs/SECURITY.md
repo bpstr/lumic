@@ -39,7 +39,9 @@ Multi-node trust uses target-local Ed25519 signing keys and public enrollment do
 
 Portable environment exports contain references, not secret material. Import fails before application creation if any final environment, service or repository credential reference is absent on the target. Generated environment secrets are random mode-`0600` files, and configuration diff reports only configured/missing state for sensitive fields. Endpoint records reject embedded credentials and non-loopback plaintext management URLs.
 
-Nightly self-update requires a release SHA-256 asset, verifies the candidate before replacement, retains the previous executable, verifies again after installation, and restores the backup on postflight failure. Current nightly artifacts are x86_64 only.
+Self-update follows the node's recorded stable/nightly channel, requires a release SHA-256 asset, verifies the candidate before replacement, retains the previous executable, verifies again after installation, and restores the backup on postflight failure. Current release artifacts are x86_64 only.
+
+Stable and nightly release workflows use commit-pinned third-party actions and publish GitHub artifact attestations for their binaries. Checksums remain mandatory for installation; operators may additionally verify provenance with `gh attestation verify <artifact> --repo bpstr/lumic`.
 
 ## Managed services and operator UI
 
@@ -47,7 +49,7 @@ PostgreSQL/Redis reference settings are provider-allowlisted and limited to loop
 
 Operations webhooks require HTTPS except explicit loopback test destinations, forbid URL credentials/control characters, sign bounded JSON with HMAC-SHA256, keep the secret off argv, enforce timeouts and bounded retries, and preserve delivery outcome without response bodies. Provider inputs are bounded typed data. Deterministic remediation resolves only to an allowlisted typed systemd restart, with cooldown, attempt limit and post-action state verification. Configuration snapshots are private and recoverable. Backup verification checks recorded SHA-256, size and native format header; verification is evidence, not a substitute for tested off-node recovery.
 
-`lumicd` refuses a non-loopback UI bind. Admin-token rotation prints the token once and stores only SHA-256; authentication establishes an eight-hour in-memory session. Sessions are bounded, and token rotation or daemon restart invalidates them. Cookies are HttpOnly and SameSite=Strict, actions use session-bound CSRF tokens, and browser responses carry CSP, no-sniff, no-referrer and no-store headers. Because the default transport is local HTTP, remote access must use an SSH tunnel or authenticated TLS reverse proxy; persistent/fine-grained UI identities and login throttling remain hardening work.
+`lumicd` refuses a non-loopback UI bind. Admin-token rotation prints the token once and stores only SHA-256; authentication establishes an eight-hour in-memory session. Sessions are bounded, and token rotation or daemon restart invalidates them. Login failures are throttled in-process after five attempts in 60 seconds. Cookies are HttpOnly and SameSite=Strict, actions use session-bound CSRF tokens, and browser responses carry CSP, no-sniff, no-referrer and no-store headers. Because the default transport is local HTTP, remote access must use an SSH tunnel or authenticated TLS reverse proxy; persistent/fine-grained UI identities remain future hardening work.
 
 ## Recipes and host operations
 

@@ -10,7 +10,7 @@ status = "Epics A-G"
 | Area | Implemented nightly | Nightly expansion / not implemented |
 |---|---|---|
 | Hosts | x86_64 Debian 12/13, Ubuntu 22.04/24.04; clean-image install smoke | aarch64 artifacts, other distributions, stable channel |
-| Install/update | checksum-verified atomic install; nightly self-update, backup and postflight restore | stable update policy; automated external real-VPS lifecycle gate |
+| Install/update | stable/nightly channels; checksum-verified atomic install and self-update; backup and postflight restore | automated external real-VPS lifecycle gate |
 | Host operations | typed apt/systemd, accounts, UFW, filesystems, processes, timers, updates, logs, backups, remediation | broad provider/remediation catalog; generic shell is intentionally absent |
 | Applications | static/PHP release proof, Node foundation, nginx, TLS, health-gated deploy and rollback | arbitrary build hooks, database migrations, blue/green Node handoff |
 | Managed services | PostgreSQL and Redis lifecycle/config/health/database/backup proof | MariaDB, search, queues, object storage and other providers |

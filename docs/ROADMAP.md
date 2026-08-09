@@ -287,11 +287,9 @@ Example:
 
 ---
 
-# Fast-track target
+# Delivery target
 
-The manually triggered epic sequence is defined in `docs/CODEX_FAST_TRACK.md`.
-
-The goal is to reach Phase 15 quickly with:
+The goal is to deliver the roadmap with:
 
 - narrow but real reference implementations;
 - stable reusable capability contracts;
@@ -299,11 +297,11 @@ The goal is to reach Phase 15 quickly with:
 - strong security boundaries;
 - CI coverage for every mechanism.
 
-Do **not** delay Phase 15 for broad integration support. Once the mechanism works, open backlog items and let nightly expand it.
+Do **not** delay a coherent capability for broad integration support. Once the mechanism works, track support-matrix expansion separately.
 
-# Nightly after the fast track
+# Continuous hardening
 
-Nightly should primarily:
+Ongoing work should primarily:
 
 - fix bugs/regressions/security findings;
 - strengthen tests and supported-OS behavior;
@@ -316,7 +314,7 @@ Nightly should primarily:
 - improve performance and reliability;
 - respond to real VPS findings.
 
-Nightly should not casually invent a new core architecture or start a large roadmap epic when a manual fast-track epic is intentionally pending.
+Ongoing work should not casually invent a new core architecture when a smaller additive mechanism satisfies the product contract.
 
 # Definition of done for any capability
 

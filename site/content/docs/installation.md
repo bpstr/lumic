@@ -34,13 +34,32 @@ Lumic has two release channels:
 - **stable** — conservative production releases;
 - **nightly** — the latest gated build from main.
 
-The installer defaults to stable. During pre-release testing, use the nightly channel explicitly:
+The installer defaults to stable. Select nightly explicitly during nightly testing:
 
 ```bash
 curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_CHANNEL=nightly sh
 ```
 
 A node never silently changes channels.
+
+Stable installation resolves GitHub's latest stable release. Pin an exact immutable release when required:
+
+```bash
+curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_VERSION=1.0.0 sh
+```
+
+Release downloads include SHA-256 files and GitHub artifact attestations. The installer enforces the checksum; a downloaded binary can also be checked independently with `gh attestation verify <artifact> --repo bpstr/lumic`.
+
+Installer inputs are environment variables: `LUMIC_CHANNEL` (`stable` or `nightly`), `LUMIC_VERSION` for an explicit stable version, `LUMIC_INSTALL_DIR`, `LUMIC_CONFIG_DIR`, and `LUMIC_STATE_DIR`. `LUMIC_INSTALL_BINARY` and optional `LUMIC_INSTALL_DAEMON_BINARY` are reserved for local/CI installation and may use the host's native architecture. Published release artifacts remain x86_64-only until other architectures have automated release coverage. Installing identical artifacts twice is a no-op; different verified artifacts replace them atomically.
+
+## Self-update
+
+An installed node can apply the verified artifact flow without rerunning the bootstrap script. The installer records the selected channel under `/etc/lumic/channel`; stable is the default. Nightly nodes can also install a daily systemd timer:
+
+```bash
+sudo lumic self-update apply
+sudo lumic self-update enable-nightly
+```
 
 ## Verify the installer before running it
 

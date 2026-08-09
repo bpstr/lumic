@@ -12,4 +12,4 @@ smart_punctuation = true
 
 [extra]
 github = "https://github.com/bpstr/lumic"
-version = "v2 pre-alpha"
+version = "1.0"

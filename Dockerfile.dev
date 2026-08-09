@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+
+FROM rust:bookworm AS builder
+
+WORKDIR /src
+COPY rust-toolchain.toml ./
+RUN rustup show active-toolchain
+
+COPY . .
+
+ARG TARGETARCH
+RUN --mount=type=cache,id=lumic-dev-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=lumic-dev-target-${TARGETARCH},target=/src/target \
+    cargo build --locked \
+        --package lumic-cli \
+        --package lumic-daemon \
+        --release \
+    && install -D -m 0755 target/release/lumic /out/lumic \
+    && install -D -m 0755 target/release/lumicd /out/lumicd
+
+FROM ubuntu:24.04
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        socat \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/lumic /opt/lumic
+COPY --from=builder /out/lumicd /opt/lumicd
+COPY install.sh /install.sh
+COPY docker/dev-entrypoint.sh /usr/local/bin/lumic-dev-entrypoint
+
+RUN LUMIC_INSTALL_BINARY=/opt/lumic \
+    LUMIC_INSTALL_DAEMON_BINARY=/opt/lumicd \
+    sh /install.sh \
+    && chmod 0755 /usr/local/bin/lumic-dev-entrypoint
+
+EXPOSE 18080
+
+HEALTHCHECK --interval=5s --timeout=2s --start-period=5s --retries=12 \
+    CMD curl --fail --silent --show-error http://127.0.0.1:18080/login >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/lumic-dev-entrypoint"]

@@ -1204,7 +1204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let manager = SelfUpdateManager::system(state_directory());
             match command {
                 SelfUpdateCommand::Apply => {
-                    let result = manager.apply_nightly(&operation_context(false)).await?;
+                    let result = manager.apply(&operation_context(false)).await?;
                     println!(
                         "{} at {} changed={}",
                         result.version, result.destination, result.changed

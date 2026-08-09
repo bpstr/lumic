@@ -45,9 +45,25 @@ pub(crate) fn latest<T: DeserializeOwned>(path: &Path, limit: usize, name: &str)
     lock(&file, LockMode::Shared, name)?;
 
     let mut values = VecDeque::with_capacity(limit.min(1024));
-    for line in BufReader::new(file).lines() {
-        let value = serde_json::from_str(&line.map_err(|error| io_error(name, error))?)
-            .map_err(|error| json_error(name, error))?;
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let bytes_read = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| io_error(name, error))?;
+        if bytes_read == 0 {
+            break;
+        }
+        let complete = line.last() == Some(&b'\n');
+        if complete {
+            line.pop();
+        }
+        let value = match serde_json::from_slice(&line) {
+            Ok(value) => value,
+            Err(_) if !complete => break,
+            Err(error) => return Err(json_error(name, error)),
+        };
         if values.len() == limit {
             values.pop_front();
         }
@@ -143,6 +159,20 @@ mod tests {
         let tail: Vec<(usize, usize)> = latest(&path, 17, "test").unwrap();
         assert_eq!(all.len(), 400);
         assert_eq!(tail.len(), 17);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn ignores_only_an_incomplete_crash_tail() {
+        let directory = temp_path("crash-tail");
+        let path = directory.join("records.jsonl");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&path, b"1\n2\n{\"partial\"").unwrap();
+
+        assert_eq!(latest::<usize>(&path, 10, "test").unwrap(), vec![2, 1]);
+
+        fs::write(&path, b"1\nnot-json\n").unwrap();
+        assert!(latest::<usize>(&path, 10, "test").is_err());
         fs::remove_dir_all(directory).unwrap();
     }
 

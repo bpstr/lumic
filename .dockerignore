@@ -1,0 +1,8 @@
+/target
+/dist
+/.git
+/.codebase-memory
+/.idea
+/.vscode
+.DS_Store
+*.log

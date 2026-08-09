@@ -19,7 +19,7 @@ use lumic_platform::{
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -29,6 +29,8 @@ use std::{
 
 const SESSION_SECONDS: u64 = 8 * 60 * 60;
 const MAX_SESSIONS: usize = 1_024;
+const LOGIN_WINDOW_SECONDS: u64 = 60;
+const MAX_LOGIN_FAILURES: usize = 5;
 const STYLE: &str = r#"
 :root{color-scheme:light;--background:#f7f7f6;--surface:#fff;--foreground:#151515;--muted:#6b6b68;--border:#deded9;--accent:#ecece8;--sidenav:#f1f1ee;--sidenav-width:17rem;--radius:.7rem;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 *{box-sizing:border-box}body{margin:0;background:var(--background);color:var(--foreground);font-size:15px;line-height:1.55}a{color:inherit}.skip-link{position:fixed;z-index:100;left:1rem;top:-4rem;background:#111;color:#fff;padding:.65rem 1rem;border-radius:.4rem}.skip-link:focus{top:1rem}.shell{min-height:100vh}.sidenav{position:fixed;inset:0 auto 0 0;z-index:20;width:var(--sidenav-width);display:flex;flex-direction:column;background:var(--sidenav);border-right:1px solid var(--border)}.sidenav-header,.sidenav-footer{padding:1rem}.brand{display:flex;align-items:center;gap:.75rem;text-decoration:none;font-weight:700;letter-spacing:-.02em}.brand-mark{display:grid;place-items:center;width:2rem;height:2rem;border-radius:.55rem;background:#151515;color:#fff;font-size:.82rem}.brand-copy{display:flex;flex-direction:column;line-height:1.2}.brand-copy small{color:var(--muted);font-size:.7rem;font-weight:500;letter-spacing:.04em;text-transform:uppercase}.node-chip{margin-top:1rem;padding:.55rem .65rem;border:1px solid var(--border);border-radius:.5rem;background:rgba(255,255,255,.55);font-size:.78rem;color:var(--muted)}.sidenav-content{flex:1;overflow:auto;padding:.25rem .75rem}.sidenav-group{padding:.55rem 0}.sidenav-label{padding:.25rem .65rem;color:#777772;font-size:.68rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase}.sidenav-menu{display:grid;gap:.15rem;margin-top:.25rem}.sidenav-link{display:flex;align-items:center;gap:.7rem;min-height:2.45rem;padding:.5rem .65rem;border-radius:.48rem;text-decoration:none;color:#4c4c49;font-weight:520}.sidenav-link:hover{background:rgba(255,255,255,.7);color:#111}.sidenav-link[aria-current=page]{background:#fff;color:#111;box-shadow:0 1px 2px rgba(0,0,0,.05)}.nav-icon{display:grid;place-items:center;width:1.25rem;color:#777;font-family:ui-monospace,monospace;font-size:.72rem}.sidenav-link[aria-current=page] .nav-icon{color:#111}.sidenav-footer{border-top:1px solid var(--border)}.operator{display:flex;align-items:center;gap:.65rem;margin-bottom:.75rem}.avatar{display:grid;place-items:center;width:2rem;height:2rem;border-radius:50%;background:#d9d9d4;font-size:.72rem;font-weight:700}.operator-copy{display:flex;flex-direction:column;line-height:1.25}.operator-copy small{color:var(--muted)}.signout{width:100%;background:transparent;color:#444;border:1px solid var(--border);border-radius:.48rem;padding:.55rem .7rem;text-align:left}.signout:hover{background:#fff;color:#111}.content{min-width:0;margin-left:var(--sidenav-width)}main{max-width:1260px;margin:0 auto;padding:2.75rem clamp(1.25rem,4vw,3.5rem) 5rem}.mobile-bar{display:none}h1{margin:.1rem 0 .35rem;font-size:clamp(1.75rem,3vw,2.3rem);line-height:1.15;letter-spacing:-.035em}h2{margin:2rem 0 .75rem;font-size:1.05rem;letter-spacing:-.015em}h3{font-size:.95rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:1rem}.card,table,form.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 1px 2px rgba(0,0,0,.025)}.card,form.panel{padding:1.25rem}.card h2,.card h3{margin-top:0}table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden}th,td{text-align:left;padding:.8rem .9rem;border-bottom:1px solid #ecece8;vertical-align:top}tr:last-child td{border-bottom:0}th{color:var(--muted);font-size:.69rem;letter-spacing:.065em;text-transform:uppercase}tbody tr:hover{background:#fafaf8}.muted{color:var(--muted)}.ok{color:#176b2c}.bad{color:#9b1c1c}.mono,pre{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}pre{white-space:pre-wrap;background:#171717;color:#eee;padding:1rem;border-radius:var(--radius);overflow:auto}button{background:#171717;color:#fff;border:0;border-radius:.48rem;padding:.62rem .9rem;font:inherit;font-weight:600;cursor:pointer}input{padding:.65rem .75rem;border:1px solid #aaa;border-radius:.45rem;width:min(420px,100%);font:inherit}.actions{display:flex;gap:.6rem;flex-wrap:wrap;margin:1rem 0}.actions a{background:#fff;border:1px solid #aaa;padding:.52rem .78rem;text-decoration:none;border-radius:.48rem;font-weight:600}.actions a:first-child{background:#171717;color:#fff;border-color:#171717}dt{font-weight:650;margin-top:.75rem}dd{margin:.15rem 0;color:#555}.flash{border:1px solid var(--border);border-left:3px solid #111;padding:.85rem 1rem;background:#fff;border-radius:.3rem}a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid rgba(35,95,190,.35);outline-offset:2px}.login-shell{min-height:100vh;display:grid;place-items:center;padding:2rem}.login-panel{width:min(28rem,100%)}.login-brand{margin-bottom:1.5rem}.mobile-nav{display:none}
@@ -97,11 +99,39 @@ struct SessionRecord {
     credential_revision: String,
 }
 
+#[derive(Debug, Default)]
+struct LoginThrottle {
+    failures: VecDeque<u64>,
+}
+
+impl LoginThrottle {
+    fn prune(&mut self, now: u64) {
+        while self
+            .failures
+            .front()
+            .is_some_and(|failure| now.saturating_sub(*failure) >= LOGIN_WINDOW_SECONDS)
+        {
+            self.failures.pop_front();
+        }
+    }
+
+    fn is_limited(&mut self, now: u64) -> bool {
+        self.prune(now);
+        self.failures.len() >= MAX_LOGIN_FAILURES
+    }
+
+    fn record_failure(&mut self, now: u64) {
+        self.prune(now);
+        self.failures.push_back(now);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UiState {
     state_dir: PathBuf,
     apps_root: PathBuf,
     sessions: Arc<Mutex<HashMap<String, SessionRecord>>>,
+    login_throttle: Arc<Mutex<LoginThrottle>>,
 }
 
 impl UiState {
@@ -110,6 +140,7 @@ impl UiState {
             state_dir: state_dir.as_ref().to_path_buf(),
             apps_root: apps_root.into(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            login_throttle: Arc::new(Mutex::new(LoginThrottle::default())),
         }
     }
 
@@ -223,15 +254,39 @@ struct LoginForm {
 }
 
 async fn login(State(state): State<UiState>, Form(form): Form<LoginForm>) -> Response {
+    let now = unix_seconds();
+    let mut throttle = match state.login_throttle.lock() {
+        Ok(value) => value,
+        Err(_) => return error_response(session_error()),
+    };
+    if throttle.is_limited(now) {
+        return (
+            [(header::RETRY_AFTER, LOGIN_WINDOW_SECONDS.to_string())],
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                page(
+                    "Sign in paused",
+                    "<h1>Sign in paused</h1><p>Too many failed attempts. Wait one minute and try again.</p>",
+                    false,
+                ),
+            ),
+        )
+            .into_response();
+    }
     let credential_revision = match UiCredentialStore::at_state_dir(&state.state_dir)
         .verified_revision(&form.token)
     {
-        Ok(Some(value)) => value,
+        Ok(Some(value)) => {
+            throttle.failures.clear();
+            value
+        }
         Ok(None) => {
+            throttle.record_failure(now);
             return (StatusCode::UNAUTHORIZED, page("Sign in failed", "<h1>Sign in failed</h1><p>The token was not accepted.</p><p><a href=/login>Try again</a></p>", false)).into_response();
         }
         Err(error) => return error_response(error),
     };
+    drop(throttle);
     let session = match random_token() {
         Ok(value) => value,
         Err(error) => return error_response(error),
@@ -244,7 +299,6 @@ async fn login(State(state): State<UiState>, Form(form): Form<LoginForm>) -> Res
         Ok(value) => value,
         Err(_) => return error_response(session_error()),
     };
-    let now = unix_seconds();
     sessions.retain(|_, record| record.expires_unix >= now);
     if sessions.len() >= MAX_SESSIONS
         && let Some(oldest) = sessions
@@ -1215,6 +1269,40 @@ mod tests {
         }
 
         assert_eq!(state.sessions.lock().unwrap().len(), MAX_SESSIONS);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_login_failures_are_throttled_and_success_resets_failures() {
+        let directory = temp_dir("login-throttle");
+        let token = UiCredentialStore::at_state_dir(&directory)
+            .rotate()
+            .unwrap();
+        let state = UiState::new(&directory, directory.join("apps"));
+
+        for _ in 0..MAX_LOGIN_FAILURES {
+            let response = login(
+                State(state.clone()),
+                Form(LoginForm {
+                    token: "wrong".into(),
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+        let response = login(
+            State(state.clone()),
+            Form(LoginForm {
+                token: token.clone(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(response.headers().contains_key(header::RETRY_AFTER));
+
+        state.login_throttle.lock().unwrap().failures.clear();
+        let response = login(State(state), Form(LoginForm { token })).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
         fs::remove_dir_all(directory).unwrap();
     }
 

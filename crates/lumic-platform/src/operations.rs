@@ -21,9 +21,11 @@ use lumic_core::{
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
 use std::{
     collections::BTreeSet,
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -83,16 +85,17 @@ impl OperationsService {
         context: &OperationContext,
     ) -> Result<WebhookDestination> {
         self.plan_destination(&destination)?;
-        let mut state = self.load_state()?;
-        let before = state
-            .destinations
-            .iter()
-            .find(|value| value.id == destination.id)
-            .cloned();
-        upsert(&mut state.destinations, destination.clone(), |value| {
-            &value.id
-        });
-        self.save_configuration_state(&state)?;
+        let before = self.update_state(true, |state| {
+            let before = state
+                .destinations
+                .iter()
+                .find(|value| value.id == destination.id)
+                .cloned();
+            upsert(&mut state.destinations, destination.clone(), |value| {
+                &value.id
+            });
+            Ok(before)
+        })?;
         self.record_configuration(
             context,
             ("operations.webhook.configure", "configure"),
@@ -121,23 +124,24 @@ impl OperationsService {
                 "each event type must be 1-128 characters without control characters",
             ));
         }
-        let mut state = self.load_state()?;
-        if !state
-            .destinations
-            .iter()
-            .any(|value| value.id == subscription.destination_id)
-        {
-            return Err(invalid("destination_id", "destination does not exist"));
-        }
-        let before = state
-            .subscriptions
-            .iter()
-            .find(|value| value.id == subscription.id)
-            .cloned();
-        upsert(&mut state.subscriptions, subscription.clone(), |value| {
-            &value.id
-        });
-        self.save_configuration_state(&state)?;
+        let before = self.update_state(true, |state| {
+            if !state
+                .destinations
+                .iter()
+                .any(|value| value.id == subscription.destination_id)
+            {
+                return Err(invalid("destination_id", "destination does not exist"));
+            }
+            let before = state
+                .subscriptions
+                .iter()
+                .find(|value| value.id == subscription.id)
+                .cloned();
+            upsert(&mut state.subscriptions, subscription.clone(), |value| {
+                &value.id
+            });
+            Ok(before)
+        })?;
         self.record_configuration(
             context,
             ("operations.subscription.configure", "configure"),
@@ -160,14 +164,15 @@ impl OperationsService {
         context: &OperationContext,
     ) -> Result<AutomationRule> {
         self.plan_rule(&rule)?;
-        let mut state = self.load_state()?;
-        let before = state
-            .rules
-            .iter()
-            .find(|value| value.id == rule.id)
-            .cloned();
-        upsert(&mut state.rules, rule.clone(), |value| &value.id);
-        self.save_configuration_state(&state)?;
+        let before = self.update_state(true, |state| {
+            let before = state
+                .rules
+                .iter()
+                .find(|value| value.id == rule.id)
+                .cloned();
+            upsert(&mut state.rules, rule.clone(), |value| &value.id);
+            Ok(before)
+        })?;
         self.record_configuration(
             context,
             ("operations.rule.configure", "configure"),
@@ -187,21 +192,23 @@ impl OperationsService {
                 "operations configuration snapshot is unavailable",
             ));
         }
-        let previous: AutomationState =
-            serde_json::from_slice(&fs::read(&backup).map_err(io_error)?).map_err(json_error)?;
-        let mut current = self.load_state()?;
-        let before = configuration_value(&current);
-        current.destinations = previous.destinations;
-        current.subscriptions = previous.subscriptions;
-        current.rules = previous.rules;
-        self.save_configuration_state(&current)?;
+        let (before, after) = self.update_state(true, |current| {
+            let previous: AutomationState =
+                serde_json::from_slice(&fs::read(&backup).map_err(io_error)?)
+                    .map_err(json_error)?;
+            let before = configuration_value(current);
+            current.destinations = previous.destinations;
+            current.subscriptions = previous.subscriptions;
+            current.rules = previous.rules;
+            Ok((before, configuration_value(current)))
+        })?;
         self.record_configuration(
             context,
             ("operations.configuration.rollback", "rollback"),
             "operations_configuration",
             "local",
             before,
-            configuration_value(&current),
+            after,
         )
     }
 
@@ -256,21 +263,22 @@ impl OperationsService {
 
     pub async fn capture_events(&self) -> Result<Vec<OperationalSignal>> {
         let events = EventStore::at_state_dir(&self.state_dir).list(MAX_TIMELINE_READ)?;
-        let mut state = self.load_state()?;
         let mut captured = Vec::new();
-        for event in events.into_iter().rev() {
-            if event.timestamp_unix_ms <= state.last_event_timestamp_unix_ms {
-                continue;
+        self.update_state(false, |state| {
+            for event in events.into_iter().rev() {
+                if event.timestamp_unix_ms <= state.last_event_timestamp_unix_ms {
+                    continue;
+                }
+                state.last_event_timestamp_unix_ms = state
+                    .last_event_timestamp_unix_ms
+                    .max(event.timestamp_unix_ms);
+                let signal = signal_from_event(event);
+                self.append_timeline(&signal)?;
+                enqueue_subscriptions(state, &signal);
+                captured.push(signal);
             }
-            state.last_event_timestamp_unix_ms = state
-                .last_event_timestamp_unix_ms
-                .max(event.timestamp_unix_ms);
-            let signal = signal_from_event(event);
-            self.append_timeline(&signal)?;
-            enqueue_subscriptions(&mut state, &signal);
-            captured.push(signal);
-        }
-        self.save_state(&state)?;
+            Ok(())
+        })?;
         for signal in &captured {
             let _ = self.apply_matching_rules(signal).await?;
         }
@@ -377,13 +385,17 @@ impl OperationsService {
     }
 
     async fn capture_snapshot_inner(&self, force: bool) -> Result<Vec<OperationalSignal>> {
-        let mut state = self.load_state()?;
         let now = now_ms();
-        if !force && now.saturating_sub(state.last_snapshot_timestamp_unix_ms) < 300_000 {
+        let reserved = self.update_state(false, |state| {
+            if !force && now.saturating_sub(state.last_snapshot_timestamp_unix_ms) < 300_000 {
+                return Ok(false);
+            }
+            state.last_snapshot_timestamp_unix_ms = now;
+            Ok(true)
+        })?;
+        if !reserved {
             return Ok(Vec::new());
         }
-        state.last_snapshot_timestamp_unix_ms = now;
-        self.save_state(&state)?;
 
         let mut signals = Vec::new();
         let report = crate::diagnostics::diagnose_host().await?;
@@ -516,9 +528,10 @@ impl OperationsService {
         signals.extend(self.capture_kernel_events().await?);
         for signal in &signals {
             self.append_timeline(signal)?;
-            let mut state = self.load_state()?;
-            enqueue_subscriptions(&mut state, signal);
-            self.save_state(&state)?;
+            self.update_state(false, |state| {
+                enqueue_subscriptions(state, signal);
+                Ok(())
+            })?;
         }
         for signal in &signals {
             let _ = self.apply_matching_rules(signal).await?;
@@ -527,8 +540,8 @@ impl OperationsService {
     }
 
     async fn capture_kernel_events(&self) -> Result<Vec<OperationalSignal>> {
-        let mut state = self.load_state()?;
-        let since_seconds = state.last_kernel_timestamp_unix_ms / 1_000;
+        let last_kernel_timestamp = self.load_state()?.last_kernel_timestamp_unix_ms;
+        let since_seconds = last_kernel_timestamp / 1_000;
         let since = format!("@{}", since_seconds.max(now_ms() / 1_000 - 300));
         let output = ProcessRunner
             .run(&ProcessSpec::new("journalctl").args([
@@ -566,10 +579,9 @@ impl OperationsService {
                 .next()
                 .and_then(|value| value.parse::<f64>().ok())
                 .map_or_else(now_ms, |value| (value * 1_000.0) as u128);
-            if timestamp <= state.last_kernel_timestamp_unix_ms {
+            if timestamp <= last_kernel_timestamp {
                 continue;
             }
-            state.last_kernel_timestamp_unix_ms = timestamp;
             signals.push(OperationalSignal {
                 id: unique_id("kernel"),
                 timestamp_unix_ms: timestamp,
@@ -596,15 +608,22 @@ impl OperationsService {
                 payload: json!({"journal_line": truncate(line, 2_048)}),
             });
         }
-        self.save_state(&state)?;
+        if let Some(latest) = signals.iter().map(|signal| signal.timestamp_unix_ms).max() {
+            self.update_state(false, |state| {
+                state.last_kernel_timestamp_unix_ms =
+                    state.last_kernel_timestamp_unix_ms.max(latest);
+                Ok(())
+            })?;
+        }
         Ok(signals)
     }
 
     async fn record_and_automate(&self, signal: OperationalSignal) -> Result<Vec<AutomationRun>> {
         self.append_timeline(&signal)?;
-        let mut state = self.load_state()?;
-        enqueue_subscriptions(&mut state, &signal);
-        self.save_state(&state)?;
+        self.update_state(false, |state| {
+            enqueue_subscriptions(state, &signal);
+            Ok(())
+        })?;
         self.apply_matching_rules(&signal).await
     }
 
@@ -630,26 +649,30 @@ impl OperationsService {
         signal: &OperationalSignal,
         configured_rule: &AutomationRule,
     ) -> Result<Option<AutomationRun>> {
-        let mut state = self.load_state()?;
-        let Some(index) = state
-            .rules
-            .iter()
-            .position(|value| value.id == configured_rule.id)
-        else {
-            return Ok(None);
-        };
-        let rule = &state.rules[index];
-        let cooldown_ms = u128::from(rule.cooldown_seconds) * 1_000;
-        if rule.attempt_count >= rule.max_attempts
-            || rule
-                .last_applied_unix_ms
-                .is_some_and(|last| now_ms().saturating_sub(last) < cooldown_ms)
-        {
+        let reserved = self.update_state(false, |state| {
+            let Some(index) = state
+                .rules
+                .iter()
+                .position(|value| value.id == configured_rule.id)
+            else {
+                return Ok(false);
+            };
+            let rule = &state.rules[index];
+            let cooldown_ms = u128::from(rule.cooldown_seconds) * 1_000;
+            if rule.attempt_count >= rule.max_attempts
+                || rule
+                    .last_applied_unix_ms
+                    .is_some_and(|last| now_ms().saturating_sub(last) < cooldown_ms)
+            {
+                return Ok(false);
+            }
+            state.rules[index].last_applied_unix_ms = Some(now_ms());
+            state.rules[index].attempt_count = state.rules[index].attempt_count.saturating_add(1);
+            Ok(true)
+        })?;
+        if !reserved {
             return Ok(None);
         }
-        state.rules[index].last_applied_unix_ms = Some(now_ms());
-        state.rules[index].attempt_count = state.rules[index].attempt_count.saturating_add(1);
-        self.save_state(&state)?;
 
         let (action_applied, verification_succeeded, message) = match &configured_rule.action {
             AutomationAction::RestartService { unit } => {
@@ -677,15 +700,16 @@ impl OperationsService {
             }
         };
         if verification_succeeded {
-            let mut state = self.load_state()?;
-            if let Some(rule) = state
-                .rules
-                .iter_mut()
-                .find(|value| value.id == configured_rule.id)
-            {
-                rule.attempt_count = 0;
-            }
-            self.save_state(&state)?;
+            self.update_state(false, |state| {
+                if let Some(rule) = state
+                    .rules
+                    .iter_mut()
+                    .find(|value| value.id == configured_rule.id)
+                {
+                    rule.attempt_count = 0;
+                }
+                Ok(())
+            })?;
         }
         let run = AutomationRun {
             signal_id: signal.id.clone(),
@@ -717,9 +741,10 @@ impl OperationsService {
             payload: serde_json::to_value(&run).map_err(json_error)?,
         };
         self.append_timeline(&remediation)?;
-        let mut state = self.load_state()?;
-        enqueue_subscriptions(&mut state, &remediation);
-        self.save_state(&state)?;
+        self.update_state(false, |state| {
+            enqueue_subscriptions(state, &remediation);
+            Ok(())
+        })?;
         Ok(Some(run))
     }
 
@@ -839,38 +864,39 @@ impl OperationsService {
         status: Option<u16>,
         error: Option<String>,
     ) -> Result<()> {
-        let mut state = self.load_state()?;
-        let destination_attempts = state
-            .deliveries
-            .iter()
-            .find(|value| value.id == delivery_id)
-            .and_then(|delivery| {
-                state
-                    .destinations
-                    .iter()
-                    .find(|value| value.id == delivery.destination_id)
-            })
-            .map_or(1, |value| value.max_attempts);
-        let delivery = state
-            .deliveries
-            .iter_mut()
-            .find(|value| value.id == delivery_id)
-            .ok_or_else(|| invalid("delivery_id", "delivery does not exist"))?;
-        delivery.attempts = delivery.attempts.saturating_add(1);
-        delivery.response_status = status;
-        delivery.last_error = error.map(|value| truncate(&value, 1_024));
-        if success {
-            delivery.status = DeliveryStatus::Delivered;
-            delivery.completed_at_unix_ms = Some(now_ms());
-        } else if delivery.attempts >= destination_attempts {
-            delivery.status = DeliveryStatus::Exhausted;
-            delivery.completed_at_unix_ms = Some(now_ms());
-        } else {
-            delivery.status = DeliveryStatus::RetryScheduled;
-            let delay_seconds = 2_u128.pow(u32::from(delivery.attempts.min(8)));
-            delivery.next_attempt_unix_ms = now_ms() + delay_seconds * 1_000;
-        }
-        self.save_state(&state)
+        self.update_state(false, |state| {
+            let destination_attempts = state
+                .deliveries
+                .iter()
+                .find(|value| value.id == delivery_id)
+                .and_then(|delivery| {
+                    state
+                        .destinations
+                        .iter()
+                        .find(|value| value.id == delivery.destination_id)
+                })
+                .map_or(1, |value| value.max_attempts);
+            let delivery = state
+                .deliveries
+                .iter_mut()
+                .find(|value| value.id == delivery_id)
+                .ok_or_else(|| invalid("delivery_id", "delivery does not exist"))?;
+            delivery.attempts = delivery.attempts.saturating_add(1);
+            delivery.response_status = status;
+            delivery.last_error = error.map(|value| truncate(&value, 1_024));
+            if success {
+                delivery.status = DeliveryStatus::Delivered;
+                delivery.completed_at_unix_ms = Some(now_ms());
+            } else if delivery.attempts >= destination_attempts {
+                delivery.status = DeliveryStatus::Exhausted;
+                delivery.completed_at_unix_ms = Some(now_ms());
+            } else {
+                delivery.status = DeliveryStatus::RetryScheduled;
+                let delay_seconds = 2_u128.pow(u32::from(delivery.attempts.min(8)));
+                delivery.next_attempt_unix_ms = now_ms() + delay_seconds * 1_000;
+            }
+            Ok(())
+        })
     }
 
     fn load_state(&self) -> Result<AutomationState> {
@@ -879,6 +905,45 @@ impl OperationsService {
         }
         let bytes = fs::read(&self.state_path).map_err(io_error)?;
         serde_json::from_slice(&bytes).map_err(json_error)
+    }
+
+    fn update_state<T>(
+        &self,
+        configuration_change: bool,
+        update: impl FnOnce(&mut AutomationState) -> Result<T>,
+    ) -> Result<T> {
+        let _lock = self.lock_state()?;
+        let mut state = self.load_state()?;
+        let result = update(&mut state)?;
+        if configuration_change {
+            self.write_state(&state)?;
+        } else {
+            self.save_state(&state)?;
+        }
+        Ok(result)
+    }
+
+    fn lock_state(&self) -> Result<File> {
+        let parent = self
+            .state_path
+            .parent()
+            .ok_or_else(|| LumicError::Internal {
+                message: "operations state path has no parent directory".into(),
+            })?;
+        fs::create_dir_all(parent).map_err(io_error)?;
+        let path = parent.join("state.json.lock");
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        let file = options.open(path).map_err(io_error)?;
+        if !file.metadata().map_err(io_error)?.is_file() {
+            return Err(LumicError::Internal {
+                message: "operations state lock is not a regular file".into(),
+            });
+        }
+        lock_exclusive(&file)?;
+        Ok(file)
     }
 
     fn save_state(&self, state: &AutomationState) -> Result<()> {
@@ -893,10 +958,6 @@ impl OperationsService {
             file.sync_all().map_err(io_error)?;
         }
         Ok(())
-    }
-
-    fn save_configuration_state(&self, state: &AutomationState) -> Result<()> {
-        self.write_state(state)
     }
 
     fn write_state(&self, state: &AutomationState) -> Result<()> {
@@ -1132,6 +1193,21 @@ fn invalid(field: &str, message: &str) -> LumicError {
     }
 }
 
+#[cfg(unix)]
+fn lock_exclusive(file: &File) -> Result<()> {
+    // SAFETY: `file` owns a valid descriptor for the duration of this call.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+        Ok(())
+    } else {
+        Err(io_error(std::io::Error::last_os_error()))
+    }
+}
+
+#[cfg(not(unix))]
+fn lock_exclusive(_file: &File) -> Result<()> {
+    Ok(())
+}
+
 fn io_error(error: std::io::Error) -> LumicError {
     LumicError::Internal {
         message: format!("operations store I/O failed: {error}"),
@@ -1147,6 +1223,7 @@ fn json_error(error: serde_json::Error) -> LumicError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{sync::Arc, thread};
 
     fn directory(name: &str) -> PathBuf {
         let path =
@@ -1287,6 +1364,36 @@ mod tests {
             .unwrap();
         state = service.load_state().unwrap();
         assert_eq!(state.deliveries[0].status, DeliveryStatus::Exhausted);
+        fs::remove_dir_all(state_dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_state_transactions_do_not_lose_updates() {
+        let state_dir = directory("state-contention");
+        let service = Arc::new(OperationsService::at_state_dir(&state_dir));
+        let workers = (0..8)
+            .map(|_| {
+                let service = Arc::clone(&service);
+                thread::spawn(move || {
+                    for _ in 0..50 {
+                        service
+                            .update_state(false, |state| {
+                                state.last_event_timestamp_unix_ms += 1;
+                                Ok(())
+                            })
+                            .unwrap();
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        assert_eq!(
+            service.load_state().unwrap().last_event_timestamp_unix_ms,
+            400
+        );
         fs::remove_dir_all(state_dir).unwrap();
     }
 }

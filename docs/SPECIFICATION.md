@@ -1,4 +1,4 @@
-# Lumic v2 capability specification
+# Lumic capability specification
 
 This document is the implementation-level product contract. It is intentionally broader than the current code and narrower than a wishlist: new features should fit these domains instead of creating parallel abstractions.
 

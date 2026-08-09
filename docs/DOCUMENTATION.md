@@ -5,7 +5,7 @@ Lumic documentation is a product contract and must evolve with implementation.
 ## Locations
 
 - `site/content/docs/` — public user/operator/developer documentation published at lumic.cc.
-- `docs/` — internal architecture, specification, roadmap, CI and coding-agent prompts.
+- `docs/` — internal architecture, specification, roadmap and CI material.
 
 ## Definition of done
 

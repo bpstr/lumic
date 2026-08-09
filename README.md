@@ -165,22 +165,49 @@ cargo test --workspace
 cargo run -p lumic-cli -- status
 ```
 
+### Test a custom build in Docker
+
+The development Compose setup builds `lumic` and `lumicd` from the current checkout for Docker's native architecture, installs them in one Ubuntu container, and exposes the authenticated operator UI only on the host loopback interface:
+
+```bash
+docker compose -f compose.dev.yaml up --build
+```
+
+Compose starts a single Lumic application container. To run the same image directly without Compose, use the maintained development Dockerfile:
+
+```bash
+docker build -f Dockerfile.dev -t lumic-local .
+docker run --name lumic-local --rm \
+  -p 127.0.0.1:18080:18080 \
+  -v lumic-local-state:/var/lib/lumic \
+  lumic-local
+```
+
+Do not force `--platform=linux/amd64` on an Arm development machine; the local image intentionally builds for Docker's native architecture. In another terminal, `docker logs lumic-local` shows the current admin token and `docker stop lumic-local` stops the container.
+
+Copy the admin token printed in the container logs, then open `http://127.0.0.1:18080`. Run CLI commands against the same persisted development node from another terminal:
+
+```bash
+docker compose -f compose.dev.yaml exec lumic lumic status
+docker compose -f compose.dev.yaml exec lumic lumic how-are-you
+docker compose -f compose.dev.yaml exec lumic lumic ui token rotate
+```
+
+After changing Rust code, rerun `docker compose -f compose.dev.yaml up --build`. Stop the node with `docker compose -f compose.dev.yaml down`; its state remains in the `lumic-dev-state` volume. To deliberately reset all development state, use `docker compose -f compose.dev.yaml down --volumes`.
+
+The daemon keeps its required loopback bind inside the container. A container-local TCP bridge publishes it as `127.0.0.1:18080` on the development machine, avoiding direct network exposure and common conflicts on port 8080. This setup is for UI and custom-build testing; a normal container does not model systemd or all privileged VPS behavior.
+
 Read in this order before substantial work:
 
 1. [`docs/PRODUCT.md`](docs/PRODUCT.md)
 2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 3. [`docs/ROADMAP.md`](docs/ROADMAP.md)
 4. [`AGENTS.md`](AGENTS.md)
-5. [`docs/CODEX_KICKOFF.md`](docs/CODEX_KICKOFF.md)
-6. [`docs/CODEX_FAST_TRACK.md`](docs/CODEX_FAST_TRACK.md) — manually triggered large feature epics through Phase 15
-7. [`docs/CODEX_NIGHTLY.md`](docs/CODEX_NIGHTLY.md) — support breadth, hardening and continuous expansion
-
-Development intentionally has two lanes: **manual fast-track epics build major product mechanisms; nightly expands their support matrix and makes them boringly reliable.**
 
 ## Versions
 
-- `main` — Lumic v2 development.
+- `main` — current Lumic development.
 - `v1` — historical Laravel implementation.
-- `nightly` releases — automated prerelease builds from `main` during early development.
+- `nightly` releases — automated prerelease builds from `main`.
 
-Lumic v2 is intentionally early. The architecture, tests and documentation contract are established before broad feature implementation so nightly development can add capabilities without repeatedly reshaping the foundation.
+Stable releases follow Semantic Versioning and use tags without a `v` prefix. Nightly remains an explicit opt-in channel for testing gated builds from `main`.

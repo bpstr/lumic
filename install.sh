@@ -3,7 +3,7 @@ set -eu
 
 REPO="bpstr/lumic"
 CHANNEL="${LUMIC_CHANNEL:-stable}"
-VERSION="${LUMIC_VERSION:-}"
+REQUESTED_VERSION="${LUMIC_VERSION:-}"
 INSTALL_DIR="${LUMIC_INSTALL_DIR:-/usr/local/bin}"
 LOCAL_BINARY="${LUMIC_INSTALL_BINARY:-}"
 LOCAL_DAEMON_BINARY="${LUMIC_INSTALL_DAEMON_BINARY:-}"
@@ -23,20 +23,25 @@ case "$INSTALL_DIR" in *[!A-Za-z0-9_./-]*) fail "LUMIC_INSTALL_DIR contains unsu
 case "$CONFIG_DIR" in *[!A-Za-z0-9_./-]*) fail "LUMIC_CONFIG_DIR contains unsupported characters" ;; esac
 case "$STATE_DIR" in *[!A-Za-z0-9_./-]*) fail "LUMIC_STATE_DIR contains unsupported characters" ;; esac
 case "$CHANNEL" in stable|nightly) ;; *) fail "unknown LUMIC_CHANNEL '$CHANNEL' (expected stable or nightly)" ;; esac
-case "$VERSION" in *[!0-9A-Za-z._-]*) fail "invalid LUMIC_VERSION '$VERSION'" ;; esac
+if [ -n "$REQUESTED_VERSION" ] && ! printf '%s\n' "$REQUESTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+  fail "invalid LUMIC_VERSION '$REQUESTED_VERSION' (expected MAJOR.MINOR.PATCH without a v prefix)"
+fi
 
 # shellcheck disable=SC1091
 . /etc/os-release
 case "${ID:-}" in
   ubuntu|debian) ;;
-  *) fail "unsupported distribution '${ID:-unknown}' (v2 currently targets Debian/Ubuntu)" ;;
+  *) fail "unsupported distribution '${ID:-unknown}' (Lumic currently targets Debian/Ubuntu)" ;;
 esac
 
 ARCH="$(uname -m)"
-case "$ARCH" in
-  x86_64|amd64) TARGET="x86_64-unknown-linux-musl" ;;
-  *) fail "unsupported architecture '$ARCH' (Phase 0 release artifacts are x86_64 only)" ;;
-esac
+TARGET=""
+if [ -z "$LOCAL_BINARY" ]; then
+  case "$ARCH" in
+    x86_64|amd64) TARGET="x86_64-unknown-linux-musl" ;;
+    *) fail "unsupported architecture '$ARCH' (Phase 0 release artifacts are x86_64 only)" ;;
+  esac
+fi
 
 install -d -m 0755 "$INSTALL_DIR" "$CONFIG_DIR"
 install -d -m 0700 "$STATE_DIR"
@@ -61,13 +66,16 @@ if [ -n "$LOCAL_BINARY" ]; then
 else
   command -v curl >/dev/null 2>&1 || fail "curl is required for remote installation"
   if [ "$CHANNEL" = "nightly" ]; then
-    [ -z "$VERSION" ] || fail "LUMIC_VERSION cannot be combined with the rolling nightly channel"
+    [ -z "$REQUESTED_VERSION" ] || fail "LUMIC_VERSION cannot be combined with the rolling nightly channel"
     URL="https://github.com/$REPO/releases/download/nightly/lumic-$TARGET"
   else
-    [ -n "$VERSION" ] || fail "stable releases are not published yet; use LUMIC_CHANNEL=nightly or LUMIC_INSTALL_BINARY for local CI"
-    URL="https://github.com/$REPO/releases/download/v$VERSION/lumic-$TARGET"
+    if [ -n "$REQUESTED_VERSION" ]; then
+      URL="https://github.com/$REPO/releases/download/$REQUESTED_VERSION/lumic-$TARGET"
+    else
+      URL="https://github.com/$REPO/releases/latest/download/lumic-$TARGET"
+    fi
   fi
-  info "downloading ${VERSION:-$CHANNEL} build for $ID/$ARCH"
+  info "downloading ${REQUESTED_VERSION:-$CHANNEL} build for $ID/$ARCH"
   curl -fL --retry 3 "$URL" -o "$TMP" || fail "download failed from $URL; verify the channel/version and network access"
   curl -fL --retry 3 "$URL.sha256" -o "$CHECKSUM_FILE" || fail "checksum download failed from $URL.sha256"
   EXPECTED_CHECKSUM="$(awk 'NR == 1 { print $1 }' "$CHECKSUM_FILE")"
@@ -90,8 +98,8 @@ fi
 chmod 0755 "$TMP"
 INSTALLED_VERSION="$($TMP version 2>/dev/null)" || fail "downloaded binary failed 'lumic version' verification"
 case "$INSTALLED_VERSION" in "lumic "*) ;; *) fail "binary returned an unexpected version string" ;; esac
-if [ -n "$VERSION" ] && [ "$INSTALLED_VERSION" != "lumic $VERSION" ]; then
-  fail "requested version $VERSION but binary reports '$INSTALLED_VERSION'"
+if [ -n "$REQUESTED_VERSION" ] && [ "$INSTALLED_VERSION" != "lumic $REQUESTED_VERSION" ]; then
+  fail "requested version $REQUESTED_VERSION but binary reports '$INSTALLED_VERSION'"
 fi
 
 if [ -f "$DEST" ] && cmp -s "$TMP" "$DEST"; then
@@ -113,12 +121,16 @@ else
 fi
 
 info "prepared $CONFIG_DIR (configuration) and $STATE_DIR (private state)"
+CHANNEL_TMP="$(mktemp "$CONFIG_DIR/.channel.XXXXXX")" || fail "cannot create channel file in $CONFIG_DIR"
+printf '%s\n' "$CHANNEL" > "$CHANNEL_TMP"
+chmod 0644 "$CHANNEL_TMP"
+mv -f "$CHANNEL_TMP" "$CONFIG_DIR/channel"
 if [ -n "$LOCAL_DAEMON_BINARY" ]; then
   chmod 0755 "$DAEMON_TMP"
   DAEMON_VERSION="$($DAEMON_TMP --version 2>/dev/null)" || fail "daemon binary failed 'lumicd --version' verification"
   case "$DAEMON_VERSION" in "lumicd "*) ;; *) fail "daemon returned an unexpected version string" ;; esac
-  if [ -n "$VERSION" ] && [ "$DAEMON_VERSION" != "lumicd $VERSION" ]; then
-    fail "requested version $VERSION but daemon reports '$DAEMON_VERSION'"
+  if [ -n "$REQUESTED_VERSION" ] && [ "$DAEMON_VERSION" != "lumicd $REQUESTED_VERSION" ]; then
+    fail "requested version $REQUESTED_VERSION but daemon reports '$DAEMON_VERSION'"
   fi
   if [ -f "$DAEMON_DEST" ] && cmp -s "$DAEMON_TMP" "$DAEMON_DEST"; then
     info "$DAEMON_VERSION is already installed at $DAEMON_DEST"

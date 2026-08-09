@@ -63,6 +63,6 @@ A React or Node project should be able to resolve into its actual Node/build req
 
 The same model will cover Python applications, static sites, APIs, workers and custom services as their integrations become available.
 
-> **Documentation status:** Lumic v2 is pre-alpha. These pages describe both the implemented foundation and the intended public contract. Each capability page must be updated in the same change that makes the capability real. Documentation must never silently present planned behavior as already shipped.
+> **Documentation status:** These pages are the public contract for Lumic 1.x. Pages clearly distinguish implemented behavior from planned work and must be updated in the same change that changes the product.
 
 Lumic manages Linux directly. Docker is supported as a workload feature, not used as the product's core abstraction.

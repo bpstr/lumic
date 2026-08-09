@@ -1,4 +1,4 @@
-# Lumic Control Center v2 product brief
+# Lumic Control Center product brief
 
 ## Definition
 

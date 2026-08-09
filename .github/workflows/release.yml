@@ -1,0 +1,87 @@
+name: Stable release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Verify immutable SemVer release contract
+        run: |
+          printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          test "$GITHUB_REF_NAME" = "$cargo_version"
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: rustfmt, clippy
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # main
+        with:
+          tool: cargo-audit
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --workspace --all-features
+      - run: cargo audit --deny warnings
+      - run: cargo build --locked -p lumic-cli --release
+      - run: cargo build --locked -p lumic-cli -p lumic-daemon --release --target x86_64-unknown-linux-musl
+      - name: Run capability smoke tests
+        env:
+          LUMIC_TEST_BINARY: target/x86_64-unknown-linux-musl/release/lumic
+        run: |
+          for test in tests/epic-{a,b,c,d,e,f,g}-smoke.sh; do
+            "$test"
+          done
+      - name: Run live managed-service and recipe gates
+        run: |
+          sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_MANAGED_SERVICE_LIVE=1 "$PWD/tests/epic-b-smoke.sh"
+          sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_EPIC_C_LIVE=1 "$PWD/tests/epic-c-smoke.sh"
+          sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_EPIC_F_LIVE=1 "$PWD/tests/epic-f-smoke.sh"
+      - name: Build release assets
+        run: |
+          install -d dist
+          install -m 0755 target/x86_64-unknown-linux-musl/release/lumic dist/lumic-x86_64-unknown-linux-musl
+          install -m 0755 target/x86_64-unknown-linux-musl/release/lumicd dist/lumicd-x86_64-unknown-linux-musl
+          cd dist
+          sha256sum lumic-x86_64-unknown-linux-musl > lumic-x86_64-unknown-linux-musl.sha256
+          sha256sum lumicd-x86_64-unknown-linux-musl > lumicd-x86_64-unknown-linux-musl.sha256
+      - name: Smoke installer on supported images
+        run: |
+          chmod +x tests/install-smoke.sh install.sh
+          for image in ubuntu:22.04 ubuntu:24.04 debian:12 debian:13; do
+            docker run --rm \
+              -v "$PWD/dist/lumic-x86_64-unknown-linux-musl:/opt/lumic:ro" \
+              -v "$PWD/dist/lumicd-x86_64-unknown-linux-musl:/opt/lumicd:ro" \
+              -v "$PWD/install.sh:/install.sh:ro" \
+              -v "$PWD/tests/install-smoke.sh:/test.sh:ro" \
+              -e LUMIC_TEST_BINARY=/opt/lumic \
+              -e LUMIC_TEST_DAEMON_BINARY=/opt/lumicd \
+              "$image" /test.sh
+          done
+      - name: Attest release binaries
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: 'dist/lumic*-x86_64-unknown-linux-musl'
+      - name: Publish stable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "Lumic $GITHUB_REF_NAME" \
+            --generate-notes

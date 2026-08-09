@@ -44,4 +44,4 @@ Lumic combines useful parts of traditional hosting panels, OS managers, deployme
 
 ## Current status
 
-The v2 repository contains the Rust workspace, CLI/daemon/MCP boundaries, installer foundation, public documentation deployment and multi-OS CI. The MVP is being hardened toward the first real VPS installation.
+The repository contains the Rust workspace, CLI/daemon/MCP boundaries, installer, public documentation deployment and multi-OS CI. Lumic 1.x is the supported Rust implementation for real VPS installations.

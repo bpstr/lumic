@@ -1,0 +1,14 @@
+services:
+  lumic:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    environment:
+      RUST_LOG: info
+    ports:
+      - "127.0.0.1:18080:18080"
+    volumes:
+      - lumic-dev-state:/var/lib/lumic
+
+volumes:
+  lumic-dev-state:

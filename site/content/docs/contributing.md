@@ -1,6 +1,6 @@
 +++
 title = "Development & documentation"
-description = "How contributors and coding agents keep Lumic extensible and the docs permanently trustworthy."
+description = "How contributors keep Lumic extensible and the docs permanently trustworthy."
 weight = 130
 [extra]
 kicker = "DEVELOPMENT"
@@ -11,7 +11,7 @@ Lumic is intentionally structured so the first core can grow without repeated re
 
 ## Documentation is part of done
 
-Public documentation lives under `site/content/docs/`. Internal architecture, specifications and coding-agent prompts live under `docs/`.
+Public documentation lives under `site/content/docs/`. Internal architecture and specifications live under `docs/`.
 
 A change is not complete when it changes public behavior without updating the relevant public page in the same commit/PR.
 

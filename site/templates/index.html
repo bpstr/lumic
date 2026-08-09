@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block body %}
+<main>
+  <section class="hero shell">
+    <div class="eyebrow">SERVER OPERATING LAYER · {{ config.extra.version | upper }}</div>
+    <h1>Your server.<br>Ready to rock.</h1>
+    <p class="lead">Lumic turns a fresh Linux VPS into a managed server, application and infrastructure node. Use the CLI when you want control, the UI when you want visibility, and MCP when you want your coding agent to handle the work.</p>
+    <div class="command"><span>$</span><code>ssh root@server 'curl -fsSL https://lumic.cc/install | sh'</code></div>
+    <div class="actions"><a class="button primary" href="{{ get_url(path='@/docs/installation.md') }}">Install Lumic</a><a class="button" href="{{ get_url(path='@/docs/_index.md') }}">Read the docs</a></div>
+  </section>
+
+  <section class="shell architecture-card">
+<pre>        Lumic
+          │
+   ┌──────┼──────┐
+   │      │      │
+  CLI     UI     MCP
+   │      │      │
+   └──────┼──────┘
+          │
+       Linux VPS</pre>
+  </section>
+
+  <section class="shell status-panel">
+    <div class="panel-head"><div><strong>prod-01</strong><small>Ubuntu · x86_64</small></div><span class="healthy">● HEALTHY</span></div>
+    <div class="metrics"><div><small>APPLICATIONS</small><strong>4</strong></div><div><small>SERVICES</small><strong>6</strong></div><div><small>DATABASES</small><strong>2</strong></div><div><small>DEPLOYMENTS</small><strong>1 active</strong></div></div>
+    <div class="events"><div><time>16:22</time><span>✓</span><p>api deployment completed</p></div><div><time>16:07</time><span>✓</span><p>certificate renewed</p></div><div><time>15:44</time><span>•</span><p>postgres backup completed</p></div></div>
+  </section>
+
+  <section class="shell grid">
+    <article><span class="index">01</span><h2>Server</h2><p>Operating system, packages, users, services, processes, storage, networking, firewall, updates, logs and diagnostics without living in SSH.</p></article>
+    <article><span class="index">02</span><h2>Applications</h2><p>Git repositories, runtimes, environment, domains, TLS, workers, jobs and zero-downtime release deployments as one application lifecycle.</p></article>
+    <article><span class="index">03</span><h2>Services</h2><p>Install and operate PostgreSQL, Redis and other server-side capabilities through typed managed integrations instead of ad-hoc scripts.</p></article>
+    <article><span class="index">04</span><h2>Infrastructure</h2><p>One VPS or several autonomous Lumic nodes. Compose staging, production, cache, database, media, worker and Git roles without becoming Kubernetes.</p></article>
+  </section>
+
+  <section class="shell mcp-block">
+    <div class="eyebrow">MCP · THE BEST BANG</div>
+    <h2>Give your coding agent infrastructure, not SSH.</h2>
+    <div class="prompt"><span>&gt;</span><p>Create staging on node-02 and production on node-01. Inspect the application requirements, install what it needs, configure zero-downtime deployment and verify both environments.</p></div>
+    <p>Codex or Claude reasons about the task. Lumic exposes structured server capabilities, policy, plans, events and status.</p>
+    <a href="{{ get_url(path='@/docs/mcp.md') }}">MCP documentation →</a>
+  </section>
+
+  <section class="shell nightly-block">
+    <div><div class="eyebrow">LUMIC NIGHTLY</div><h2>Gets better every night.</h2></div>
+    <p>Early Lumic development ships a rolling nightly channel after CI gates pass. New capabilities, fixes and integration coverage arrive continuously while the stable channel remains conservative.</p>
+  </section>
+</main>
+{% endblock body %}

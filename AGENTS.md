@@ -9,6 +9,7 @@ Build Lumic into a host-native Linux server operating layer for developers and o
 ## Non-negotiable product boundaries
 
 - Rust is the product stack. Do not introduce Laravel, Node, TypeScript or another application runtime for Lumic itself without an explicit architectural decision.
+- The public website/documentation uses Zola under `site/`; it is isolated from the Cargo workspace and is not a Lumic runtime dependency.
 - Docker/container support is a feature, not a core abstraction and not a reason to shape unrelated APIs around containers.
 - Do not duplicate Linux subsystems. Wrap trusted native mechanisms such as apt, systemd, Git and nginx with validation, policy, plans, audit and stable domain contracts.
 - Do not expose unrestricted shell execution as the default CLI/API/MCP model.
@@ -76,19 +77,29 @@ cargo test --workspace
 
 If a change affects host behavior, add/update integration coverage under `tests/` and CI image matrices. Do not claim an OS is supported without automated install/detection coverage.
 
-## Documentation requirements
+## Documentation is part of done
 
-Changes that introduce a capability must document:
+This is a standing requirement, not a later cleanup task.
+
+Public docs live in `site/content/docs/`; internal architecture/specification material lives in `docs/`. Read `docs/DOCUMENTATION.md`.
+
+Every change that affects public behavior MUST update the relevant documentation in the same PR/commit. This includes commands, capabilities, MCP tools, configuration, OS support, events, installation, deployment behavior and security/policy.
+
+For a new capability document, where relevant:
 
 - user intent/use case;
 - CLI shape;
 - MCP shape if agent-relevant;
+- UI behavior;
 - plan/apply behavior;
 - permissions/policy;
 - OS support;
 - events emitted;
 - failure and recovery behavior;
-- tests.
+- tests;
+- current implementation status.
+
+Never leave docs claiming a feature is implemented when it is only planned. If code intentionally changes the contract, update the contract immediately.
 
 ## UX direction
 

@@ -1,0 +1,30 @@
++++
+title = "Security model"
+description = "Root-level infrastructure management requires explicit policy, safe native execution and auditable mutations."
+weight = 90
+[extra]
+kicker = "SECURITY"
+status = "foundation"
++++
+
+Lumic operates close to root privileges. Security is therefore an architecture boundary, not a feature to add after provisioning works.
+
+## Safe native execution
+
+Lumic prefers direct executable invocation with separated argument arrays. Untrusted values must not be interpolated into `sh -c`.
+
+## Capability policy
+
+Interfaces receive Lumic capabilities rather than a generic shell. Policy can allow or deny operations and constrain arguments such as package identifiers.
+
+## Package allowlisting
+
+Using apt through Lumic does not mean exposing arbitrary apt execution. A package installation request is validated against policy, resolved through the OS adapter and recorded as an operation.
+
+## Plan and audit
+
+Mutating operations should consider preconditions, idempotency, plan/dry-run support, failure behavior, before/after state, rollback/recovery and audit metadata.
+
+## Container boundaries
+
+Docker socket mounts and privileged host mounts are treated as host-level power. Containerized Lumic must never imply host control unless those privileges have been deliberately granted and surfaced to the operator.

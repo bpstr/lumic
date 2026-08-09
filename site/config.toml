@@ -1,0 +1,16 @@
+base_url = "https://lumic.cc"
+title = "Lumic"
+description = "Host-native Linux server, application and infrastructure management with CLI, UI and MCP."
+default_language = "en"
+compile_sass = true
+minify_html = true
+build_search_index = false
+generate_feeds = false
+
+[markdown]
+highlight_code = true
+smart_punctuation = true
+
+[extra]
+github = "https://github.com/bpstr/lumic"
+version = "v2 pre-alpha"

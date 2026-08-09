@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="{% block description %}{{ config.description }}{% endblock description %}">
+  <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+  <link rel="stylesheet" href="{{ get_url(path='main.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ get_url(path='/') }}" aria-label="Lumic home"><img src="{{ get_url(path='lumic.svg') }}" alt="Lumic"></a>
+    <nav>
+      <a href="{{ get_url(path='@/docs/_index.md') }}">Docs</a>
+      <a href="{{ get_url(path='@/docs/nightly.md') }}">Nightly</a>
+      <a href="{{ config.extra.github }}">GitHub</a>
+    </nav>
+  </header>
+  {% block body %}{% endblock body %}
+  <footer class="footer">
+    <span>Lumic · host-native Linux infrastructure</span>
+    <span><a href="{{ config.extra.github }}">bpstr/lumic</a></span>
+  </footer>
+</body>
+</html>

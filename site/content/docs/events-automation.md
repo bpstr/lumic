@@ -1,0 +1,41 @@
++++
+title = "Events & automation"
+description = "Lumic actively observes server state, records events and can notify or run constrained remediation."
+weight = 80
+[extra]
+kicker = "AUTOMATION"
+status = "planned contract"
++++
+
+Lumic is an active participant on the server, not a command that only wakes when invoked.
+
+Events may include:
+
+```text
+server.booted
+service.failed
+deployment.started
+deployment.succeeded
+deployment.failed
+certificate.expiring
+certificate.renewal_failed
+backup.completed
+healthcheck.failed
+healthcheck.recovered
+disk.threshold_exceeded
+repository.updated
+```
+
+## Destinations
+
+Generic webhooks are the foundation. Email, Slack, Discord, Teams and other notification channels can be layered on later.
+
+## Remediation
+
+Deterministic, policy-defined remediation is appropriate:
+
+```text
+service failure → restart → verify → notify on failure
+```
+
+Open-ended AI changes triggered automatically by load or errors are not the default safety model. Agents can inspect the event history and recommend or execute explicitly permitted changes afterward.

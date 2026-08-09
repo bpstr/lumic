@@ -4,14 +4,14 @@ description = "The host is Lumic's primary abstraction: OS, packages, services, 
 weight = 30
 [extra]
 kicker = "SERVER"
-status = "foundation implemented; broader management planned"
+status = "host operator implemented"
 +++
 
 A Lumic node models the real Linux machine rather than hiding it behind containers.
 
 ## Host facts
 
-Lumic exposes live distro/version, architecture, hostname, kernel, logical CPU count, memory/swap and root-filesystem capacity. `lumic diagnose` adds load, uptime, memory pressure, high-RSS processes and failed systemd units with evidence and recovery suggestions. A complete mount and network inventory remains future work.
+Lumic exposes live distro/version, architecture, hostname, kernel, logical CPU count, memory/swap and root-filesystem capacity. The host operator adds users/groups, firewall state, listening ports, mounts/capacity, high-RSS processes, systemd timers, pending apt updates and backup schedules. `lumic diagnose` correlates load, memory pressure, failed units, nearly-full mounts and pending security updates with evidence and bounded recovery suggestions.
 
 These facts are shared by CLI, UI and MCP so an agent can inspect the machine before choosing an operation.
 
@@ -58,4 +58,12 @@ Lumic distinguishes:
 
 ## Diagnostics
 
-`lumic diagnose` returns the currently implemented evidence-backed host snapshot. Deployment history, application health, events and audit records are separate typed reads, so clients can combine them without Lumic pretending to diagnose subsystems it does not yet inspect.
+`lumic diagnose` returns the evidence-backed host snapshot. Deployment history, application health, events and audit records remain separate typed reads.
+
+## Host operator
+
+`lumic server snapshot` is the broad read-only view. Focused commands inspect firewall rules, listeners, mounts, processes, timers, updates and journal entries. Typed mutations cover user/group lifecycle and membership, non-symlink path ownership/mode, UFW allow/deny rules, fixed process signals, security/all package updates and systemd-backed managed-service backup schedules.
+
+Deterministic remediation is deliberately narrow: validated systemd service restart with verification, process termination, and bounded journal vacuum. There is no arbitrary command or arbitrary remediation script. Mutations use direct argument vectors, validate identifiers/paths/CIDRs, emit events and audits, and retain data where deletion would make recovery unsafe.
+
+The initial firewall adapter requires UFW; backup schedules target existing Lumic managed-service backup commands. All host mutations require root privileges on Debian/Ubuntu. Inspect/status operations are safe to call first and MCP applies additionally require node policy and explicit approval.

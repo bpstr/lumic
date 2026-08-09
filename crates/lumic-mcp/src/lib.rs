@@ -8,6 +8,11 @@ use lumic_core::{
     },
     managed_service::{ManagedServiceKind, ServiceConfiguration},
     package::PackageName,
+    recipe::RecipeInstallRequest,
+    server::{
+        FirewallDecision, FirewallRule, NetworkProtocol, ProcessSignal, RemediationAction,
+        UpdateScope,
+    },
 };
 use lumic_platform::{
     application::ApplicationService,
@@ -16,6 +21,8 @@ use lumic_platform::{
     diagnostics::diagnose_host,
     event_store::EventStore,
     managed_service::ManagedServiceManager,
+    recipe::RecipeManager,
+    server::HostOperator,
     systemd::{ServiceAction, SystemdServiceManager},
 };
 use rmcp::{
@@ -233,6 +240,106 @@ struct ConfigureProcess {
     approved: bool,
 }
 
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RecipeRequest {
+    recipe: String,
+    app: String,
+    domain: String,
+    repository_url: Option<String>,
+    #[serde(default = "default_branch")]
+    branch: String,
+    tls_email: Option<String>,
+    #[serde(default)]
+    environment: BTreeMap<String, String>,
+    #[serde(default)]
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApprovedRecipeApplication {
+    app: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct HostAccountMutation {
+    /// One of: user_create, user_delete, group_create, group_add_member.
+    action: String,
+    name: String,
+    member: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct HostFirewallMutation {
+    /// One of: allow, deny.
+    decision: String,
+    port: u16,
+    /// One of: tcp, udp.
+    protocol: String,
+    #[serde(default = "default_any")]
+    source: String,
+    #[serde(default)]
+    remove: bool,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct HostProcessMutation {
+    pid: u32,
+    /// One of: terminate, kill, hangup.
+    signal: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct HostPermissionsMutation {
+    path: String,
+    owner: String,
+    group: String,
+    /// Octal mode, for example 0750.
+    mode: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct HostBackupSchedule {
+    id: String,
+    service: String,
+    database: Option<String>,
+    on_calendar: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct HostUpdateMutation {
+    /// One of: security, all.
+    scope: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct HostLogSearch {
+    unit: Option<String>,
+    priority: Option<String>,
+    since: Option<String>,
+    query: Option<String>,
+    #[serde(default = "default_log_lines")]
+    lines: usize,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct HostRemediation {
+    /// One of: restart_service, terminate_process, vacuum_journal.
+    action: String,
+    unit: Option<String>,
+    pid: Option<u32>,
+    older_than_days: Option<u16>,
+    approved: bool,
+}
+
 fn default_branch() -> String {
     "main".into()
 }
@@ -247,6 +354,12 @@ const fn default_health_port() -> u16 {
 
 const fn default_true() -> bool {
     true
+}
+fn default_any() -> String {
+    "any".into()
+}
+const fn default_log_lines() -> usize {
+    100
 }
 
 #[derive(Debug, Clone)]
@@ -874,6 +987,324 @@ impl LumicMcpServer {
     }
 
     #[tool(
+        name = "recipe_catalog",
+        description = "List the built-in, validated and versioned application recipe catalog. Read-only; use recipe_plan before recipe_install."
+    )]
+    fn recipe_catalog(&self) -> Result<String, String> {
+        to_json(recipe_manager().catalog())
+    }
+
+    #[tool(
+        name = "recipe_installations",
+        description = "List installed application recipes and their versions, managed services and secret references. Secret values are never returned. Read-only."
+    )]
+    fn recipe_installations(&self) -> Result<String, String> {
+        to_json(&recipe_manager().list().map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "recipe_plan",
+        description = "Resolve a recipe installation or reconciliation into exact changes, risks, preconditions and recovery guidance. Read-only."
+    )]
+    fn recipe_plan(
+        &self,
+        Parameters(request): Parameters<RecipeRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &recipe_manager()
+                .plan_install(&recipe_request(request))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "recipe_install",
+        description = "Install or idempotently reconcile a versioned recipe through Lumic applications, managed services, secret references, systemd, nginx and TLS. Mutating: requires approved=true and node policy enablement."
+    )]
+    async fn recipe_install(
+        &self,
+        Parameters(request): Parameters<RecipeRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &recipe_manager()
+                .install(
+                    &recipe_request(request),
+                    &operation_context("recipe_install"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "recipe_update",
+        description = "Reconcile an installed recipe to the current catalog version. Mutating: requires approved=true and node policy enablement."
+    )]
+    async fn recipe_update(
+        &self,
+        Parameters(request): Parameters<ApprovedRecipeApplication>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &recipe_manager()
+                .update(&request.app, &operation_context("recipe_update"))
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "recipe_uninstall",
+        description = "Uninstall a recipe, disable its application, retain releases for recovery, and remove generated secret material. Mutating: requires approved=true and node policy enablement."
+    )]
+    fn recipe_uninstall(
+        &self,
+        Parameters(request): Parameters<ApprovedRecipeApplication>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &recipe_manager()
+                .uninstall(&request.app, &operation_context("recipe_uninstall"))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "host_operator_snapshot",
+        description = "Read users, groups, firewall, listeners, mounts, processes, systemd timers, pending updates and backup schedules as one operator snapshot. Read-only."
+    )]
+    async fn host_operator_snapshot(&self) -> Result<String, String> {
+        to_json(&host_operator().snapshot().await.map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "host_search_logs",
+        description = "Search the systemd journal with bounded typed filters for unit, priority, time and text. Read-only."
+    )]
+    async fn host_search_logs(
+        &self,
+        Parameters(request): Parameters<HostLogSearch>,
+    ) -> Result<String, String> {
+        host_operator()
+            .search_journal(
+                request.unit.as_deref(),
+                request.priority.as_deref(),
+                request.since.as_deref(),
+                request.query.as_deref(),
+                request.lines,
+            )
+            .await
+            .map_err(string_error)
+    }
+
+    #[tool(
+        name = "host_account_apply",
+        description = "Create/delete a user or group, or add a group member through validated direct argv. Mutating: inspect first; requires approved=true and node policy enablement."
+    )]
+    async fn host_account_apply(
+        &self,
+        Parameters(request): Parameters<HostAccountMutation>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let operator = host_operator();
+        let context = operation_context("host_account_apply");
+        let result = match request.action.as_str() {
+            "user_create" => operator.create_user(&request.name, &context).await,
+            "user_delete" => operator.delete_user(&request.name, &context).await,
+            "group_create" => operator.create_group(&request.name, &context).await,
+            "group_delete" => operator.delete_group(&request.name, &context).await,
+            "group_add_member" => {
+                operator
+                    .add_group_member(
+                        &request.name,
+                        request
+                            .member
+                            .as_deref()
+                            .ok_or("member is required for group_add_member")?,
+                        &context,
+                    )
+                    .await
+            }
+            _ => return Err(
+                "action must be one of: user_create, user_delete, group_create, group_delete, group_add_member".into(),
+            ),
+        }
+        .map_err(string_error)?;
+        to_json(&result)
+    }
+
+    #[tool(
+        name = "host_permissions_apply",
+        description = "Set validated owner, group and octal permissions on an absolute non-root path. Mutating: requires approved=true and node policy enablement."
+    )]
+    async fn host_permissions_apply(
+        &self,
+        Parameters(request): Parameters<HostPermissionsMutation>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let mode = u32::from_str_radix(request.mode.trim_start_matches("0o"), 8)
+            .map_err(|_| "mode must be octal, for example 0750")?;
+        to_json(
+            &host_operator()
+                .set_permissions(
+                    std::path::Path::new(&request.path),
+                    &request.owner,
+                    &request.group,
+                    mode,
+                    &operation_context("host_permissions_apply"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "host_firewall_apply",
+        description = "Apply or remove a validated UFW allow/deny rule for an IP/CIDR, port and protocol. Mutating: inspect first; requires approved=true and node policy enablement."
+    )]
+    async fn host_firewall_apply(
+        &self,
+        Parameters(request): Parameters<HostFirewallMutation>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let decision = match request.decision.as_str() {
+            "allow" => FirewallDecision::Allow,
+            "deny" => FirewallDecision::Deny,
+            _ => return Err("decision must be allow or deny".into()),
+        };
+        let protocol = match request.protocol.as_str() {
+            "tcp" => NetworkProtocol::Tcp,
+            "udp" => NetworkProtocol::Udp,
+            _ => return Err("protocol must be tcp or udp".into()),
+        };
+        to_json(
+            &host_operator()
+                .apply_firewall_rule(
+                    &FirewallRule {
+                        decision,
+                        port: request.port,
+                        protocol,
+                        source: request.source,
+                    },
+                    request.remove,
+                    &operation_context("host_firewall_apply"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "host_process_signal",
+        description = "Send a fixed TERM, KILL or HUP signal to a validated PID. PID 0, 1 and Lumic itself are protected. Mutating: requires approved=true and node policy enablement."
+    )]
+    fn host_process_signal(
+        &self,
+        Parameters(request): Parameters<HostProcessMutation>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let signal = match request.signal.as_str() {
+            "terminate" => ProcessSignal::Terminate,
+            "kill" => ProcessSignal::Kill,
+            "hangup" => ProcessSignal::Hangup,
+            _ => return Err("signal must be terminate, kill, or hangup".into()),
+        };
+        to_json(
+            &host_operator()
+                .signal_process(
+                    request.pid,
+                    signal,
+                    &operation_context("host_process_signal"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "host_updates_apply",
+        description = "Apply security-only or all pending apt updates with fixed package-manager operations. Mutating: inspect snapshot first; requires approved=true and node policy enablement."
+    )]
+    async fn host_updates_apply(
+        &self,
+        Parameters(request): Parameters<HostUpdateMutation>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let scope = match request.scope.as_str() {
+            "security" => UpdateScope::Security,
+            "all" => UpdateScope::All,
+            _ => return Err("scope must be security or all".into()),
+        };
+        to_json(
+            &host_operator()
+                .apply_updates(scope, &operation_context("host_updates_apply"))
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "host_backup_schedule",
+        description = "Create or reconcile a persistent systemd timer for a Lumic-managed service backup. Mutating: requires approved=true and node policy enablement."
+    )]
+    async fn host_backup_schedule(
+        &self,
+        Parameters(request): Parameters<HostBackupSchedule>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &host_operator()
+                .schedule_backup(
+                    lumic_core::server::BackupSchedule {
+                        id: request.id,
+                        service_id: request.service,
+                        database: request.database,
+                        on_calendar: request.on_calendar,
+                        enabled: request.enabled,
+                    },
+                    &operation_context("host_backup_schedule"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "host_remediate",
+        description = "Apply one deterministic remediation: restart_service, terminate_process, or vacuum_journal. Mutating: requires approved=true and node policy enablement."
+    )]
+    async fn host_remediate(
+        &self,
+        Parameters(request): Parameters<HostRemediation>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let action = match request.action.as_str() {
+            "restart_service" => RemediationAction::RestartService {
+                unit: request.unit.ok_or("unit is required")?,
+            },
+            "terminate_process" => RemediationAction::TerminateProcess {
+                pid: request.pid.ok_or("pid is required")?,
+            },
+            "vacuum_journal" => RemediationAction::VacuumJournal {
+                older_than_days: request
+                    .older_than_days
+                    .ok_or("older_than_days is required")?,
+            },
+            _ => {
+                return Err(
+                    "action must be restart_service, terminate_process, or vacuum_journal".into(),
+                );
+            }
+        };
+        to_json(
+            &host_operator()
+                .remediate(action, &operation_context("host_remediate"))
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
         name = "events_list",
         description = "Return the newest 100 structured Lumic infrastructure events. Read-only; event payloads never contain repository credentials."
     )]
@@ -913,11 +1344,35 @@ fn application_service() -> ApplicationService {
     ApplicationService::new(state, apps)
 }
 
+fn recipe_manager() -> RecipeManager {
+    let state = state_directory();
+    let apps = std::env::var_os("LUMIC_APPS_ROOT")
+        .map(Into::into)
+        .unwrap_or_else(|| state.join("apps"));
+    RecipeManager::at_state_dir(state, apps)
+}
+
+fn host_operator() -> HostOperator {
+    HostOperator::at_state_dir(state_directory())
+}
+
+fn recipe_request(request: RecipeRequest) -> RecipeInstallRequest {
+    RecipeInstallRequest {
+        recipe_id: request.recipe,
+        application_id: request.app,
+        domain: request.domain,
+        repository_url: request.repository_url,
+        branch: request.branch,
+        tls_email: request.tls_email,
+        environment: request.environment,
+    }
+}
+
 fn managed_service_manager() -> ManagedServiceManager {
     ManagedServiceManager::at_state_dir(state_directory())
 }
 
-fn to_json(value: &impl serde::Serialize) -> Result<String, String> {
+fn to_json(value: &(impl serde::Serialize + ?Sized)) -> Result<String, String> {
     serde_json::to_string_pretty(value).map_err(|error| error.to_string())
 }
 
@@ -1069,6 +1524,20 @@ mod tests {
             "managed_service_backup",
             "managed_service_restore",
             "application_attach_managed_service",
+            "recipe_catalog",
+            "recipe_plan",
+            "recipe_install",
+            "recipe_update",
+            "recipe_uninstall",
+            "host_operator_snapshot",
+            "host_search_logs",
+            "host_account_apply",
+            "host_permissions_apply",
+            "host_firewall_apply",
+            "host_process_signal",
+            "host_updates_apply",
+            "host_backup_schedule",
+            "host_remediate",
         ] {
             assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
         }

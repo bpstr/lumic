@@ -6,6 +6,11 @@ use lumic_core::{
     },
     managed_service::ManagedServiceKind,
     package::{PackageMutation, PackageName, PackageRecord},
+    recipe::RecipeInstallRequest,
+    server::{
+        BackupSchedule, FirewallDecision, FirewallRule, NetworkProtocol, ProcessSignal,
+        RemediationAction, UpdateScope,
+    },
 };
 use lumic_platform::{
     application::ApplicationService,
@@ -14,7 +19,9 @@ use lumic_platform::{
     diagnostics::diagnose_host,
     event_store::EventStore,
     managed_service::ManagedServiceManager,
+    recipe::RecipeManager,
     self_update::SelfUpdateManager,
+    server::HostOperator,
     systemd::{ServiceAction, SystemdServiceManager},
 };
 use std::{collections::BTreeMap, path::PathBuf};
@@ -86,10 +93,189 @@ enum Command {
         #[command(subcommand)]
         command: AppCommand,
     },
+    /// Catalog, plan, install, update, and uninstall versioned application recipes.
+    Recipe {
+        #[command(subcommand)]
+        command: RecipeCommand,
+    },
+    /// Inspect and operate typed host resources without unrestricted shell execution.
+    Server {
+        #[command(subcommand)]
+        command: ServerCommand,
+    },
     /// Configure the authenticated local operator UI.
     Ui {
         #[command(subcommand)]
         command: UiCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum RecipeCommand {
+    Catalog,
+    List,
+    Inspect { app: String },
+    Plan(RecipeRequestArgs),
+    Install(RecipeRequestArgs),
+    Update { app: String },
+    Uninstall { app: String },
+}
+
+#[derive(clap::Args)]
+struct RecipeRequestArgs {
+    recipe: String,
+    app: String,
+    domain: String,
+    #[arg(long)]
+    repository: Option<String>,
+    #[arg(long, default_value = "main")]
+    branch: String,
+    #[arg(long)]
+    tls_email: Option<String>,
+    #[arg(long = "env", value_parser = parse_key_value)]
+    environment: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ProtocolArg {
+    Tcp,
+    Udp,
+}
+impl From<ProtocolArg> for NetworkProtocol {
+    fn from(value: ProtocolArg) -> Self {
+        match value {
+            ProtocolArg::Tcp => Self::Tcp,
+            ProtocolArg::Udp => Self::Udp,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DecisionArg {
+    Allow,
+    Deny,
+}
+impl From<DecisionArg> for FirewallDecision {
+    fn from(value: DecisionArg) -> Self {
+        match value {
+            DecisionArg::Allow => Self::Allow,
+            DecisionArg::Deny => Self::Deny,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SignalArg {
+    Terminate,
+    Kill,
+    Hangup,
+}
+impl From<SignalArg> for ProcessSignal {
+    fn from(value: SignalArg) -> Self {
+        match value {
+            SignalArg::Terminate => Self::Terminate,
+            SignalArg::Kill => Self::Kill,
+            SignalArg::Hangup => Self::Hangup,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum UpdateScopeArg {
+    Security,
+    All,
+}
+impl From<UpdateScopeArg> for UpdateScope {
+    fn from(value: UpdateScopeArg) -> Self {
+        match value {
+            UpdateScopeArg::Security => Self::Security,
+            UpdateScopeArg::All => Self::All,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum ServerCommand {
+    Snapshot,
+    UserCreate {
+        name: String,
+    },
+    UserDelete {
+        name: String,
+    },
+    GroupCreate {
+        name: String,
+    },
+    GroupDelete {
+        name: String,
+    },
+    GroupAddMember {
+        group: String,
+        user: String,
+    },
+    Permissions {
+        path: PathBuf,
+        owner: String,
+        group: String,
+        mode: String,
+    },
+    FirewallList,
+    FirewallRule {
+        #[arg(value_enum)]
+        decision: DecisionArg,
+        port: u16,
+        #[arg(value_enum, default_value_t = ProtocolArg::Tcp)]
+        protocol: ProtocolArg,
+        #[arg(long, default_value = "any")]
+        source: String,
+        #[arg(long)]
+        remove: bool,
+    },
+    Listeners,
+    Mounts,
+    Processes {
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+    },
+    ProcessSignal {
+        pid: u32,
+        #[arg(value_enum)]
+        signal: SignalArg,
+    },
+    Timers,
+    Updates,
+    UpdateApply {
+        #[arg(value_enum)]
+        scope: UpdateScopeArg,
+    },
+    Logs {
+        #[arg(long)]
+        unit: Option<String>,
+        #[arg(long)]
+        priority: Option<String>,
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        lines: usize,
+    },
+    BackupSchedule {
+        id: String,
+        service: String,
+        #[arg(long)]
+        database: Option<String>,
+        #[arg(long)]
+        on_calendar: String,
+        #[arg(long, default_value_t = true)]
+        enabled: bool,
+    },
+    RemediateRestart {
+        unit: String,
+    },
+    RemediateTerminate {
+        pid: u32,
+    },
+    RemediateJournal {
+        #[arg(long)]
+        older_than_days: u16,
     },
 }
 
@@ -543,6 +729,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::App { command } => run_app(command).await?,
+        Command::Recipe { command } => run_recipe(command).await?,
+        Command::Server { command } => run_server(command).await?,
         Command::Ui { command } => match command {
             UiCommand::Token {
                 command: UiTokenCommand::Rotate,
@@ -554,6 +742,176 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     }
     Ok(())
+}
+
+async fn run_recipe(command: RecipeCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let manager = recipe_manager();
+    let value = match command {
+        RecipeCommand::Catalog => serde_json::to_value(manager.catalog())?,
+        RecipeCommand::List => serde_json::to_value(manager.list()?)?,
+        RecipeCommand::Inspect { app } => serde_json::to_value(manager.inspect(&app)?)?,
+        RecipeCommand::Plan(args) => {
+            serde_json::to_value(manager.plan_install(&recipe_request(args))?)?
+        }
+        RecipeCommand::Install(args) => serde_json::to_value(
+            manager
+                .install(&recipe_request(args), &operation_context(false))
+                .await?,
+        )?,
+        RecipeCommand::Update { app } => {
+            serde_json::to_value(manager.update(&app, &operation_context(false)).await?)?
+        }
+        RecipeCommand::Uninstall { app } => {
+            serde_json::to_value(manager.uninstall(&app, &operation_context(false))?)?
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+async fn run_server(command: ServerCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let operator = HostOperator::at_state_dir(state_directory());
+    let context = operation_context(false);
+    let value = match command {
+        ServerCommand::Snapshot => serde_json::to_value(operator.snapshot().await?)?,
+        ServerCommand::UserCreate { name } => {
+            serde_json::to_value(operator.create_user(&name, &context).await?)?
+        }
+        ServerCommand::UserDelete { name } => {
+            serde_json::to_value(operator.delete_user(&name, &context).await?)?
+        }
+        ServerCommand::GroupCreate { name } => {
+            serde_json::to_value(operator.create_group(&name, &context).await?)?
+        }
+        ServerCommand::GroupDelete { name } => {
+            serde_json::to_value(operator.delete_group(&name, &context).await?)?
+        }
+        ServerCommand::GroupAddMember { group, user } => {
+            serde_json::to_value(operator.add_group_member(&group, &user, &context).await?)?
+        }
+        ServerCommand::Permissions {
+            path,
+            owner,
+            group,
+            mode,
+        } => {
+            let mode = u32::from_str_radix(mode.trim_start_matches("0o"), 8)
+                .map_err(|_| "mode must be an octal value such as 0750")?;
+            serde_json::to_value(
+                operator
+                    .set_permissions(&path, &owner, &group, mode, &context)
+                    .await?,
+            )?
+        }
+        ServerCommand::FirewallList => serde_json::to_value(operator.firewall_status().await?)?,
+        ServerCommand::FirewallRule {
+            decision,
+            port,
+            protocol,
+            source,
+            remove,
+        } => serde_json::to_value(
+            operator
+                .apply_firewall_rule(
+                    &FirewallRule {
+                        decision: decision.into(),
+                        port,
+                        protocol: protocol.into(),
+                        source,
+                    },
+                    remove,
+                    &context,
+                )
+                .await?,
+        )?,
+        ServerCommand::Listeners => serde_json::to_value(operator.listeners().await?)?,
+        ServerCommand::Mounts => serde_json::to_value(operator.mounts()?)?,
+        ServerCommand::Processes { limit } => serde_json::to_value(operator.processes(limit)?)?,
+        ServerCommand::ProcessSignal { pid, signal } => {
+            serde_json::to_value(operator.signal_process(pid, signal.into(), &context)?)?
+        }
+        ServerCommand::Timers => serde_json::to_value(operator.timers().await?)?,
+        ServerCommand::Updates => serde_json::to_value(operator.updates().await?)?,
+        ServerCommand::UpdateApply { scope } => {
+            serde_json::to_value(operator.apply_updates(scope.into(), &context).await?)?
+        }
+        ServerCommand::Logs {
+            unit,
+            priority,
+            since,
+            query,
+            lines,
+        } => serde_json::to_value(
+            operator
+                .search_journal(
+                    unit.as_deref(),
+                    priority.as_deref(),
+                    since.as_deref(),
+                    query.as_deref(),
+                    lines,
+                )
+                .await?,
+        )?,
+        ServerCommand::BackupSchedule {
+            id,
+            service,
+            database,
+            on_calendar,
+            enabled,
+        } => serde_json::to_value(
+            operator
+                .schedule_backup(
+                    BackupSchedule {
+                        id,
+                        service_id: service,
+                        database,
+                        on_calendar,
+                        enabled,
+                    },
+                    &context,
+                )
+                .await?,
+        )?,
+        ServerCommand::RemediateRestart { unit } => serde_json::to_value(
+            operator
+                .remediate(RemediationAction::RestartService { unit }, &context)
+                .await?,
+        )?,
+        ServerCommand::RemediateTerminate { pid } => serde_json::to_value(
+            operator
+                .remediate(RemediationAction::TerminateProcess { pid }, &context)
+                .await?,
+        )?,
+        ServerCommand::RemediateJournal { older_than_days } => serde_json::to_value(
+            operator
+                .remediate(
+                    RemediationAction::VacuumJournal { older_than_days },
+                    &context,
+                )
+                .await?,
+        )?,
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn recipe_request(args: RecipeRequestArgs) -> RecipeInstallRequest {
+    RecipeInstallRequest {
+        recipe_id: args.recipe,
+        application_id: args.app,
+        domain: args.domain,
+        repository_url: args.repository,
+        branch: args.branch,
+        tls_email: args.tls_email,
+        environment: args.environment.into_iter().collect(),
+    }
+}
+
+fn parse_key_value(value: &str) -> Result<(String, String), String> {
+    value
+        .split_once('=')
+        .map(|(key, value)| (key.into(), value.into()))
+        .ok_or_else(|| "environment values must use NAME=VALUE".into())
 }
 
 async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> {
@@ -1059,6 +1417,14 @@ fn application_service() -> ApplicationService {
         .map(PathBuf::from)
         .unwrap_or_else(|| state_directory.join("apps"));
     ApplicationService::new(state_directory, apps_root)
+}
+
+fn recipe_manager() -> RecipeManager {
+    let state_directory = state_directory();
+    let apps_root = std::env::var_os("LUMIC_APPS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state_directory.join("apps"));
+    RecipeManager::at_state_dir(state_directory, apps_root)
 }
 
 fn render_status(facts: &HostFacts) -> String {

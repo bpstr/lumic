@@ -73,6 +73,14 @@ managed_service_apply           managed_service_declare_dependency
 managed_service_database_create managed_service_user_create
 managed_service_database_grant  managed_service_backup
 managed_service_restore         application_attach_managed_service
+recipe_catalog                  recipe_installations
+recipe_plan                     recipe_install
+recipe_update                   recipe_uninstall
+host_operator_snapshot          host_search_logs
+host_account_apply              host_permissions_apply
+host_firewall_apply             host_process_signal
+host_updates_apply              host_backup_schedule
+host_remediate
 events_list                     audit_list
 ```
 
@@ -87,6 +95,6 @@ For example:
 LUMIC_MCP_ALLOW_MUTATIONS=1 LUMIC_MCP_ACTOR=codex cargo run -p lumic-mcp
 ```
 
-Tool descriptions identify read-only versus mutating behavior. Apply operations use the same validated application, apt, systemd, PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Detection/list/inspect/plan are read-only. Service installation, lifecycle/configuration, dependencies, database/user/grant, backup/restore and application attachment require mutation policy plus `approved: true`. Actor/interface/correlation data is written to `audit.jsonl`; Git/database credential values are neither accepted by ordinary tools nor returned.
+Tool descriptions identify read-only versus mutating behavior. Apply operations use the same validated application, recipe, host-operator, apt, systemd, PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Detection/list/inspect/plan/snapshot/log search are read-only. Recipe lifecycle, host account/permission/firewall/process/update/backup/remediation, service installation/lifecycle/configuration, database resources and application attachment require mutation policy plus `approved: true`. Actor/interface/correlation data is written to `audit.jsonl`; Git/database/recipe secret values are neither accepted by ordinary reads nor returned.
 
 Remote HTTP transport, authentication, TLS, `lumic mcp setup`, fine-grained identity scopes, self-update and credential import tools are not implemented yet. Do not expose this stdio process remotely through an unauthenticated bridge. Import credentials locally with the CLI, then pass only their reference to MCP. Application process commands are accepted only as an executable/argument array; shell command strings are not a supported escape hatch.

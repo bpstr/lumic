@@ -119,6 +119,8 @@ The UI remains an adapter over the same application services used by CLI/MCP.
 
 ## Phase 6 — Application recipes
 
+Implemented: a compiled-in, versioned declarative schema composes runtimes/components, managed services, domain/TLS, declared environment inputs, private generated secrets and fixed setup operations. Catalog/list/inspect/plan/install/update/uninstall are shared by CLI/MCP, the UI shows catalog/installations, and `static-git@1.0.0` is the intentionally narrow reference. Remote signed catalog distribution and ecosystem breadth remain nightly work.
+
 Build the Installatron-like application provisioning substrate.
 
 - declarative recipe schema.
@@ -133,6 +135,8 @@ Nightly owns breadth: Laravel, Symfony, Drupal, WordPress, Forgejo/Gitea, Ghost,
 **Exit:** new application installers can usually be added as data/recipe work rather than core Rust changes.
 
 ## Phase 7 — Complete host operator
+
+Implemented: one shared typed host operator covers accounts/groups, safe path permissions, UFW inspection/rules, listeners, mounts/capacity, process inspection/fixed signals, systemd timers, pending/security updates, bounded journal search, managed-service backup timers and a narrow deterministic remediation catalog. CLI and MCP expose the full surface; the UI exposes the important read model and confirmed security updates. Diagnosis now correlates filesystem pressure and pending security updates.
 
 Eliminate the remaining common reasons to SSH into the VPS.
 

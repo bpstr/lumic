@@ -34,6 +34,18 @@ impl SecretStore {
         Ok(reference.to_owned())
     }
 
+    pub fn put(&self, reference: &str, value: &[u8]) -> Result<String> {
+        validate_resource_id("secret_reference", reference)?;
+        if value.is_empty() || value.len() > 16 * 1024 || value.contains(&0) {
+            return Err(LumicError::InvalidInput {
+                field: "secret".into(),
+                message: "must be non-empty, at most 16 KiB, and contain no NUL bytes".into(),
+            });
+        }
+        write_atomic(&self.path(reference)?, value, 0o600)?;
+        Ok(reference.to_owned())
+    }
+
     pub fn exists(&self, reference: &str) -> Result<bool> {
         Ok(self.path(reference)?.is_file())
     }
@@ -50,7 +62,7 @@ impl SecretStore {
         fs::read(path).map_err(secret_io)
     }
 
-    pub(crate) fn delete(&self, reference: &str) -> Result<()> {
+    pub fn delete(&self, reference: &str) -> Result<()> {
         let path = self.path(reference)?;
         if path.exists() {
             fs::remove_file(path).map_err(secret_io)?;

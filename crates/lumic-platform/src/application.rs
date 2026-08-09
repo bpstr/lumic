@@ -1077,6 +1077,41 @@ impl ApplicationService {
         Ok(application)
     }
 
+    pub fn set_environment_reference(
+        &self,
+        id: &str,
+        name: &str,
+        reference: &str,
+        context: &OperationContext,
+    ) -> Result<Application> {
+        lumic_core::recipe::validate_environment_name(name)?;
+        lumic_core::managed_service::validate_resource_id("secret_reference", reference)?;
+        let application = self.update_application(id, |application| {
+            application
+                .environment_references
+                .insert(name.to_owned(), reference.to_owned());
+        })?;
+        self.emit(
+            "application.environment_reference_set",
+            id,
+            context,
+            json!({"name": name, "secret_reference": reference}),
+        )?;
+        self.audit.append(&AuditRecord::now(
+            context,
+            "application.environment.configure",
+            "set_reference",
+            "application",
+            id,
+            json!({"name": name, "secret_reference": reference}),
+            None,
+            Some(json!({"configured": true})),
+            true,
+            "application environment secret reference configured",
+        ))?;
+        Ok(application)
+    }
+
     fn update_application(
         &self,
         id: &str,

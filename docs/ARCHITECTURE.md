@@ -35,7 +35,7 @@ Agent adapter. MCP exposes resources and typed tools rather than generic shell. 
 The MCP adapter uses the official Rust `rmcp` SDK and stdio transport. Read tools are available by default. Apply tools require process-level `LUMIC_MCP_ALLOW_MUTATIONS=1` and per-call `approved=true`; remote transport remains deferred until authentication and encryption are implemented.
 
 ### lumic-ui / API
-The initial Axum UI is a server-rendered adapter over `ApplicationService`, `ManagedServiceManager`, host inspection and event storage. It owns authentication/session/CSRF and HTML presentation, but no privileged host implementation. It binds only to loopback, uses in-memory sessions and exposes confirmed restart/deploy/rollback actions. A general HTTP API and remote-auth model remain future interfaces.
+The initial Axum UI is a server-rendered adapter over `ApplicationService`, `ManagedServiceManager`, `RecipeManager`, `HostOperator`, host inspection and event storage. It owns authentication/session/CSRF and HTML presentation, but no privileged host implementation. It binds only to loopback, uses in-memory sessions and exposes confirmed restart/deploy/rollback/security-update actions. A general HTTP API and remote-auth model remain future interfaces.
 
 ## No companion client or skills layer
 

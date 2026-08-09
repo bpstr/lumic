@@ -37,7 +37,9 @@ The black/white UI provides:
 - managed-service list/detail, provider health and local data records;
 - events and bounded journal logs;
 - expert systemd unit, configuration/data paths, version, bind address and port;
-- confirmed restart, deploy and rollback actions.
+- recipe catalog and installed-version state;
+- host accounts, listeners, mounts, timers and pending updates;
+- confirmed restart, deploy, rollback and security-update actions.
 
 Safe actions call the existing shared services and therefore retain their validation, health gates, rollback behavior, events and audits. Installation registers `lumicd.service`; inspect it with `systemctl status lumicd.service` and logs with `journalctl -u lumicd.service`.
 

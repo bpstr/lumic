@@ -1,4 +1,4 @@
-use crate::{ProcessRunner, ProcessSpec, inspect_host};
+use crate::{ProcessRunner, ProcessSpec, inspect_host, server::HostOperator};
 use lumic_core::{
     DiagnosticFinding, DiagnosticReport, LoadFacts, LumicError, ProcessFacts, Result,
 };
@@ -12,6 +12,13 @@ pub async fn diagnose_host() -> Result<DiagnosticReport> {
     )?;
     let top_processes = inspect_processes(10)?;
     let failed_services = failed_services().await.unwrap_or_default();
+    let operator = HostOperator::at_state_dir(
+        std::env::var_os("LUMIC_STATE_DIR").unwrap_or_else(|| "/var/lib/lumic".into()),
+    );
+    let listeners = operator.listeners().await.unwrap_or_default();
+    let mounts = operator.mounts().unwrap_or_default();
+    let timers = operator.timers().await.unwrap_or_default();
+    let updates = operator.updates().await.unwrap_or_default();
     let mut findings = Vec::new();
     let cpu_count = host.cpu_count.max(1) as f64;
     if load.one_minute > cpu_count * 1.5 {
@@ -46,11 +53,39 @@ pub async fn diagnose_host() -> Result<DiagnosticReport> {
             recommendation: format!("inspect journal logs for {unit} before restarting it"),
         });
     }
+    for mount in &mounts {
+        if mount.total_bytes > 0
+            && mount.available_bytes.saturating_mul(100) / mount.total_bytes < 10
+        {
+            findings.push(DiagnosticFinding {
+                severity: "warning".into(),
+                summary: format!("filesystem {} is nearly full", mount.mount_point),
+                evidence: format!(
+                    "{} of {} bytes remain available",
+                    mount.available_bytes, mount.total_bytes
+                ),
+                recommendation: "inspect application releases, backups, and journal usage before applying a bounded cleanup".into(),
+            });
+        }
+    }
+    let security_updates = updates.iter().filter(|update| update.security).count();
+    if security_updates > 0 {
+        findings.push(DiagnosticFinding {
+            severity: "warning".into(),
+            summary: "security updates are pending".into(),
+            evidence: format!("{security_updates} security-classified packages can be upgraded"),
+            recommendation: "review pending versions, then apply the security update scope during an approved maintenance window".into(),
+        });
+    }
     Ok(DiagnosticReport {
         host,
         load,
         top_processes,
         failed_services,
+        listeners,
+        mounts,
+        timers,
+        updates,
         findings,
     })
 }

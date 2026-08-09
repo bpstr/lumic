@@ -4,7 +4,7 @@ This document is the implementation-level product contract. It is intentionally 
 
 ## Current implementation boundary
 
-Epic A implements the single-node vertical slice for x86_64 Debian/Ubuntu: host status/diagnosis, policy-controlled apt, validated systemd lifecycle, durable events/audits, recoverable file writes, static/PHP/Node application state, a deliberately small PHP component catalog, nginx, Certbot TLS, named SSH key references, isolated Git releases, build/validation phases, atomic activation, HTTP health rollback, workers/timers, deployment planning/history and verified nightly self-update. Static Git and generic PHP Git are the two reference applications. Framework recipes, broader components, managed databases, push webhooks and remote MCP identity are not part of this implementation.
+Epics A–C implement the single-node vertical slice for x86_64 Debian/Ubuntu: host status/richer diagnosis, policy-controlled apt, validated systemd lifecycle, durable events/audits, recoverable file writes, static/PHP/Node application state, a deliberately small PHP component catalog, nginx, Certbot TLS, named SSH key references, isolated Git releases, health-gated deployment/rollback, workers/timers and verified nightly self-update. PostgreSQL and Redis prove the managed-service contract; a versioned declarative recipe engine with `static-git` proves composition; the typed host operator covers common accounts, network, storage, processes, timers, updates, logs, backup scheduling and deterministic remediation. Framework recipe breadth, broader components/services, push webhooks, remote MCP identity and multi-node infrastructure are not part of this implementation.
 
 ## 1. Node and host
 
@@ -353,6 +353,8 @@ Catalog layers:
 - node roles.
 
 Prefer declarative signed/versioned metadata for simple composition. Rust adapters are justified when lifecycle/config logic is genuinely behavioral.
+
+The implemented recipe schema is compiled-in reviewed data and contains version metadata, runtime/components, managed-service requirements, domain/TLS inputs, declared environment sources, generated secret references and fixed health/process setup steps. It is intentionally not a YAML programming language. Recipe plan is read-only; install/update are idempotent compositions over existing services; uninstall removes recipe/application state recoverably while retaining native service data. Remote signed distribution remains a later catalog concern.
 
 Candidate recipes after primitives are mature: Laravel, Symfony, WordPress, Drupal, Forgejo/Gitea, Matomo/analytics apps and other commonly self-hosted software.
 

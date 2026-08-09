@@ -8,10 +8,12 @@ use axum::{
 };
 use lumic_core::{
     LumicError, OperationContext, OperationInterface, Result, application::Deployment,
+    server::UpdateScope,
 };
 use lumic_platform::{
     application::ApplicationService, atomic_file::write_atomic, event_store::EventStore,
-    managed_service::ManagedServiceManager, systemd::ServiceAction,
+    managed_service::ManagedServiceManager, recipe::RecipeManager, server::HostOperator,
+    systemd::ServiceAction,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -91,6 +93,12 @@ impl UiState {
     fn services(&self) -> ManagedServiceManager {
         ManagedServiceManager::at_state_dir(&self.state_dir)
     }
+    fn recipes(&self) -> RecipeManager {
+        RecipeManager::at_state_dir(&self.state_dir, self.apps_root.clone())
+    }
+    fn host_operator(&self) -> HostOperator {
+        HostOperator::at_state_dir(&self.state_dir)
+    }
 }
 
 pub fn router(state: UiState) -> Router {
@@ -103,6 +111,8 @@ pub fn router(state: UiState) -> Router {
         .route("/services", get(services))
         .route("/services/{id}", get(service_detail))
         .route("/services/{id}/logs", get(service_logs))
+        .route("/recipes", get(recipes))
+        .route("/host", get(host_operator))
         .route("/deployments/{app}/{id}", get(deployment_detail))
         .route("/events", get(events))
         .route(
@@ -116,6 +126,10 @@ pub fn router(state: UiState) -> Router {
         .route(
             "/actions/app/{id}/rollback",
             get(confirm_app_rollback).post(app_rollback),
+        )
+        .route(
+            "/actions/host/security-updates",
+            get(confirm_security_updates).post(apply_security_updates),
         )
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
@@ -256,6 +270,102 @@ async fn applications(State(state): State<UiState>, headers: HeaderMap) -> Respo
         }
         Err(error) => error_response(error),
     }
+}
+
+async fn recipes(State(state): State<UiState>, headers: HeaderMap) -> Response {
+    if auth(&state, &headers).is_none() {
+        return Redirect::to("/login").into_response();
+    }
+    let installations = match state.recipes().list() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let installed = installations
+        .iter()
+        .map(|item| {
+            format!(
+                "<tr><td>{}</td><td>{}@{}</td><td>{:?}</td></tr>",
+                escape(&item.application_id),
+                escape(&item.recipe_id),
+                escape(&item.recipe_version),
+                item.status
+            )
+        })
+        .collect::<String>();
+    let catalog = state
+        .recipes()
+        .catalog()
+        .iter()
+        .map(|item| {
+            format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                escape(&item.metadata.id),
+                escape(&item.metadata.version),
+                escape(&item.metadata.description)
+            )
+        })
+        .collect::<String>();
+    page("Recipes", &format!("<h1>Application recipes</h1><p class=muted>Versioned, inspectable compositions over Lumic applications and managed services.</p><h2>Installed</h2><table><tr><th>Application</th><th>Recipe</th><th>Status</th></tr>{installed}</table><h2>Catalog</h2><table><tr><th>Recipe</th><th>Version</th><th>Description</th></tr>{catalog}</table>"), true).into_response()
+}
+
+async fn host_operator(State(state): State<UiState>, headers: HeaderMap) -> Response {
+    if auth(&state, &headers).is_none() {
+        return Redirect::to("/login").into_response();
+    }
+    let snapshot = match state.host_operator().snapshot().await {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let listeners = snapshot
+        .listeners
+        .iter()
+        .map(|item| {
+            format!(
+                "<tr><td>{}</td><td>{}:{}</td><td>{}</td></tr>",
+                escape(&item.protocol),
+                escape(&item.local_address),
+                item.port,
+                escape(item.process.as_deref().unwrap_or("unknown"))
+            )
+        })
+        .collect::<String>();
+    let mounts = snapshot
+        .mounts
+        .iter()
+        .map(|item| {
+            format!(
+                "<tr><td>{}</td><td>{}</td><td>{}% free</td></tr>",
+                escape(&item.mount_point),
+                escape(&item.filesystem),
+                item.available_bytes
+                    .saturating_mul(100)
+                    .checked_div(item.total_bytes)
+                    .unwrap_or(0)
+            )
+        })
+        .collect::<String>();
+    let updates = snapshot
+        .updates
+        .iter()
+        .map(|item| {
+            format!(
+                "<tr><td>{}</td><td>{} → {}</td><td>{}</td></tr>",
+                escape(&item.package),
+                escape(&item.current_version),
+                escape(&item.candidate_version),
+                if item.security { "security" } else { "regular" }
+            )
+        })
+        .collect::<String>();
+    let body = format!(
+        "<h1>Host operator</h1><div class=grid><div class=card><h2>Accounts</h2><p>{} users · {} groups</p></div><div class=card><h2>Processes</h2><p>{} inspected</p></div><div class=card><h2>Timers</h2><p>{} active or known</p></div><div class=card><h2>Updates</h2><p>{} pending</p><a href=/actions/host/security-updates>Apply security updates</a></div></div><h2>Listening ports</h2><table><tr><th>Protocol</th><th>Address</th><th>Process</th></tr>{listeners}</table><h2>Mounts</h2><table><tr><th>Mount</th><th>Filesystem</th><th>Capacity</th></tr>{mounts}</table><h2>Pending updates</h2><table><tr><th>Package</th><th>Version</th><th>Class</th></tr>{updates}</table>",
+        snapshot.users.len(),
+        snapshot.groups.len(),
+        snapshot.processes.len(),
+        snapshot.timers.len(),
+        snapshot.updates.len()
+    );
+    page("Host operator", &body, true).into_response()
 }
 
 async fn application_detail(
@@ -486,6 +596,15 @@ async fn confirm_app_rollback(
     )
 }
 
+async fn confirm_security_updates(State(state): State<UiState>, headers: HeaderMap) -> Response {
+    confirm(
+        &state,
+        &headers,
+        "Apply security updates",
+        "Apply pending security updates with unattended-upgrade, then re-inspect pending packages?",
+    )
+}
+
 #[derive(Deserialize)]
 struct ConfirmForm {
     csrf: String,
@@ -543,6 +662,24 @@ async fn app_rollback(
         .rollback(&id, &ui_context("application_rollback"))
     {
         Ok(result) => result_page("Rollback complete", &result.message),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn apply_security_updates(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    Form(form): Form<ConfirmForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match state
+        .host_operator()
+        .apply_updates(UpdateScope::Security, &ui_context("host_security_updates"))
+        .await
+    {
+        Ok(result) => result_page("Security updates complete", &result.message),
         Err(error) => error_response(error),
     }
 }
@@ -636,7 +773,7 @@ fn deployment_html(item: &Deployment) -> String {
 
 fn page(title: &str, body: &str, navigation: bool) -> Html<String> {
     let header = if navigation {
-        "<header><strong>Lumic</strong><a href=/>Overview</a><a href=/apps>Applications</a><a href=/services>Services</a><a href=/events>Events</a><form method=post action=/logout><button>Sign out</button></form></header>"
+        "<header><strong>Lumic</strong><a href=/>Overview</a><a href=/apps>Applications</a><a href=/services>Services</a><a href=/recipes>Recipes</a><a href=/host>Host</a><a href=/events>Events</a><form method=post action=/logout><button>Sign out</button></form></header>"
     } else {
         "<header><strong>Lumic</strong></header>"
     };
@@ -738,12 +875,24 @@ mod tests {
             .rotate()
             .unwrap();
         let app = router(UiState::new(&directory, directory.join("apps")));
+        for uri in [
+            "/apps",
+            "/recipes",
+            "/host",
+            "/actions/host/security-updates",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        }
         let response = app
             .clone()
             .oneshot(Request::builder().uri("/apps").body(Body::empty()).unwrap())
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(
             response
                 .headers()

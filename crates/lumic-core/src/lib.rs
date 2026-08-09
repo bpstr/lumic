@@ -6,6 +6,8 @@ pub mod application;
 pub mod events;
 pub mod managed_service;
 pub mod package;
+pub mod recipe;
+pub mod server;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +105,14 @@ pub struct DiagnosticReport {
     pub load: LoadFacts,
     pub top_processes: Vec<ProcessFacts>,
     pub failed_services: Vec<String>,
+    #[serde(default)]
+    pub listeners: Vec<server::ListeningPort>,
+    #[serde(default)]
+    pub mounts: Vec<server::MountStatus>,
+    #[serde(default)]
+    pub timers: Vec<server::TimerStatus>,
+    #[serde(default)]
+    pub updates: Vec<server::UpdateStatus>,
     pub findings: Vec<DiagnosticFinding>,
 }
 

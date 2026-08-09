@@ -24,9 +24,11 @@ pub mod audit_store;
 pub mod diagnostics;
 pub mod event_store;
 pub mod managed_service;
+pub mod recipe;
 pub mod runtime;
 pub mod secret_store;
 pub mod self_update;
+pub mod server;
 pub mod systemd;
 pub mod web;
 

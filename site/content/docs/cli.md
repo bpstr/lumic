@@ -4,7 +4,7 @@ description = "The human console over the same typed capabilities used by UI and
 weight = 100
 [extra]
 kicker = "REFERENCE"
-status = "Epic B nightly"
+status = "Epic C nightly"
 +++
 
 The CLI should stay predictable and map to Lumic's domain model.
@@ -45,6 +45,30 @@ lumic managed-service backup <service> [--database <database>]
 lumic managed-service restore <service> <backup-id>
 lumic managed-service attach <service> <app> --role <role> [--database <database>] [--user <user>]
 
+lumic recipe catalog|list
+lumic recipe inspect <app>
+lumic recipe plan <recipe> <app> <domain> --repository <url> [--tls-email <email>] [--env NAME=value]
+lumic recipe install <recipe> <app> <domain> --repository <url> [--tls-email <email>] [--env NAME=value]
+lumic recipe update <app>
+lumic recipe uninstall <app>
+
+lumic server snapshot
+lumic server user-create|user-delete <name>
+lumic server group-create|group-delete <name>
+lumic server group-add-member <group> <user>
+lumic server permissions <path> <owner> <group> <octal-mode>
+lumic server firewall-list
+lumic server firewall-rule allow|deny <port> [tcp|udp] [--source any|IP|CIDR] [--remove]
+lumic server listeners|mounts|timers|updates
+lumic server processes [--limit 25]
+lumic server process-signal <pid> terminate|kill|hangup
+lumic server update-apply security|all
+lumic server logs [--unit <unit>] [--priority err] [--since today] [--query <text>]
+lumic server backup-schedule <id> <service> --on-calendar daily [--database <name>]
+lumic server remediate-restart <unit>
+lumic server remediate-terminate <pid>
+lumic server remediate-journal --older-than-days <days>
+
 lumic ui token rotate
 
 lumic package search <name>
@@ -75,7 +99,7 @@ lumic status --json
 
 `lumic version` prints only the deterministic Cargo package version (`lumic <version>`). `lumic status` reads live Linux host facts and renders node identity, Debian/Ubuntu release, kernel, architecture, logical CPU count, memory and root-disk capacity. `--json` serializes the full typed fact model, including swap and root filesystem metadata, for automation.
 
-`lumic diagnose` adds live load, uptime, high-memory process, memory-pressure and failed-systemd-unit evidence. Service lifecycle commands accept validated unit names and map to direct `systemctl` arguments.
+`lumic diagnose` adds live load, uptime, high-memory processes, failed systemd units, listeners, mounts, timers and pending updates. Findings flag memory/load pressure, nearly-full filesystems, failed services and security updates with evidence. Service lifecycle commands accept validated unit names and map to direct `systemctl` arguments.
 
 Package search is discovery only and never grants trust. Installation and removal require exact built-in policy entries, use direct argv invocation, are idempotent, and record events and audits. `LUMIC_STATE_DIR` and `LUMIC_APPS_ROOT` can relocate state for testing; production defaults are `/var/lib/lumic` and `/var/lib/lumic/apps`.
 
@@ -91,7 +115,7 @@ SSH keys are copied into Lumic's mode-`0600` credential store and application me
 
 `lumic self-update apply` downloads the x86_64 nightly artifact and its SHA-256 file, verifies the checksum, runs the candidate's version preflight, preserves the previous executable, atomically replaces Lumic, and performs a post-install check with automatic restoration on failure. `enable-nightly` installs a persistent daily systemd timer. Nightly release publishing includes the checksum asset. AArch64 release artifacts are not published yet.
 
-Generic outbound webhooks and framework-specific recipes are later epics and are not part of this capability set.
+Generic outbound webhooks and framework-specific recipe breadth are later work and are not part of this capability set. The implemented `static-git` recipe proves versioned validation, plan/install/update/uninstall, generated secret references, health/TLS composition and idempotency.
 
 ## Managed services and UI
 

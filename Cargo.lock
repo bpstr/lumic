@@ -699,7 +699,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "lumic-cli"
-version = "1.0.0"
+version = "2.0.0-alpha.1"
 dependencies = [
  "clap",
  "lumic-core",
@@ -712,7 +712,7 @@ dependencies = [
 
 [[package]]
 name = "lumic-core"
-version = "1.0.0"
+version = "2.0.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "lumic-daemon"
-version = "1.0.0"
+version = "2.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "libc",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "lumic-mcp"
-version = "1.0.0"
+version = "2.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "lumic-core",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "lumic-platform"
-version = "1.0.0"
+version = "2.0.0-alpha.1"
 dependencies = [
  "ed25519-dalek",
  "libc",
@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "lumic-ui"
-version = "1.0.0"
+version = "2.0.0-alpha.1"
 dependencies = [
  "axum",
  "lumic-core",

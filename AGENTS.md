@@ -110,7 +110,9 @@ Write commit subjects as concise imperative sentences without conventional-commi
 
 Lumic follows Semantic Versioning. Treat the version reported by every binary, release tag, installer, updater, release artifact, and public document as one coordinated contract.
 
-- Use `MAJOR.MINOR.PATCH` release tags without a `v` prefix.
+- Use `MAJOR.MINOR.PATCH` stable release tags without a `v` prefix.
+- Treat an intentional `MAJOR.MINOR.PATCH-PRERELEASE.N` workspace version as the forward development line. Preserve `2.0.0-alpha.1` until explicitly advancing it; the earlier stable release remains `1.0.0`.
+- Publish a prerelease tag only through an explicit prerelease channel; the stable release workflow accepts stable versions only.
 - Increment `MAJOR` for incompatible public CLI, API, MCP, configuration, state-format, or operational-contract changes.
 - Increment `MINOR` for backward-compatible capabilities.
 - Increment `PATCH` for backward-compatible fixes and hardening.

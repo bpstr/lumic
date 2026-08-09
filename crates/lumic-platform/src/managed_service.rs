@@ -1334,16 +1334,12 @@ impl ManagedServiceManager {
         service: &ManagedService,
         arguments: &[&str],
     ) -> Result<ProcessOutput> {
-        let port = service.configuration.port.to_string();
-        let mut spec = ProcessSpec::new("redis-cli").args([
-            "--host",
+        self.run(redis_cli_spec(
             &service.configuration.bind_address,
-            "--port",
-            &port,
-        ]);
-        spec.args
-            .extend(arguments.iter().map(|value| (*value).to_owned()));
-        self.run(spec).await
+            service.configuration.port,
+            arguments,
+        ))
+        .await
     }
 
     async fn psql(&self, sql: &str) -> Result<()> {
@@ -1457,6 +1453,14 @@ fn database_user_secret_reference(service_id: &str, user: &str) -> String {
     format!("{service_id}-{}-password", user.replace('_', "-"))
 }
 
+fn redis_cli_spec(bind_address: &str, port: u16, arguments: &[&str]) -> ProcessSpec {
+    let mut spec =
+        ProcessSpec::new("redis-cli").args(["-h", bind_address, "-p", &port.to_string()]);
+    spec.args
+        .extend(arguments.iter().map(|value| (*value).to_owned()));
+    spec
+}
+
 fn not_found(id: &str) -> LumicError {
     invalid("service", &format!("managed service '{id}' was not found"))
 }
@@ -1525,6 +1529,13 @@ mod tests {
         let reference = database_user_secret_reference("primary-db", "demo_user");
         assert_eq!(reference, "primary-db-demo-user-password");
         validate_resource_id("secret_reference", &reference).unwrap();
+    }
+
+    #[test]
+    fn redis_cli_uses_supported_connection_flags() {
+        let spec = redis_cli_spec("127.0.0.1", 6379, &["PING"]);
+        assert_eq!(spec.executable, "redis-cli");
+        assert_eq!(spec.args, ["-h", "127.0.0.1", "-p", "6379", "PING"]);
     }
 
     #[test]

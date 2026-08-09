@@ -1,20 +1,20 @@
 +++
-title = "Lumic documentation"
-description = "Install Lumic, connect MCP, open the UI, then let Lumic manage the server."
+title = "Lumic Control Center documentation"
+description = "Install Lumic Control Center, connect MCP, open the UI, then let Lumic manage the server."
 sort_by = "weight"
 template = "section.html"
 page_template = "page.html"
 +++
 
-Lumic is a host-native Linux server operating layer. Its core workflow has three steps.
+**Lumic Control Center** (Lumic) is a host-native Linux server operating layer available at [lumic.cc](https://lumic.cc). Its core workflow has three steps.
 
 ## 1. Install Lumic
 
 ```bash
-ssh root@server 'curl -fsSL https://lumic.cc/install | sh'
+ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'
 ```
 
-A fresh VPS becomes a Lumic node with the daemon, CLI, management surface and structured host model.
+A fresh VPS becomes an autonomous Lumic node with the daemon, CLI, management surface and structured host model. The installer is published directly at `https://lumic.cc/install.sh` from the repository's canonical root `install.sh`.
 
 ## 2. Connect MCP
 
@@ -22,7 +22,7 @@ A fresh VPS becomes a Lumic node with the daemon, CLI, management surface and st
 lumic mcp setup
 ```
 
-Lumic exposes the node to Codex, Claude and other MCP clients through structured operations rather than making unrestricted SSH the normal agent interface.
+Lumic exposes that individual node to Codex, Claude and other MCP clients through structured operations rather than making unrestricted SSH the normal agent interface. Multiple VPS nodes remain independent; no Lumic relay or central cloud account is required.
 
 > **Pre-alpha:** the MCP setup command and remote transport are part of the v2 public contract and are being implemented during the initial roadmap.
 

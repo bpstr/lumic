@@ -743,6 +743,8 @@ fn parse_mounts(input: &str) -> Result<Vec<MountStatus>> {
     }
     Ok(result)
 }
+// libc uses different statvfs field widths across supported build hosts.
+#[allow(clippy::useless_conversion)]
 fn filesystem_capacity(path: &str) -> Option<(u64, u64)> {
     let path = CString::new(path).ok()?;
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit(); /* SAFETY: path is NUL terminated and stats points to writable memory. */

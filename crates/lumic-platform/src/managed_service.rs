@@ -667,7 +667,7 @@ impl ManagedServiceManager {
         {
             return Ok(existing.clone());
         }
-        let secret_reference = format!("{service_id}-{name}-password");
+        let secret_reference = database_user_secret_reference(service_id, name);
         let now = unix_time_ms();
         let user = DatabaseUser {
             id: format!("{service_id}-{name}"),
@@ -1453,6 +1453,10 @@ fn validate_backup_id(value: &str) -> Result<()> {
     }
 }
 
+fn database_user_secret_reference(service_id: &str, user: &str) -> String {
+    format!("{service_id}-{}-password", user.replace('_', "-"))
+}
+
 fn not_found(id: &str) -> LumicError {
     invalid("service", &format!("managed service '{id}' was not found"))
 }
@@ -1514,6 +1518,13 @@ mod tests {
                 .is_err()
         );
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn database_user_secret_references_are_valid_resource_ids() {
+        let reference = database_user_secret_reference("primary-db", "demo_user");
+        assert_eq!(reference, "primary-db-demo-user-password");
+        validate_resource_id("secret_reference", &reference).unwrap();
     }
 
     #[test]

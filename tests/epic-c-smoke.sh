@@ -9,6 +9,8 @@ esac
 
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT INT TERM
+# nginx runs as an unprivileged user and must be able to traverse the test root.
+chmod 755 "$TEST_ROOT"
 export LUMIC_STATE_DIR="$TEST_ROOT/state"
 export LUMIC_APPS_ROOT="$TEST_ROOT/apps"
 

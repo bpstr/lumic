@@ -97,6 +97,8 @@ The developer should be able to connect Codex to the node and say:
 
 > Set up this Laravel repository on this Lumic node and make it production ready.
 
+As server intelligence matures, Lumic should also understand relationships rather than only install things next to each other. For example, adding Redis to a recognized Laravel app can discover its `.env`, preview the required configuration change, wire the service, restart affected workers and verify connectivity through normal typed Lumic operations.
+
 ### React / frontend / Node
 
 A frontend application can be treated similarly to a Render/Vercel-style deployment target while remaining on your VPS:
@@ -125,6 +127,8 @@ The same model extends to Python apps, static sites, workers, APIs and custom se
 Lumic is not defined by a long feature checklist. Server capabilities should increasingly produce the reaction: **“oh, Lumic supports that too.”**
 
 Examples include packages and PHP extensions, PostgreSQL extensions, Git hosting and mirrors, databases, Redis, certificates, backups, workers, cron/jobs, zero-downtime releases, logs, load tracing, diagnostics, notifications, webhooks, server events, managed services, dedicated node roles and multi-server environments.
+
+Eventually even server status can have some personality — without compromising factual health/severity information.
 
 ## Core design laws
 
@@ -168,7 +172,10 @@ Read in this order before substantial work:
 3. [`docs/ROADMAP.md`](docs/ROADMAP.md)
 4. [`AGENTS.md`](AGENTS.md)
 5. [`docs/CODEX_KICKOFF.md`](docs/CODEX_KICKOFF.md)
-6. [`docs/CODEX_NIGHTLY.md`](docs/CODEX_NIGHTLY.md)
+6. [`docs/CODEX_FAST_TRACK.md`](docs/CODEX_FAST_TRACK.md) — manually triggered large feature epics through Phase 15
+7. [`docs/CODEX_NIGHTLY.md`](docs/CODEX_NIGHTLY.md) — support breadth, hardening and continuous expansion
+
+Development intentionally has two lanes: **manual fast-track epics build major product mechanisms; nightly expands their support matrix and makes them boringly reliable.**
 
 ## Versions
 

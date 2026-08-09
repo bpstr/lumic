@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'site/**'
+      - 'install.sh'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -23,6 +24,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.1
+      - name: Publish canonical installer
+        run: |
+          cp install.sh site/static/install.sh
+          cp install.sh site/static/install
       - name: Build Zola and upload Pages artifact
         uses: getzola/github-pages@066755243e69f508fd1a74739fbf1a65f656c790
         with:

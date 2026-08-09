@@ -1,15 +1,15 @@
-# Lumic
+# Lumic Control Center
 
-<p align="center"><img src="assets/lumic.svg" alt="Lumic" width="260"></p>
+<p align="center"><img src="assets/lumic.svg" alt="Lumic Control Center" width="260"></p>
 
 **From empty VPS to managed infrastructure in one command.**
 
-Lumic is a host-native server, application, and infrastructure management system for Linux, built in Rust. Install it on a VPS once, connect your coding agent through MCP, and use the UI whenever you want direct visibility and control.
+**Lumic Control Center** — usually just **Lumic** — is a host-native server, application, and infrastructure management system for Linux, built in Rust. The project lives at [lumic.cc](https://lumic.cc). Install it on a VPS once, connect your coding agent through MCP, and use the UI whenever you want direct visibility and control.
 
-Lumic manages Linux directly. Containers are a supported workload and deployment feature, not the foundation of the product.
+Lumic manages Linux directly. Containers are a supported workload and deployment feature, not the foundation of the product. Each Lumic node is autonomous; no mandatory Lumic cloud, relay service, or Lumic-owned DNS setup is required.
 
 ```text
-        Lumic
+ Lumic Control Center
           │
    ┌──────┼──────┐
    │      │      │
@@ -27,8 +27,10 @@ These three steps define the product. Everything else is capability.
 ### 1. Install Lumic
 
 ```bash
-ssh root@server 'curl -fsSL https://lumic.cc/install | sh'
+ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'
 ```
+
+The canonical installer is served directly from `https://lumic.cc/install.sh` and is published from this repository's root [`install.sh`](install.sh). `https://lumic.cc/install` remains available as a compatibility alias.
 
 A fresh VPS becomes a Lumic node. Lumic detects the host and provides the daemon, CLI, management UI and MCP endpoint.
 

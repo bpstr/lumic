@@ -221,13 +221,73 @@ Every mutation records at minimum:
 - before/after summary where practical;
 - result/duration/failure.
 
-## 14. Plans and approvals
+## 14. Status, suggest, plan, apply
+
+Lumic's core interaction model is deliberately explicit:
+
+```text
+status  -> what exists now?
+suggest -> what would make sense?
+plan    -> what exactly will change?
+apply   -> perform the approved change
+```
+
+`status` and `suggest` are read-only. `plan` is read-only unless an explicit persistent-plan feature is introduced later. `apply` is the mutation boundary.
+
+### Suggest
+
+Suggestion is first-class reasoning support for humans and coding agents. It is not a replacement for agent reasoning and must not mutate infrastructure.
+
+Representative CLI shapes:
+
+```text
+lumic suggest laravel
+lumic suggest nextjs
+lumic suggest --path /srv/app
+```
+
+Representative MCP tool:
+
+```text
+suggest_application_setup
+```
+
+Possible inputs:
+
+- explicit stack/framework;
+- repository/application path;
+- desired application role;
+- optional detected repository metadata supplied by the caller.
+
+Repository inspection may use framework and manifest signals such as `composer.json`, `package.json`, lock files, runtime version files, `pyproject.toml`, `Cargo.toml`, environment examples, migrations, queue/worker dependencies, scheduler configuration and persistent storage conventions.
+
+Structured output should include where applicable:
+
+- detected stack/framework/runtime/package manager;
+- required runtime versions/components/extensions;
+- recommended backing services;
+- web/process model;
+- workers and scheduler requirements;
+- persistent/shared paths;
+- recommended deployment strategy;
+- warnings/ambiguities;
+- source evidence for every significant inference.
+
+Example evidence should say that Redis is recommended because queue/cache usage was detected, or that a Laravel public directory is inferred from framework conventions plus repository structure. Do not emit opaque recommendations.
+
+Suggestion can use known stack/recipe knowledge, but a recipe and a suggestion remain distinct: a recipe describes a reusable known pattern; a suggestion adapts that knowledge to the inspected project and returns evidence.
+
+The coding agent combines suggestion output with live `server.status` facts to choose sizing, topology and final desired state. Lumic does not need prompts like “configure this appropriately for an 8 GB server” as part of its own suggestion contract.
+
+## 15. Plans and approvals
 
 Material changes should support plan/apply. A plan communicates current/desired state, changes, preconditions, risk, validation, expected service impact and rollback/recovery availability.
 
 Approval policy is capability/risk based. Routine deploy/restart may be allowed while database deletion, firewall changes, OS upgrades or raw execution require approval.
 
-## 15. MCP
+Suggestions inform; plans execute. Never allow `suggest` to become an implicit apply path.
+
+## 16. MCP
 
 MCP is a first-class interface, not a CLI wrapper.
 
@@ -238,6 +298,7 @@ Representative tools:
 ```text
 inspect_server
 inspect_application
+suggest_application_setup
 install_package
 install_runtime
 install_component
@@ -254,7 +315,9 @@ diagnose_server
 
 A coding agent connected to two autonomous Lumic nodes must be able to inspect each node and orchestrate staging/production by calling these structured tools independently.
 
-## 16. UI
+Lumic must not require a separate AI skills package for agents to understand it. MCP tool/resource descriptions, public documentation, catalogs/recipes, inspection and `suggest_application_setup` are the authoritative agent-facing knowledge surfaces.
+
+## 17. UI
 
 The UI is a Rust operational console over the same application services.
 
@@ -270,7 +333,7 @@ Automation
 
 Design: black/white/grays, excellent typography, minimal status markers, no decorative hosting-panel clutter. Default views answer “is it healthy and what can I do?” Expanded views reveal systemd unit, config path, PID, ports, versions, logs, metrics and raw facts for experts.
 
-## 17. Recipes and catalog
+## 18. Recipes and catalog
 
 Recipes provide modern Installatron-style installation without bloating core.
 
@@ -287,16 +350,18 @@ Prefer declarative signed/versioned metadata for simple composition. Rust adapte
 
 Candidate recipes after primitives are mature: Laravel, Symfony, WordPress, Drupal, Forgejo/Gitea, Matomo/analytics apps and other commonly self-hosted software.
 
-## 18. Infrastructure and multiple nodes
+## 19. Infrastructure and multiple nodes
 
 Primary scale is ordinary VPS infrastructure, roughly one to ten nodes. Roles may include app, worker, database, cache, Git, media/storage, backup and edge. Nodes remain autonomous; Codex/Claude can initially be the orchestrator across multiple MCP endpoints.
 
 A future optional Lumic Hub may provide inventory, central UI, policies/identity and notification aggregation. It must not become required to use a Lumic node.
 
-## 19. Containers
+There is intentionally no separate Lumic remote client binary. Remote humans may use the UI/API as they mature; coding agents connect to MCP endpoints. Avoid introducing another client release lifecycle unless a concrete unsolved requirement justifies it.
+
+## 20. Containers
 
 Container support is deliberately subordinate. Lumic may manage a containerized application, inspect common container problems, or run in a constrained container mode. Host Lumic remains canonical. Do not create top-level architecture where every service/application is assumed to be Docker/Compose.
 
-## 20. Releases and nightly
+## 21. Releases and nightly
 
 Nightly is a branded early-access channel. A nightly artifact is published only after quality gates and supported-image install smoke tests pass. Stable is intentionally conservative. Update/channel changes are explicit and auditable.

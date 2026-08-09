@@ -16,15 +16,13 @@ ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'
 
 A fresh VPS becomes an autonomous Lumic node with the daemon, CLI, management surface and structured host model. The installer is published directly at `https://lumic.cc/install.sh` from the repository's canonical root `install.sh`.
 
-## 2. Connect MCP
+## 2. Ask the node
 
 ```bash
-lumic mcp setup
+lumic how-are-you
 ```
 
-Lumic exposes that individual node to Codex, Claude and other MCP clients through structured operations rather than making unrestricted SSH the normal agent interface. Multiple VPS nodes remain independent; no Lumic relay or central cloud account is required.
-
-> **Pre-alpha:** the MCP setup command and remote transport are part of the v2 public contract and are being implemented during the initial roadmap.
+The CLI, UI and MCP `server_attention` tool expose the same factual health, recent changes, active incidents, upcoming attention and recommendations. Local stdio MCP onboarding is documented in the [MCP guide](@/docs/mcp.md); authenticated remote MCP transport is not implemented.
 
 ## 3. Open the UI
 

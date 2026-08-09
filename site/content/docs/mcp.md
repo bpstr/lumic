@@ -54,10 +54,11 @@ The MCP server uses the official Rust SDK over local stdio:
 cargo run -p lumic-mcp
 ```
 
-It publishes `lumic://server/status` and these shared-service tools:
+It publishes `lumic://server/status`, `lumic://server/attention`, and these shared-service tools:
 
 ```text
 inspect_server                  diagnose_server
+server_attention
 service_inspect                 service_apply
 package_inspect                 package_install
 application_list                application_inspect
@@ -121,6 +122,16 @@ LUMIC_MCP_ALLOW_MUTATIONS=1 \
 LUMIC_MCP_SCOPES=mutations,operations.signal,operations.configure,operations.automate,operations.run,application.integrate,incident.analyze \
 LUMIC_MCP_ACTOR=codex cargo run -p lumic-mcp
 ```
+
+For local Codex development, build the MCP binary and register the stdio command:
+
+```bash
+cargo build -p lumic-mcp --release
+codex mcp add lumic -- /absolute/path/to/lumic/target/release/lumic-mcp
+codex mcp list
+```
+
+The ChatGPT desktop app, Codex CLI and IDE extension share Codex's MCP configuration. The equivalent desktop flow is Settings → MCP servers → Add server → STDIO. See the [official Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) for current client setup. The nightly installer currently publishes `lumic` and `lumicd`, not `lumic-mcp`, so this source-build path is explicitly for local development; do not substitute an unauthenticated remote bridge.
 
 Tool descriptions identify read-only versus mutating behavior. Existing mutation tools use the `mutations` compatibility scope. Epic E operations are separated into `operations.signal`, `operations.configure`, `operations.automate` and `operations.run`; Epic F integration apply/rollback uses `application.integrate`, and external incident disclosure uses `incident.analyze`. `operations.*` grants that family and `*` grants all scopes. Apply operations use the same validated application, recipe, host-operator, apt, systemd, PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Fingerprints, key-only configuration inspection, dependency graphs, integration plans, incident context, timeline, delivery history and backup verification are read-only. Analysis is advisory and its proposed remediations must be executed separately through ordinary typed tools. Actor/interface/correlation data is written to `audit.jsonl`; Git/database/recipe/notification/dotenv secret values are neither accepted by ordinary reads nor returned.
 

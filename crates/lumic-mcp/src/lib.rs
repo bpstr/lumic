@@ -26,6 +26,7 @@ use lumic_core::{
 use lumic_platform::{
     application::ApplicationService,
     apt::AptPackageManager,
+    attention::AttentionService,
     audit_store::AuditStore,
     diagnostics::diagnose_host,
     event_store::EventStore,
@@ -52,6 +53,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 
 pub const HOST_STATUS_URI: &str = "lumic://server/status";
+pub const SERVER_ATTENTION_URI: &str = "lumic://server/attention";
 
 pub fn host_status() -> lumic_core::Result<HostFacts> {
     lumic_platform::inspect_host()
@@ -61,6 +63,17 @@ pub fn host_status() -> lumic_core::Result<HostFacts> {
 struct ApplicationId {
     /// Stable Lumic application identifier.
     app: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct AttentionRequest {
+    /// Relevant event history window, from 1 to 720 hours. Defaults to 24.
+    #[serde(default = "default_attention_period")]
+    period_hours: u64,
+}
+
+const fn default_attention_period() -> u64 {
+    24
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -720,6 +733,22 @@ impl LumicMcpServer {
     )]
     async fn diagnose_server(&self) -> Result<String, String> {
         to_json(&diagnose_host().await.map_err(|error| error.to_string())?)
+    }
+
+    #[tool(
+        name = "server_attention",
+        description = "Answer how the node is doing with factual health severity, evidence, recent changes, active incidents, upcoming attention and recommendations. Read-only. The summary object is authoritative; personality only changes the rendered copy and cannot remove warnings."
+    )]
+    async fn server_attention(
+        &self,
+        Parameters(request): Parameters<AttentionRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &attention_service()
+                .report(request.period_hours)
+                .await
+                .map_err(string_error)?,
+        )
     }
 
     #[tool(
@@ -2493,6 +2522,14 @@ fn application_service() -> ApplicationService {
     ApplicationService::new(state, apps)
 }
 
+fn attention_service() -> AttentionService {
+    let state = state_directory();
+    let apps = std::env::var_os("LUMIC_APPS_ROOT")
+        .map(Into::into)
+        .unwrap_or_else(|| state.join("apps"));
+    AttentionService::new(state, apps)
+}
+
 fn intelligence_service() -> ApplicationIntelligence {
     let state = state_directory();
     let apps = std::env::var_os("LUMIC_APPS_ROOT")
@@ -2682,6 +2719,12 @@ impl ServerHandler for LumicMcpServer {
                 .with_title("Lumic server status")
                 .with_description("Live host identity and resource facts; read-only")
                 .with_mime_type("application/json"),
+            Resource::new(SERVER_ATTENTION_URI, "server-attention")
+                .with_title("Lumic server attention summary")
+                .with_description(
+                    "Factual health, changes, incidents, upcoming attention and recommendations; read-only",
+                )
+                .with_mime_type("application/json"),
         ]))
     }
 
@@ -2690,18 +2733,28 @@ impl ServerHandler for LumicMcpServer {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, McpError> {
-        if request.uri != HOST_STATUS_URI {
-            return Err(McpError::resource_not_found(
-                format!("unknown Lumic resource: {}", request.uri),
-                None,
-            ));
+        let value = match request.uri.as_str() {
+            HOST_STATUS_URI => serde_json::to_value(
+                host_status().map_err(|error| McpError::internal_error(error.to_string(), None))?,
+            ),
+            SERVER_ATTENTION_URI => serde_json::to_value(
+                attention_service()
+                    .report(24)
+                    .await
+                    .map_err(|error| McpError::internal_error(error.to_string(), None))?,
+            ),
+            _ => {
+                return Err(McpError::resource_not_found(
+                    format!("unknown Lumic resource: {}", request.uri),
+                    None,
+                ));
+            }
         }
-        let facts =
-            host_status().map_err(|error| McpError::internal_error(error.to_string(), None))?;
-        let json = serde_json::to_string_pretty(&facts)
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        let json = serde_json::to_string_pretty(&value)
             .map_err(|error| McpError::internal_error(error.to_string(), None))?;
         Ok(ReadResourceResult::new(vec![
-            ResourceContents::text(json, HOST_STATUS_URI).with_mime_type("application/json"),
+            ResourceContents::text(json, request.uri).with_mime_type("application/json"),
         ])
         .into())
     }
@@ -2827,8 +2880,9 @@ mod tests {
         let client = ().serve(client_transport).await?;
 
         let resources = client.list_resources(None).await?;
-        assert_eq!(resources.resources.len(), 1);
+        assert_eq!(resources.resources.len(), 2);
         assert_eq!(resources.resources[0].uri, HOST_STATUS_URI);
+        assert_eq!(resources.resources[1].uri, SERVER_ATTENTION_URI);
 
         client.cancel().await?;
         server.await??;
@@ -2862,6 +2916,18 @@ mod tests {
         let text = result.content[0].as_text().expect("text tool result");
         let json: serde_json::Value = serde_json::from_str(&text.text)?;
         assert_eq!(json["operating_system"], "linux");
+
+        let attention = client
+            .call_tool(
+                CallToolRequestParams::new("server_attention").with_arguments(
+                    serde_json::Map::from_iter([("period_hours".into(), serde_json::json!(24))]),
+                ),
+            )
+            .await?;
+        let text = attention.content[0].as_text().expect("text tool result");
+        let json: serde_json::Value = serde_json::from_str(&text.text)?;
+        assert!(json["summary"]["severity"].is_string());
+        assert!(json["summary"]["facts"].is_array());
 
         client.cancel().await?;
         server.await??;

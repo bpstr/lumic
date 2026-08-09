@@ -348,6 +348,8 @@ Acceptance demos:
 
 **Covers Phase 15.**
 
+**Status: implemented.** `AttentionService` builds one evidence-backed summary for CLI, UI and MCP, and personality is a deterministic renderer over that immutable factual model. Clean-image coverage proves the feature on every supported distribution. Certificate-expiry evidence, backup-age policy, broader integrations and a fully automated external-VPS release lifecycle remain nightly work.
+
 Goal: make Lumic memorable without corrupting operational truth, then perform the first publishability pass.
 
 Build a canonical status/attention summary model containing:

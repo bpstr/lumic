@@ -57,8 +57,25 @@ lumic version
 lumic status
 ```
 
+which reports OS, architecture, node identity, resources, Lumic version/channel and managed capabilities.
+
+For the operational summary, including recent changes and anything needing attention:
+
+```bash
+lumic how-are-you
+```
+
+Create the initial UI credential and connect over an SSH tunnel:
+
+```bash
+sudo lumic ui token rotate
+ssh -L 8080:127.0.0.1:8080 root@server
+```
+
+The UI listens on `127.0.0.1:8080` by default. `LUMIC_UI_BIND` may select another loopback address/port; non-loopback binds are rejected.
+
 ## Supported systems
 
-The installer currently accepts Debian and Ubuntu on x86_64 and ARM64/aarch64. A release asset for the selected architecture must exist in the chosen stable or nightly GitHub release channel.
+Installer/detection and attention-summary smoke coverage runs on Ubuntu 22.04, Ubuntu 24.04, Debian 12 and Debian 13 on x86_64. A live PostgreSQL/Redis lifecycle/database/backup scenario runs on Ubuntu 24.04. Additional distributions and architectures require automated detection and installation coverage before being documented as supported.
 
-Additional distributions and architectures require automated detection and installation coverage before being documented as supported.
+Continue with the [first-VPS guide](@/docs/first-vps.md), then use the [feature matrix](@/docs/feature-matrix.md) to distinguish implemented behavior from nightly expansion.

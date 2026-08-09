@@ -395,3 +395,11 @@ Container support is deliberately subordinate. Lumic may manage a containerized 
 ## 21. Releases and nightly
 
 Nightly is a branded early-access channel. A nightly artifact is published only after quality gates and supported-image install smoke tests pass. Stable is intentionally conservative. Update/channel changes are explicit and auditable.
+
+## 22. Server attention and personality
+
+`AttentionService` is the canonical application service for the conversational server summary. It folds live host diagnostics, managed application/service state, latest backup outcomes and bounded recent events into a structured `AttentionSummary` containing severity, facts, changes, active incidents, upcoming attention and recommendations. Only current evidence contributes to current severity; a historical failure remains a change and cannot invent an active incident.
+
+The six node personalities (`professional`, `dry`, `grumpy`, `paranoid`, `cheerful` and `idiot`) are deterministic renderers over that summary. They may change introductions and event phrasing, but cannot alter severity, omit facts/evidence/actions, or mutate structured MCP fields. `lumic how-are-you`, the UI overview, MCP `server_attention` and `lumic://server/attention` all call the same service.
+
+Personality selection is a node mutation: state is validated, written atomically as private JSON, audited on every request and emits an event only when it changes. The initial evidence set deliberately reuses established host, application, service, backup and event mechanisms. Certificate-expiry collection and configurable backup-age thresholds are deferred provider breadth rather than guessed data.

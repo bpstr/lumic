@@ -269,6 +269,8 @@ Reference behavior should prove flows such as:
 
 A small, deliberately fun presentation layer over factual Lumic state.
 
+Implemented in Epic G: the canonical attention model combines live host diagnostics, managed application/service state, backup results and recent events. CLI, UI and MCP share that model; six deterministic personalities affect wording only. Personality configuration is private, atomic and audited. Clean-image acceptance coverage and the first publishability documentation pass are complete; additional evidence providers are nightly breadth.
+
 - optional per-node personality.
 - factual status summary model separated from presentation.
 - personality-aware CLI/UI conversational summaries.

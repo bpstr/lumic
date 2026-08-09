@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 pub mod application;
+pub mod attention;
 pub mod events;
 pub mod infrastructure;
 pub mod intelligence;

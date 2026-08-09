@@ -32,29 +32,27 @@ ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'
 
 The canonical installer is served directly from `https://lumic.cc/install.sh` and is published from this repository's root [`install.sh`](install.sh). `https://lumic.cc/install` remains available as a compatibility alias.
 
-A fresh VPS becomes a Lumic node. Lumic detects the host and provides the daemon, CLI, management UI and MCP endpoint.
+A fresh VPS becomes a Lumic node. Lumic detects the host and provides the daemon, CLI, loopback management UI and a local stdio MCP server.
 
 ### 2. Connect MCP
 
-The intended v2 flow is deliberately simple:
+The current MCP server is local stdio. The nightly installer does not yet publish `lumic-mcp`; for source-tree development, build it and register the resulting absolute path with Codex:
 
 ```bash
-lumic mcp setup
+cargo build --release -p lumic-mcp
+codex mcp add lumic -- "$PWD/target/release/lumic-mcp"
 ```
 
-Lumic prints the endpoint and client configuration required by Codex, Claude or another MCP client. Once connected, the coding agent can inspect the node and call structured Lumic operations instead of being given unrestricted SSH access.
-
-> **Pre-alpha note:** the MCP setup command and remote transport are part of the v2 public contract and are being implemented during the initial roadmap.
+Once connected, the coding agent can inspect the node and call structured Lumic operations instead of being given unrestricted SSH access. Authenticated remote MCP transport is not implemented. See the MCP guide for the exact limitations.
 
 ### 3. Open the UI
 
 ```bash
-lumic ui
+sudo lumic ui token rotate
+ssh -L 8080:127.0.0.1:8080 root@server
 ```
 
-Lumic prints/opens the local management URL. The UI exposes the same server, application, service, deployment, event and diagnostic model as CLI and MCP.
-
-> **Pre-alpha note:** the Rust management UI is part of the v2 contract and follows the core/MCP foundation.
+Open `http://127.0.0.1:8080`. The installed daemon serves the UI on loopback, and the UI exposes the same server, application, service, deployment, event and diagnostic model as CLI and MCP.
 
 That is Lumic:
 
@@ -130,7 +128,7 @@ Lumic is not defined by a long feature checklist. Server capabilities should inc
 
 Examples include packages and PHP extensions, PostgreSQL extensions, Git hosting and mirrors, databases, Redis, certificates, backups, workers, cron/jobs, zero-downtime releases, logs, load tracing, diagnostics, notifications, webhooks, server events, managed services, dedicated node roles and multi-server environments.
 
-Eventually even server status can have some personality — without compromising factual health/severity information.
+Even server status can have some personality — without compromising factual health/severity information. `lumic how-are-you` offers professional, dry, grumpy, paranoid, cheerful and idiot renderers over one canonical factual summary.
 
 ## Core design laws
 

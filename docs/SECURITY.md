@@ -54,3 +54,9 @@ Operations webhooks require HTTPS except explicit loopback test destinations, fo
 Recipes are reviewed compiled-in data, not executable YAML. Schema and all required repository/environment inputs validate before application mutation. Setup is limited to existing typed health/process operations; generated values live in mode-`0600` secret files and public state carries references only. Uninstall uses recoverable application deletion and does not silently purge native service data.
 
 Host operations use fixed executables with separated arguments. Account names, systemd units, firewall IP/CIDR and protocol/port, journal filters, calendar values and managed paths are validated. Permission changes reject `/`, relative paths and symlink targets. PID 0, PID 1 and Lumic itself cannot be signalled. Remediation is an explicit enum (verified service restart, process terminate, bounded journal vacuum), not a command string. MCP host/recipe mutations retain the coarse node-policy plus per-call approval gate; the UI's security-update action retains session/CSRF confirmation.
+
+## Attention and personality
+
+Personality is presentation, never policy or diagnosis. The renderer receives a completed factual summary and must print every fact, incident, warning, evidence reference and recommendation regardless of tone; critical severity remains explicit. Historical failures are changes only unless live state independently proves an active incident.
+
+Personality state rejects symlinks, oversized files and unknown enum values, is written atomically with mode `0600`, and is audited. The MCP attention resource/tool exposes the structured factual summary alongside rendered text so agents never need to parse jokes as operational state. Changing personality is intentionally CLI-only in the initial implementation; MCP attention remains read-only.

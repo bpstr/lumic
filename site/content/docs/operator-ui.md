@@ -31,6 +31,7 @@ Sessions are in-memory, HttpOnly, SameSite=Strict and expire after eight hours; 
 
 The black/white UI provides:
 
+- the canonical conversational attention card, including severity, evidence and recommended actions;
 - live server identity and resource overview;
 - application list/detail and typed service references;
 - evidence-backed application fingerprint and dependency graph panels;
@@ -44,5 +45,7 @@ The black/white UI provides:
 - confirmed restart, deploy, rollback and security-update actions.
 
 Safe actions call the existing shared services and therefore retain their validation, health gates, rollback behavior, events and audits. Installation registers `lumicd.service`; inspect it with `systemctl status lumicd.service` and logs with `journalctl -u lumicd.service`.
+
+The attention card uses the same `AttentionService` as `lumic how-are-you` and MCP. A selected personality changes its phrasing, but the card always includes the complete factual summary and never suppresses a warning.
 
 The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure and application-intelligence mutations remain in CLI/MCP for now; the UI shows the deterministic fingerprint evidence and dependency graph without adding a second orchestration path. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, mobile polish and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.

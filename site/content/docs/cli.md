@@ -4,7 +4,7 @@ description = "The human console over the same typed capabilities used by UI and
 weight = 100
 [extra]
 kicker = "REFERENCE"
-status = "Epics A-E implemented"
+status = "Epics A-G implemented"
 +++
 
 The CLI should stay predictable and map to Lumic's domain model.
@@ -102,6 +102,9 @@ lumic package allowed
 lumic events
 lumic audit
 lumic diagnose
+lumic how-are-you [--period-hours 24] [--json]
+lumic personality show
+lumic personality set professional|dry|grumpy|paranoid|cheerful|idiot
 lumic operations capture
 lumic operations observe
 lumic operations timeline [--entity <kind>] [--entity-id <id>] [--event-type <type>] [--since-ms <unix-ms>]
@@ -141,6 +144,8 @@ lumic status --json
 `lumic version` prints only the deterministic Cargo package version (`lumic <version>`). `lumic status` reads live Linux host facts and renders node identity, Debian/Ubuntu release, kernel, architecture, logical CPU count, memory and root-disk capacity. `--json` serializes the full typed fact model, including swap and root filesystem metadata, for automation.
 
 `lumic diagnose` adds live load, uptime, high-memory processes, failed systemd units, listeners, mounts, timers and pending updates. Findings flag memory/load pressure, nearly-full filesystems, failed services and security updates with evidence. Service lifecycle commands accept validated unit names and map to direct `systemctl` arguments.
+
+`lumic how-are-you` builds the canonical attention report from live diagnosis, managed application/service state, latest backups and recent durable events. `--period-hours` controls only the change-history window; it does not turn old failures into current incidents. Personality changes deterministic prose only. `--json` returns both the rendered text and authoritative factual fields. Personality state is private, atomic, audited and defaults to `professional`.
 
 Package search is discovery only and never grants trust. Installation and removal require exact built-in policy entries, use direct argv invocation, are idempotent, and record events and audits. `LUMIC_STATE_DIR` and `LUMIC_APPS_ROOT` can relocate state for testing; production defaults are `/var/lib/lumic` and `/var/lib/lumic/apps`.
 

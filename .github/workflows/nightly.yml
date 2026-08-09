@@ -35,6 +35,9 @@ jobs:
       - run: tests/epic-d-smoke.sh
         env:
           LUMIC_TEST_BINARY: target/x86_64-unknown-linux-musl/release/lumic
+      - run: tests/epic-g-smoke.sh
+        env:
+          LUMIC_TEST_BINARY: target/x86_64-unknown-linux-musl/release/lumic
       - run: |
           cp target/x86_64-unknown-linux-musl/release/lumic lumic-x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/lumicd lumicd-x86_64-unknown-linux-musl
@@ -42,7 +45,7 @@ jobs:
           sha256sum lumicd-x86_64-unknown-linux-musl > lumicd-x86_64-unknown-linux-musl.sha256
       - name: Smoke installer images
         run: |
-          chmod +x lumic-x86_64-unknown-linux-musl lumicd-x86_64-unknown-linux-musl tests/install-smoke.sh tests/epic-d-smoke.sh install.sh
+          chmod +x lumic-x86_64-unknown-linux-musl lumicd-x86_64-unknown-linux-musl tests/install-smoke.sh tests/epic-d-smoke.sh tests/epic-g-smoke.sh install.sh
           for image in ubuntu:22.04 ubuntu:24.04 debian:12 debian:13; do
             docker run --rm \
               -v "$PWD/lumic-x86_64-unknown-linux-musl:/opt/lumic:ro" \
@@ -50,9 +53,10 @@ jobs:
               -v "$PWD/install.sh:/install.sh:ro" \
               -v "$PWD/tests/install-smoke.sh:/test.sh:ro" \
               -v "$PWD/tests/epic-d-smoke.sh:/epic-d-test.sh:ro" \
+              -v "$PWD/tests/epic-g-smoke.sh:/epic-g-test.sh:ro" \
               -e LUMIC_TEST_BINARY=/opt/lumic \
               -e LUMIC_TEST_DAEMON_BINARY=/opt/lumicd \
-              "$image" sh -c '/test.sh && apt-get update && apt-get install -y git && /epic-d-test.sh'
+              "$image" sh -c '/test.sh && apt-get update && apt-get install -y git && /epic-d-test.sh && /epic-g-test.sh'
           done
       - name: Publish rolling nightly prerelease
         env:

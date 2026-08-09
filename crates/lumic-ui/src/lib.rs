@@ -11,10 +11,10 @@ use lumic_core::{
     server::UpdateScope,
 };
 use lumic_platform::{
-    application::ApplicationService, atomic_file::write_atomic, event_store::EventStore,
-    infrastructure::InfrastructureService, intelligence::ApplicationIntelligence,
-    managed_service::ManagedServiceManager, recipe::RecipeManager, server::HostOperator,
-    systemd::ServiceAction,
+    application::ApplicationService, atomic_file::write_atomic, attention::AttentionService,
+    event_store::EventStore, infrastructure::InfrastructureService,
+    intelligence::ApplicationIntelligence, managed_service::ManagedServiceManager,
+    recipe::RecipeManager, server::HostOperator, systemd::ServiceAction,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -89,6 +89,10 @@ impl UiState {
 
     fn applications(&self) -> ApplicationService {
         ApplicationService::new(&self.state_dir, self.apps_root.clone())
+    }
+
+    fn attention(&self) -> AttentionService {
+        AttentionService::new(&self.state_dir, self.apps_root.clone())
     }
 
     fn services(&self) -> ManagedServiceManager {
@@ -246,9 +250,16 @@ async fn overview(State(state): State<UiState>, headers: HeaderMap) -> Response 
     if auth(&state, &headers).is_none() {
         return Redirect::to("/login").into_response();
     }
-    let host = match lumic_platform::inspect_host() {
-        Ok(host) => host,
+    let attention = match state.attention().report(24).await {
+        Ok(report) => report,
         Err(error) => return error_response(error),
+    };
+    let host = &attention.summary.facts;
+    let fact = |key: &str| {
+        host.iter()
+            .find(|item| item.key == key)
+            .map(|item| item.value.as_str())
+            .unwrap_or("unknown")
     };
     let apps = state.applications().list().unwrap_or_default();
     let services = state.services().list().unwrap_or_default();
@@ -269,7 +280,7 @@ async fn overview(State(state): State<UiState>, headers: HeaderMap) -> Response 
         .collect::<String>();
     let infrastructure = state.infrastructure().read_model().ok();
     let peer_count = infrastructure.as_ref().map_or(0, |model| model.nodes.len());
-    page("Overview", &format!("<h1>{}</h1><p class=muted>{} · {:?} · kernel {}</p><div class=grid><div class=card><h2>Applications</h2><p>{}</p><a href=/apps>Inspect applications</a></div><div class=card><h2>Services</h2><p>{}</p><a href=/services>Inspect services</a></div><div class=card><h2>Infrastructure</h2><p>{peer_count} trusted or revoked peers</p><a href=/infrastructure>Inspect topology</a></div><div class=card><h2>Resources</h2><p>{} CPUs · {} MiB available</p></div></div><h2>Recent events</h2><table><tr><th>Time</th><th>Event</th><th>Entity</th></tr>{event_rows}</table>", escape(&host.hostname), escape(&host.distribution.version_name), host.architecture, escape(&host.kernel_release), apps.len(), services.len(), host.cpu_count, host.memory.available_bytes / 1024 / 1024), true).into_response()
+    page("Overview", &format!("<h1>{}</h1><p class=muted>{}</p><section class=card><h2>How this node is doing</h2><p class=muted>Personality: {}</p><pre>{}</pre></section><div class=grid><div class=card><h2>Applications</h2><p>{}</p><a href=/apps>Inspect applications</a></div><div class=card><h2>Services</h2><p>{}</p><a href=/services>Inspect services</a></div><div class=card><h2>Infrastructure</h2><p>{peer_count} trusted or revoked peers</p><a href=/infrastructure>Inspect topology</a></div><div class=card><h2>Resources</h2><p>{} · {}</p></div></div><h2>Recent events</h2><table><tr><th>Time</th><th>Event</th><th>Entity</th></tr>{event_rows}</table>", escape(fact("hostname")), escape(fact("operating_system")), attention.personality, escape(&attention.rendered), apps.len(), services.len(), escape(fact("load_1m")), escape(fact("memory"))), true).into_response()
 }
 
 async fn infrastructure(State(state): State<UiState>, headers: HeaderMap) -> Response {

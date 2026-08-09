@@ -4,6 +4,7 @@ use lumic_core::{
     application::{
         ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, ApplicationServiceReference,
     },
+    attention::NodePersonality,
     infrastructure::{
         DeploymentMemberStatus, EnvironmentBundle, EnvironmentTier, EnvironmentTransform,
         MembershipKind, NodeEnrollment, NodeRole, RemoteOperation, ResourceEndpoint,
@@ -24,6 +25,7 @@ use lumic_core::{
 use lumic_platform::{
     application::ApplicationService,
     apt::AptPackageManager,
+    attention::AttentionService,
     audit_store::AuditStore,
     diagnostics::diagnose_host,
     event_store::EventStore,
@@ -63,6 +65,20 @@ enum Command {
     Diagnose {
         #[arg(long)]
         json: bool,
+    },
+    /// Answer how the node is doing, what changed, and what needs attention.
+    HowAreYou {
+        /// Relevant event history window, from 1 to 720 hours.
+        #[arg(long, default_value_t = 24)]
+        period_hours: u64,
+        /// Emit the complete factual summary and rendered copy as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect or change the node's deterministic presentation personality.
+    Personality {
+        #[command(subcommand)]
+        command: PersonalityCommand,
     },
     /// Inspect and operate validated systemd units.
     Service {
@@ -145,6 +161,42 @@ enum Command {
         #[command(subcommand)]
         command: UiCommand,
     },
+}
+
+#[derive(Subcommand)]
+enum PersonalityCommand {
+    /// Show the configured personality.
+    Show,
+    /// Set the personality used by conversational status surfaces.
+    Set {
+        #[arg(value_enum)]
+        personality: PersonalityArg,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PersonalityArg {
+    Professional,
+    Dry,
+    Grumpy,
+    Paranoid,
+    Cheerful,
+    Idiot,
+}
+
+impl From<PersonalityArg> for NodePersonality {
+    fn from(value: PersonalityArg) -> Self {
+        match value {
+            PersonalityArg::Professional => Self::Professional,
+            PersonalityArg::Dry => Self::Dry,
+            PersonalityArg::Grumpy => Self::Grumpy,
+            PersonalityArg::Paranoid => Self::Paranoid,
+            PersonalityArg::Cheerful => Self::Cheerful,
+            PersonalityArg::Idiot => Self::Idiot,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1084,6 +1136,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Command::HowAreYou { period_hours, json } => {
+            let report = attention_service().report(period_hours).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}", report.rendered);
+            }
+        }
+        Command::Personality { command } => match command {
+            PersonalityCommand::Show => println!("{}", attention_service().personality()?),
+            PersonalityCommand::Set { personality, json } => {
+                let result = attention_service()
+                    .set_personality(personality.into(), &operation_context(false))?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("{}", result.message);
+                }
+            }
+        },
         Command::Service { command } => run_service(command).await?,
         Command::ManagedService { command } => run_managed_service(command).await?,
         Command::Package { command } => run_package(command).await?,
@@ -2372,6 +2444,14 @@ fn application_service() -> ApplicationService {
         .map(PathBuf::from)
         .unwrap_or_else(|| state_directory.join("apps"));
     ApplicationService::new(state_directory, apps_root)
+}
+
+fn attention_service() -> AttentionService {
+    let state_directory = state_directory();
+    let apps_root = std::env::var_os("LUMIC_APPS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state_directory.join("apps"));
+    AttentionService::new(state_directory, apps_root)
 }
 
 fn intelligence_service() -> ApplicationIntelligence {

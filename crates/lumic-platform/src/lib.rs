@@ -20,6 +20,7 @@ pub mod app_process;
 pub mod application;
 pub mod apt;
 pub mod atomic_file;
+pub mod attention;
 pub mod audit_store;
 pub mod diagnostics;
 pub mod event_store;

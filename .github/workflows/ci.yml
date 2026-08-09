@@ -38,6 +38,9 @@ jobs:
       - run: tests/epic-d-smoke.sh
         env:
           LUMIC_TEST_BINARY: target/release/lumic
+      - run: tests/epic-e-smoke.sh
+        env:
+          LUMIC_TEST_BINARY: target/release/lumic
 
   audit:
     runs-on: ubuntu-latest

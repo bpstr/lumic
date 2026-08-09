@@ -175,8 +175,22 @@ pub struct ServiceBackup {
     pub database: Option<String>,
     pub path: String,
     pub size_bytes: u64,
+    #[serde(default)]
+    pub checksum_sha256: Option<String>,
     pub status: BackupStatus,
     pub created_at_unix_ms: u128,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupVerification {
+    pub backup_id: String,
+    pub verified_at_unix_ms: u128,
+    pub exists: bool,
+    pub size_matches: bool,
+    pub checksum_matches: Option<bool>,
+    pub format_valid: bool,
+    pub checksum_sha256: Option<String>,
     pub message: String,
 }
 

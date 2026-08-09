@@ -4,7 +4,7 @@ description = "The human console over the same typed capabilities used by UI and
 weight = 100
 [extra]
 kicker = "REFERENCE"
-status = "Epics A-D implemented"
+status = "Epics A-E implemented"
 +++
 
 The CLI should stay predictable and map to Lumic's domain model.
@@ -42,6 +42,7 @@ lumic managed-service database-create <service> <database> [--owner <user>]
 lumic managed-service user-create <service> <user>
 lumic managed-service grant <service> <database> <user>
 lumic managed-service backup <service> [--database <database>]
+lumic managed-service backup-verify <backup-id>
 lumic managed-service restore <service> <backup-id>
 lumic managed-service attach <service> <app> --role <role> [--database <database>] [--user <user>]
 
@@ -101,6 +102,17 @@ lumic package allowed
 lumic events
 lumic audit
 lumic diagnose
+lumic operations capture
+lumic operations observe
+lumic operations timeline [--entity <kind>] [--entity-id <id>] [--event-type <type>] [--since-ms <unix-ms>]
+lumic operations incident [--entity-id <id>] [--since-ms <unix-ms>] [--until-ms <unix-ms>]
+lumic operations provider-signal <event-type> <entity> <entity-id> --severity <level> --summary <text> [--payload <json>]
+lumic operations webhook-plan|webhook-apply <id> <https-url> <secret-reference>
+lumic operations subscribe <id> <destination> --event <event-type> [--event <event-type>]
+lumic operations rule-plan|rule-apply <id> <event-type> <unit> [--entity-id <id>] [--cooldown-seconds 60] [--max-attempts 2]
+lumic operations run-once
+lumic operations deliveries
+lumic operations rollback-configuration
 lumic service inspect nginx.service
 lumic service restart nginx.service
 lumic self-update apply

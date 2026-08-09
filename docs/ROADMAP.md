@@ -198,6 +198,8 @@ Implemented: production/staging/development bundles share application configurat
 
 ## Phase 11 — Observability
 
+Implemented in Epic E: private five-minute host/process/application/managed-service snapshots, durable event folding, selected kernel/OOM ingestion, typed provider hooks, correlated filters and evidence-only incident reports. The reusable mechanism is complete; additional metrics and provider collectors are nightly breadth.
+
 - durable time-series-ish operational snapshots appropriate for a lightweight node agent.
 - CPU/memory/disk/network/process/service history.
 - application and deployment health history.
@@ -209,6 +211,8 @@ Implemented: production/staging/development bundles share application configurat
 **Exit:** Lumic can explain what changed around an incident instead of showing only current metrics.
 
 ## Phase 12 — Notifications and automation
+
+Implemented in Epic E: signed generic webhook destinations, exact subscriptions, bounded queue/retry/history and the reference `service.failed -> typed restart -> verify` rule with cooldown/attempt protection. Destination adapters and rule breadth are nightly work.
 
 - event subscriptions.
 - generic signed outbound webhooks.
@@ -222,6 +226,8 @@ Nightly may add Slack, Discord, email and other destinations.
 **Exit:** Lumic actively participates in operating the server rather than waiting for commands.
 
 ## Phase 13 — Advanced operational safety
+
+Implemented in Epic E: new material operations configuration follows plan/apply with recoverable snapshots, automation plans expose impact hooks, existing update recovery is retained, managed backups gain SHA-256/native-format verification, and MCP mutations require scope plus approval. Rich dependency expansion, hardening profiles and per-identity remote authorization remain later work.
 
 - plan/apply for material changes.
 - dependency impact previews.

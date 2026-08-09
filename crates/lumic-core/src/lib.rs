@@ -6,6 +6,7 @@ pub mod application;
 pub mod events;
 pub mod infrastructure;
 pub mod managed_service;
+pub mod operations;
 pub mod package;
 pub mod recipe;
 pub mod server;

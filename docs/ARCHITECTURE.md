@@ -32,7 +32,9 @@ Human interface. Commands translate arguments to the same capability/application
 ### lumic-mcp
 Agent adapter. MCP exposes resources and typed tools rather than generic shell. Tool descriptions should contain preconditions, risk and output schemas useful for coding agents.
 
-The MCP adapter uses the official Rust `rmcp` SDK and stdio transport. Read tools are available by default. Apply tools require process-level `LUMIC_MCP_ALLOW_MUTATIONS=1` and per-call `approved=true`; remote transport remains deferred until authentication and encryption are implemented.
+The MCP adapter uses the official Rust `rmcp` SDK and stdio transport. Read tools are available by default. Apply tools require process-level `LUMIC_MCP_ALLOW_MUTATIONS=1`, a matching `LUMIC_MCP_SCOPES` grant and per-call `approved=true`; remote transport remains deferred until authentication and encryption are implemented.
+
+Epic E adds one `OperationsService` rather than a telemetry framework. It periodically folds live host/process/application/service observations, selected journald kernel evidence, existing durable events and typed provider signals into an append-only correlated timeline. The same service owns private webhook/rule/subscription state, a bounded delivery queue and the single reference automation (`service.failed -> typed systemd restart -> active-state verification`). CLI, daemon and MCP are adapters over it. Generic webhook HMAC delivery is the notification substrate; destination-specific adapters remain catalog breadth. Runtime state updates preserve the last configuration snapshot so rollback stays meaningful.
 
 ### lumic-ui / API
 The initial Axum UI is a server-rendered adapter over `ApplicationService`, `ManagedServiceManager`, `RecipeManager`, `HostOperator`, host inspection and event storage. It owns authentication/session/CSRF and HTML presentation, but no privileged host implementation. It binds only to loopback, uses in-memory sessions and exposes confirmed restart/deploy/rollback/security-update actions. A general HTTP API and remote-auth model remain future interfaces.

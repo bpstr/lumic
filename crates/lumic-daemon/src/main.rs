@@ -33,11 +33,25 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(address = %bind, "operator UI listening");
 
     tokio::select! {
-        result = lumic_ui::serve(lumic_ui::UiState::new(&state_dir, apps_root), bind) => result?,
+        result = lumic_ui::serve(lumic_ui::UiState::new(&state_dir, apps_root.clone()), bind) => result?,
+        _ = operations_loop(state_dir.clone(), apps_root) => {},
         result = shutdown_signal() => result?,
     }
     tracing::info!(node = %facts.hostname, "lumic daemon stopped gracefully");
     Ok(())
+}
+
+async fn operations_loop(state_dir: std::path::PathBuf, apps_root: std::path::PathBuf) {
+    let service = lumic_platform::operations::OperationsService::new(state_dir, apps_root);
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        match service.run_once().await {
+            Ok(result) => tracing::debug!(result = %result, "operations cycle completed"),
+            Err(error) => tracing::warn!(error = %error, "operations cycle failed safely"),
+        }
+    }
 }
 
 #[cfg(unix)]

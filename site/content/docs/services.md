@@ -55,12 +55,13 @@ sudo lumic managed-service user-create primary-db app_user
 sudo lumic managed-service database-create primary-db app_db --owner app_user
 sudo lumic managed-service grant primary-db app_db app_user
 sudo lumic managed-service backup primary-db --database app_db
+sudo lumic managed-service backup-verify <backup-id>
 sudo lumic managed-service restore primary-db <backup-id>
 ```
 
 Database and role identifiers are strictly validated. Passwords are generated locally, passed to `psql` over stdin, stored in Lumic's private mode-0600 secret store and represented in output only by an opaque secret reference.
 
-Redis backup creates a local snapshot; restore stops Redis, replaces its data file with native ownership, restarts it and verifies health. PostgreSQL backup/restore uses local `pg_dump`/`pg_restore`. Backup records stay in Lumic's private state and backup files live below `/var/backups/lumic`; this is a local reference implementation, not an off-node disaster-recovery claim.
+Redis backup creates a local snapshot; restore stops Redis, replaces its data file with native ownership, restarts it and verifies health. PostgreSQL backup/restore uses local `pg_dump`/`pg_restore`. New backup records include SHA-256; `backup-verify` checks existence, recorded size, checksum (when present) and the native `REDIS`/`PGDMP` header before restore. Backup records stay in Lumic's private state and backup files live below `/var/backups/lumic`; this is a local reference implementation, not an off-node disaster-recovery claim.
 
 ## Application references
 

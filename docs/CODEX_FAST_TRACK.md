@@ -196,6 +196,8 @@ Give Codex access to two fresh Lumic nodes and ask it to create production on on
 
 **Covers Phases 11–13.**
 
+**Implementation status:** completed by the Epic E fast-track mission. Ecosystem breadth remains in nightly issues.
+
 Goal: Lumic becomes an active server participant and can explain incidents.
 
 Build lightweight durable operational history:

@@ -10,6 +10,10 @@ use lumic_core::{
         SignedRemoteRequest,
     },
     managed_service::ManagedServiceKind,
+    operations::{
+        AutomationAction, AutomationRule, EventSubscription, SignalSeverity, TimelineQuery,
+        WebhookDestination,
+    },
     package::{PackageMutation, PackageName, PackageRecord},
     recipe::RecipeInstallRequest,
     server::{
@@ -25,6 +29,7 @@ use lumic_platform::{
     event_store::EventStore,
     infrastructure::InfrastructureService,
     managed_service::ManagedServiceManager,
+    operations::OperationsService,
     recipe::RecipeManager,
     self_update::SelfUpdateManager,
     server::HostOperator,
@@ -88,6 +93,11 @@ enum Command {
         limit: usize,
         #[arg(long)]
         json: bool,
+    },
+    /// Correlate operational history, configure notifications, and run bounded automation.
+    Operations {
+        #[command(subcommand)]
+        command: OperationsCommand,
     },
     /// Apply or schedule checksum-verified nightly binary updates.
     SelfUpdate {
@@ -697,6 +707,9 @@ enum ManagedServiceCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    BackupVerify {
+        backup: String,
+    },
     Restore {
         service: String,
         backup: String,
@@ -713,6 +726,127 @@ enum ManagedServiceCommand {
         #[arg(long)]
         user: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SignalSeverityArg {
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+impl From<SignalSeverityArg> for SignalSeverity {
+    fn from(value: SignalSeverityArg) -> Self {
+        match value {
+            SignalSeverityArg::Info => Self::Info,
+            SignalSeverityArg::Warning => Self::Warning,
+            SignalSeverityArg::Error => Self::Error,
+            SignalSeverityArg::Critical => Self::Critical,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum OperationsCommand {
+    /// Import new durable Lumic events into the correlated timeline.
+    Capture,
+    /// Observe current host and resource state immediately, bypassing the sampling interval.
+    Observe,
+    /// Query newest operational evidence.
+    Timeline {
+        #[arg(long)]
+        entity: Option<String>,
+        #[arg(long)]
+        entity_id: Option<String>,
+        #[arg(long)]
+        event_type: Option<String>,
+        #[arg(long)]
+        since_ms: Option<u128>,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// Reconstruct a factual incident report from a time window.
+    Incident {
+        #[arg(long)]
+        entity_id: Option<String>,
+        #[arg(long)]
+        since_ms: Option<u128>,
+        #[arg(long)]
+        until_ms: Option<u128>,
+        #[arg(long, default_value_t = 250)]
+        limit: usize,
+    },
+    /// Record a typed signal from a provider integration.
+    ProviderSignal {
+        event_type: String,
+        entity: String,
+        entity_id: String,
+        #[arg(long, value_enum, default_value = "info")]
+        severity: SignalSeverityArg,
+        #[arg(long)]
+        summary: String,
+        #[arg(long, default_value = "{}")]
+        payload: String,
+    },
+    WebhookPlan {
+        id: String,
+        url: String,
+        secret_reference: String,
+        #[arg(long, default_value_t = 5_000)]
+        timeout_ms: u64,
+        #[arg(long, default_value_t = 3)]
+        max_attempts: u8,
+    },
+    WebhookApply {
+        id: String,
+        url: String,
+        secret_reference: String,
+        #[arg(long, default_value_t = 5_000)]
+        timeout_ms: u64,
+        #[arg(long, default_value_t = 3)]
+        max_attempts: u8,
+    },
+    Subscribe {
+        id: String,
+        destination: String,
+        #[arg(long = "event", required = true)]
+        event_types: Vec<String>,
+        #[arg(long)]
+        entity: Option<String>,
+        #[arg(long)]
+        entity_id: Option<String>,
+    },
+    RulePlan {
+        id: String,
+        event_type: String,
+        unit: String,
+        #[arg(long)]
+        entity_id: Option<String>,
+        #[arg(long, default_value_t = 60)]
+        cooldown_seconds: u64,
+        #[arg(long, default_value_t = 2)]
+        max_attempts: u8,
+    },
+    RuleApply {
+        id: String,
+        event_type: String,
+        unit: String,
+        #[arg(long)]
+        entity_id: Option<String>,
+        #[arg(long, default_value_t = 60)]
+        cooldown_seconds: u64,
+        #[arg(long, default_value_t = 2)]
+        max_attempts: u8,
+    },
+    /// Capture events and attempt all due notifications once.
+    RunOnce,
+    Deliveries {
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// Restore the previous Lumic-managed operations configuration snapshot.
+    RollbackConfiguration,
 }
 
 #[derive(Subcommand)]
@@ -933,6 +1067,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Command::Operations { command } => run_operations(command).await?,
         Command::SelfUpdate { command } => {
             let manager = SelfUpdateManager::system(state_directory());
             match command {
@@ -971,6 +1106,175 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     }
     Ok(())
+}
+
+async fn run_operations(command: OperationsCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let service = OperationsService::at_state_dir(state_directory());
+    let value = match command {
+        OperationsCommand::Capture => serde_json::to_value(service.capture_events().await?)?,
+        OperationsCommand::Observe => serde_json::to_value(service.observe_now().await?)?,
+        OperationsCommand::Timeline {
+            entity,
+            entity_id,
+            event_type,
+            since_ms,
+            limit,
+        } => serde_json::to_value(service.timeline(&TimelineQuery {
+            entity,
+            entity_id,
+            event_type,
+            since_unix_ms: since_ms,
+            until_unix_ms: None,
+            limit,
+        })?)?,
+        OperationsCommand::Incident {
+            entity_id,
+            since_ms,
+            until_ms,
+            limit,
+        } => serde_json::to_value(service.incident(&TimelineQuery {
+            entity: None,
+            entity_id,
+            event_type: None,
+            since_unix_ms: since_ms,
+            until_unix_ms: until_ms,
+            limit,
+        })?)?,
+        OperationsCommand::ProviderSignal {
+            event_type,
+            entity,
+            entity_id,
+            severity,
+            summary,
+            payload,
+        } => {
+            let payload = serde_json::from_str(&payload)?;
+            serde_json::to_value(
+                service
+                    .record_provider_signal(
+                        &event_type,
+                        &entity,
+                        &entity_id,
+                        severity.into(),
+                        &summary,
+                        payload,
+                    )
+                    .await?,
+            )?
+        }
+        OperationsCommand::WebhookPlan {
+            id,
+            url,
+            secret_reference,
+            timeout_ms,
+            max_attempts,
+        } => serde_json::to_value(service.plan_destination(&WebhookDestination {
+            id,
+            url,
+            secret_reference,
+            timeout_ms,
+            max_attempts,
+            enabled: true,
+        })?)?,
+        OperationsCommand::WebhookApply {
+            id,
+            url,
+            secret_reference,
+            timeout_ms,
+            max_attempts,
+        } => serde_json::to_value(service.apply_destination(
+            WebhookDestination {
+                id,
+                url,
+                secret_reference,
+                timeout_ms,
+                max_attempts,
+                enabled: true,
+            },
+            &operation_context(false),
+        )?)?,
+        OperationsCommand::Subscribe {
+            id,
+            destination,
+            event_types,
+            entity,
+            entity_id,
+        } => serde_json::to_value(service.apply_subscription(
+            EventSubscription {
+                id,
+                destination_id: destination,
+                event_types,
+                entity,
+                entity_id,
+                enabled: true,
+            },
+            &operation_context(false),
+        )?)?,
+        OperationsCommand::RulePlan {
+            id,
+            event_type,
+            unit,
+            entity_id,
+            cooldown_seconds,
+            max_attempts,
+        } => serde_json::to_value(service.plan_rule(&automation_rule(
+            id,
+            event_type,
+            unit,
+            entity_id,
+            cooldown_seconds,
+            max_attempts,
+        ))?)?,
+        OperationsCommand::RuleApply {
+            id,
+            event_type,
+            unit,
+            entity_id,
+            cooldown_seconds,
+            max_attempts,
+        } => serde_json::to_value(service.apply_rule(
+            automation_rule(
+                id,
+                event_type,
+                unit,
+                entity_id,
+                cooldown_seconds,
+                max_attempts,
+            ),
+            &operation_context(false),
+        )?)?,
+        OperationsCommand::RunOnce => service.run_once().await?,
+        OperationsCommand::Deliveries { limit } => {
+            serde_json::to_value(service.deliveries(limit)?)?
+        }
+        OperationsCommand::RollbackConfiguration => {
+            service.rollback_configuration(&operation_context(false))?;
+            serde_json::json!({"restored": true})
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn automation_rule(
+    id: String,
+    event_type: String,
+    unit: String,
+    entity_id: Option<String>,
+    cooldown_seconds: u64,
+    max_attempts: u8,
+) -> AutomationRule {
+    AutomationRule {
+        id,
+        event_type,
+        entity_id,
+        action: AutomationAction::RestartService { unit },
+        cooldown_seconds,
+        max_attempts,
+        enabled: true,
+        last_applied_unix_ms: None,
+        attempt_count: 0,
+    }
 }
 
 async fn run_git(command: GitCommand) -> Result<(), Box<dyn std::error::Error>> {
@@ -1764,6 +2068,9 @@ async fn run_managed_service(
                 .backup(&service, database.as_deref(), &operation_context(dry_run))
                 .await?,
         )?,
+        ManagedServiceCommand::BackupVerify { backup } => {
+            serde_json::to_value(manager.verify_backup(&backup)?)?
+        }
         ManagedServiceCommand::Restore {
             service,
             backup,

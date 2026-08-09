@@ -12,19 +12,20 @@ use lumic_core::{
     application::{ApplicationServiceReference, unix_time_ms},
     events::{AuditRecord, Event},
     managed_service::{
-        BackupStatus, Database, DatabaseUser, DesiredServiceState, ManagedService,
-        ManagedServiceKind, ManagedServiceMutation, ManagedServiceState, ManagedServiceStatus,
-        ServiceBackup, ServiceConfiguration, ServiceHealth, ServicePaths, install_plan,
-        validate_database_identifier, validate_resource_id,
+        BackupStatus, BackupVerification, Database, DatabaseUser, DesiredServiceState,
+        ManagedService, ManagedServiceKind, ManagedServiceMutation, ManagedServiceState,
+        ManagedServiceStatus, ServiceBackup, ServiceConfiguration, ServiceHealth, ServicePaths,
+        install_plan, validate_database_identifier, validate_resource_id,
     },
     package::PackageName,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -793,6 +794,7 @@ impl ManagedServiceManager {
                 database: database.map(str::to_owned),
                 path: path.to_string_lossy().into_owned(),
                 size_bytes: 0,
+                checksum_sha256: None,
                 status: BackupStatus::Completed,
                 created_at_unix_ms: now,
                 message: "dry run: local backup would be created".into(),
@@ -832,6 +834,7 @@ impl ManagedServiceManager {
             database: database.map(str::to_owned),
             path: path.to_string_lossy().into_owned(),
             size_bytes: fs::metadata(&path).map_err(state_io)?.len(),
+            checksum_sha256: Some(file_sha256(&path)?),
             status: BackupStatus::Completed,
             created_at_unix_ms: now,
             message: "local backup completed".into(),
@@ -848,6 +851,60 @@ impl ManagedServiceManager {
             json!({"backup_id": backup.id, "database": database}),
         )?;
         Ok(backup)
+    }
+
+    pub fn verify_backup(&self, backup_id: &str) -> Result<BackupVerification> {
+        validate_backup_id(backup_id)?;
+        let state = self.store.load()?;
+        let backup = state
+            .backups
+            .iter()
+            .find(|item| item.id == backup_id)
+            .ok_or_else(|| invalid("backup", "backup is not managed by Lumic"))?;
+        let path = Path::new(&backup.path);
+        if !path.is_file() {
+            return Ok(BackupVerification {
+                backup_id: backup.id.clone(),
+                verified_at_unix_ms: unix_time_ms(),
+                exists: false,
+                size_matches: false,
+                checksum_matches: backup.checksum_sha256.as_ref().map(|_| false),
+                format_valid: false,
+                checksum_sha256: None,
+                message: "backup file is missing".into(),
+            });
+        }
+        let size_matches = fs::metadata(path).map_err(state_io)?.len() == backup.size_bytes;
+        let checksum = file_sha256(path)?;
+        let checksum_matches = backup
+            .checksum_sha256
+            .as_ref()
+            .map(|expected| expected == &checksum);
+        let mut header = [0_u8; 5];
+        let read = fs::File::open(path)
+            .and_then(|mut file| file.read(&mut header))
+            .map_err(state_io)?;
+        let extension = path.extension().and_then(|value| value.to_str());
+        let format_valid = match extension {
+            Some("dump") => read == 5 && &header == b"PGDMP",
+            Some("rdb") => read == 5 && &header == b"REDIS",
+            _ => false,
+        };
+        let verified = size_matches && checksum_matches.unwrap_or(true) && format_valid;
+        Ok(BackupVerification {
+            backup_id: backup.id.clone(),
+            verified_at_unix_ms: unix_time_ms(),
+            exists: true,
+            size_matches,
+            checksum_matches,
+            format_valid,
+            checksum_sha256: Some(checksum),
+            message: if verified {
+                "backup size, checksum, and native format header verified".into()
+            } else {
+                "backup verification failed; do not restore this artifact".into()
+            },
+        })
     }
 
     pub async fn restore(
@@ -1355,6 +1412,24 @@ impl ManagedServiceManager {
     }
 }
 
+fn file_sha256(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path).map_err(state_io)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(state_io)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 fn invalid(field: &str, message: &str) -> LumicError {
     LumicError::InvalidInput {
         field: field.into(),
@@ -1438,6 +1513,42 @@ mod tests {
                 .validate_settings(ManagedServiceKind::Redis, &config)
                 .is_err()
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn backup_verification_detects_valid_and_tampered_native_artifacts() {
+        let directory = temp_dir("backup-verification");
+        let backup_path = directory.join("redis.rdb");
+        fs::write(&backup_path, b"REDIS0011payload").unwrap();
+        let checksum = file_sha256(&backup_path).unwrap();
+        ManagedServiceStore::at_state_dir(&directory)
+            .save(&ManagedServiceState {
+                backups: vec![ServiceBackup {
+                    id: "backup-reference".into(),
+                    service_id: "cache".into(),
+                    database: None,
+                    path: backup_path.display().to_string(),
+                    size_bytes: fs::metadata(&backup_path).unwrap().len(),
+                    checksum_sha256: Some(checksum),
+                    status: BackupStatus::Completed,
+                    created_at_unix_ms: unix_time_ms(),
+                    message: "test fixture".into(),
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+
+        let manager = ManagedServiceManager::at_state_dir(&directory);
+        let valid = manager.verify_backup("backup-reference").unwrap();
+        assert!(valid.exists && valid.size_matches && valid.format_valid);
+        assert_eq!(valid.checksum_matches, Some(true));
+
+        fs::write(&backup_path, b"REDIS0011tampered").unwrap();
+        let tampered = manager.verify_backup("backup-reference").unwrap();
+        assert_eq!(tampered.checksum_matches, Some(false));
+        assert!(!tampered.size_matches);
+        assert!(tampered.message.contains("do not restore"));
         fs::remove_dir_all(directory).unwrap();
     }
 

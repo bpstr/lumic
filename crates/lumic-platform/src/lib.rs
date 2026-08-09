@@ -25,6 +25,7 @@ pub mod diagnostics;
 pub mod event_store;
 pub mod infrastructure;
 pub mod managed_service;
+pub mod operations;
 pub mod recipe;
 pub mod runtime;
 pub mod secret_store;

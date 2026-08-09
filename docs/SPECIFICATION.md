@@ -201,6 +201,8 @@ Useful signals:
 
 `lumic diagnose` returns structured evidence and detected correlations, e.g. deployment timing near a worker spike or OOM event. AI clients can reason over this evidence.
 
+Implemented reference mechanism: `lumicd` captures host/process/application/managed-service state every five minutes, imports new Lumic events, ingests selected kernel/OOM journal lines and stores typed provider hooks in a private append-only operations timeline. Timeline and incident queries filter by time, event and resource. Incident output is an evidence package, not a guessed root cause. Broader network/runtime/nginx/provider metrics remain nightly expansion.
+
 ## 12. Events, notifications and webhooks
 
 Example events:
@@ -215,6 +217,8 @@ Example events:
 - security updates available.
 
 Generic signed HTTP webhooks are the foundational outbound integration. Email/Slack/Teams/etc. can be adapters later. Rules may perform narrow deterministic remediation (for example restart a failed known service twice, verify, then notify). Never give an LLM autonomous arbitrary remediation because a threshold fired.
+
+The implemented webhook uses HTTPS (loopback HTTP only for tests), a secret reference, HMAC-SHA256 headers, a 256 KiB envelope bound, per-destination timeout, exponential bounded retry and retained outcome history. Subscriptions match exact event/entity filters. The reference rule handles `service.failed` with a validated `.service` target, cooldown, at most three attempts and `active_state=active` verification. Rule/destination configuration follows plan/apply and retains a rollback snapshot. MCP additionally requires an explicit process scope and per-call approval.
 
 ## 13. Audit
 

@@ -12,6 +12,10 @@ use lumic_core::{
         SignedRemoteRequest,
     },
     managed_service::{ManagedServiceKind, ServiceConfiguration},
+    operations::{
+        AutomationAction, AutomationRule, EventSubscription, SignalSeverity, TimelineQuery,
+        WebhookDestination,
+    },
     package::PackageName,
     recipe::RecipeInstallRequest,
     server::{
@@ -27,6 +31,7 @@ use lumic_platform::{
     event_store::EventStore,
     infrastructure::InfrastructureService,
     managed_service::ManagedServiceManager,
+    operations::OperationsService,
     recipe::RecipeManager,
     server::HostOperator,
     systemd::{ServiceAction, SystemdServiceManager},
@@ -397,6 +402,75 @@ struct RestoreService {
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct VerifyBackup {
+    backup: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct OperationsTimeline {
+    entity: Option<String>,
+    entity_id: Option<String>,
+    event_type: Option<String>,
+    since_unix_ms: Option<u128>,
+    until_unix_ms: Option<u128>,
+    #[serde(default = "default_timeline_limit")]
+    limit: usize,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ProviderSignalRequest {
+    event_type: String,
+    entity: String,
+    entity_id: String,
+    /// One of: info, warning, error, critical.
+    severity: String,
+    summary: String,
+    #[serde(default)]
+    payload: serde_json::Value,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ConfigureWebhook {
+    id: String,
+    url: String,
+    secret_reference: String,
+    #[serde(default = "default_webhook_timeout")]
+    timeout_ms: u64,
+    #[serde(default = "default_webhook_attempts")]
+    max_attempts: u8,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ConfigureSubscription {
+    id: String,
+    destination_id: String,
+    event_types: Vec<String>,
+    entity: Option<String>,
+    entity_id: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ConfigureAutomationRule {
+    id: String,
+    event_type: String,
+    entity_id: Option<String>,
+    unit: String,
+    #[serde(default = "default_rule_cooldown")]
+    cooldown_seconds: u64,
+    #[serde(default = "default_rule_attempts")]
+    max_attempts: u8,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApprovedOperation {
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct AttachManagedService {
     app: String,
     service: String,
@@ -546,6 +620,26 @@ const fn default_log_lines() -> usize {
     100
 }
 
+const fn default_timeline_limit() -> usize {
+    100
+}
+
+const fn default_webhook_timeout() -> u64 {
+    5_000
+}
+
+const fn default_webhook_attempts() -> u8 {
+    3
+}
+
+const fn default_rule_cooldown() -> u64 {
+    60
+}
+
+const fn default_rule_attempts() -> u8 {
+    2
+}
+
 #[derive(Debug, Clone)]
 pub struct LumicMcpServer {
     tool_router: ToolRouter<Self>,
@@ -638,7 +732,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "application_create",
-        description = "Create application metadata and managed release directories. Mutating: requires LUMIC_MCP_ALLOW_MUTATIONS=1 and approved=true. Does not install runtime packages or deploy code."
+        description = "Create application metadata and managed release directories. Mutating: requires node mutation policy, the mutations scope, and approved=true. Does not install runtime packages or deploy code."
     )]
     fn application_create(
         &self,
@@ -1469,6 +1563,21 @@ impl LumicMcpServer {
     }
 
     #[tool(
+        name = "managed_service_backup_verify",
+        description = "Verify that a managed backup exists and matches its recorded size, SHA-256 checksum, and native PostgreSQL/Redis format header. Read-only and safe before restore."
+    )]
+    fn managed_service_backup_verify(
+        &self,
+        Parameters(VerifyBackup { backup }): Parameters<VerifyBackup>,
+    ) -> Result<String, String> {
+        to_json(
+            &managed_service_manager()
+                .verify_backup(&backup)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
         name = "managed_service_restore",
         description = "Restore a recorded local service backup. Disruptive: requires node policy enablement and approved=true. Inspect the backup and service first."
     )]
@@ -1904,6 +2013,230 @@ impl LumicMcpServer {
     }
 
     #[tool(
+        name = "operations_timeline",
+        description = "Query newest correlated application, deployment, service, system, provider, remediation, and notification evidence. Read-only."
+    )]
+    fn operations_timeline(
+        &self,
+        Parameters(request): Parameters<OperationsTimeline>,
+    ) -> Result<String, String> {
+        to_json(
+            &operations_service()
+                .timeline(&TimelineQuery {
+                    entity: request.entity,
+                    entity_id: request.entity_id,
+                    event_type: request.event_type,
+                    since_unix_ms: request.since_unix_ms,
+                    until_unix_ms: request.until_unix_ms,
+                    limit: request.limit,
+                })
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_incident",
+        description = "Reconstruct a factual incident report from correlated evidence in a bounded time/resource query. Read-only and does not invent a root cause."
+    )]
+    fn operations_incident(
+        &self,
+        Parameters(request): Parameters<OperationsTimeline>,
+    ) -> Result<String, String> {
+        to_json(
+            &operations_service()
+                .incident(&TimelineQuery {
+                    entity: request.entity,
+                    entity_id: request.entity_id,
+                    event_type: request.event_type,
+                    since_unix_ms: request.since_unix_ms,
+                    until_unix_ms: request.until_unix_ms,
+                    limit: request.limit,
+                })
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_provider_signal",
+        description = "Record a typed provider signal and evaluate preconfigured deterministic rules. Mutating: requires approved=true and the operations.signal MCP scope."
+    )]
+    async fn operations_provider_signal(
+        &self,
+        Parameters(request): Parameters<ProviderSignalRequest>,
+    ) -> Result<String, String> {
+        require_scope("operations.signal", request.approved)?;
+        let severity = match request.severity.as_str() {
+            "info" => SignalSeverity::Info,
+            "warning" => SignalSeverity::Warning,
+            "error" => SignalSeverity::Error,
+            "critical" => SignalSeverity::Critical,
+            _ => return Err("severity must be info, warning, error, or critical".into()),
+        };
+        to_json(
+            &operations_service()
+                .record_provider_signal(
+                    &request.event_type,
+                    &request.entity,
+                    &request.entity_id,
+                    severity,
+                    &request.summary,
+                    request.payload,
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_webhook_plan",
+        description = "Validate and preview a signed webhook destination, secret precondition, risk, and rollback. Read-only; call before operations_webhook_apply."
+    )]
+    fn operations_webhook_plan(
+        &self,
+        Parameters(request): Parameters<ConfigureWebhook>,
+    ) -> Result<String, String> {
+        to_json(
+            &operations_service()
+                .plan_destination(&webhook_destination(request))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_webhook_apply",
+        description = "Apply a validated signed webhook destination using only a secret reference and recoverable configuration snapshot. Requires approved=true and operations.configure scope."
+    )]
+    fn operations_webhook_apply(
+        &self,
+        Parameters(request): Parameters<ConfigureWebhook>,
+    ) -> Result<String, String> {
+        require_scope("operations.configure", request.approved)?;
+        let context = operation_context("operations-webhook-apply");
+        to_json(
+            &operations_service()
+                .apply_destination(webhook_destination(request), &context)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_subscription_apply",
+        description = "Subscribe a signed webhook destination to exact typed event filters. Requires approved=true and operations.configure scope."
+    )]
+    fn operations_subscription_apply(
+        &self,
+        Parameters(request): Parameters<ConfigureSubscription>,
+    ) -> Result<String, String> {
+        require_scope("operations.configure", request.approved)?;
+        let context = operation_context("operations-subscription-apply");
+        to_json(
+            &operations_service()
+                .apply_subscription(
+                    EventSubscription {
+                        id: request.id,
+                        destination_id: request.destination_id,
+                        event_types: request.event_types,
+                        entity: request.entity,
+                        entity_id: request.entity_id,
+                        enabled: true,
+                    },
+                    &context,
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_rule_plan",
+        description = "Preview the typed systemd restart action, cooldown, attempt bound, verification, impact and recovery for an event rule. Read-only."
+    )]
+    fn operations_rule_plan(
+        &self,
+        Parameters(request): Parameters<ConfigureAutomationRule>,
+    ) -> Result<String, String> {
+        to_json(
+            &operations_service()
+                .plan_rule(&automation_rule(request))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_rule_apply",
+        description = "Enable a deterministic, cooldown- and attempt-bounded typed systemd restart rule with verification. Requires approved=true and operations.automate scope."
+    )]
+    fn operations_rule_apply(
+        &self,
+        Parameters(request): Parameters<ConfigureAutomationRule>,
+    ) -> Result<String, String> {
+        require_scope("operations.automate", request.approved)?;
+        let context = operation_context("operations-rule-apply");
+        to_json(
+            &operations_service()
+                .apply_rule(automation_rule(request), &context)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_run_once",
+        description = "Capture new Lumic events and process due signed webhook deliveries once. Requires approved=true and operations.run scope."
+    )]
+    async fn operations_run_once(
+        &self,
+        Parameters(request): Parameters<ApprovedOperation>,
+    ) -> Result<String, String> {
+        require_scope("operations.run", request.approved)?;
+        to_json(
+            &operations_service()
+                .run_once()
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_observe",
+        description = "Immediately observe host, process, service, application and system evidence, bypassing the normal sampling interval. This can activate configured deterministic rules, so it requires approved=true and operations.run scope."
+    )]
+    async fn operations_observe(
+        &self,
+        Parameters(request): Parameters<ApprovedOperation>,
+    ) -> Result<String, String> {
+        require_scope("operations.run", request.approved)?;
+        to_json(
+            &operations_service()
+                .observe_now()
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "operations_deliveries",
+        description = "Return bounded notification delivery and retry history. Read-only."
+    )]
+    fn operations_deliveries(&self) -> Result<String, String> {
+        to_json(&operations_service().deliveries(100).map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "operations_configuration_rollback",
+        description = "Restore the previous Lumic-managed operations configuration snapshot. Requires approved=true and operations.configure scope."
+    )]
+    fn operations_configuration_rollback(
+        &self,
+        Parameters(request): Parameters<ApprovedOperation>,
+    ) -> Result<String, String> {
+        require_scope("operations.configure", request.approved)?;
+        let context = operation_context("operations-configuration-rollback");
+        operations_service()
+            .rollback_configuration(&context)
+            .map_err(string_error)?;
+        Ok("{\"restored\":true}".into())
+    }
+
+    #[tool(
         name = "events_list",
         description = "Return the newest 100 structured Lumic infrastructure events. Read-only; event payloads never contain repository credentials."
     )]
@@ -1990,6 +2323,35 @@ fn managed_service_manager() -> ManagedServiceManager {
     ManagedServiceManager::at_state_dir(state_directory())
 }
 
+fn operations_service() -> OperationsService {
+    OperationsService::at_state_dir(state_directory())
+}
+
+fn webhook_destination(request: ConfigureWebhook) -> WebhookDestination {
+    WebhookDestination {
+        id: request.id,
+        url: request.url,
+        secret_reference: request.secret_reference,
+        timeout_ms: request.timeout_ms,
+        max_attempts: request.max_attempts,
+        enabled: true,
+    }
+}
+
+fn automation_rule(request: ConfigureAutomationRule) -> AutomationRule {
+    AutomationRule {
+        id: request.id,
+        event_type: request.event_type,
+        entity_id: request.entity_id,
+        action: AutomationAction::RestartService { unit: request.unit },
+        cooldown_seconds: request.cooldown_seconds,
+        max_attempts: request.max_attempts,
+        enabled: true,
+        last_applied_unix_ms: None,
+        attempt_count: 0,
+    }
+}
+
 fn to_json(value: &(impl serde::Serialize + ?Sized)) -> Result<String, String> {
     serde_json::to_string_pretty(value).map_err(|error| error.to_string())
 }
@@ -1999,6 +2361,10 @@ fn string_error(error: impl std::fmt::Display) -> String {
 }
 
 fn require_mutation(approved: bool) -> Result<(), String> {
+    require_scope("mutations", approved)
+}
+
+fn require_scope(scope: &str, approved: bool) -> Result<(), String> {
     if std::env::var("LUMIC_MCP_ALLOW_MUTATIONS").as_deref() != Ok("1") {
         return Err(
             "MCP mutations are disabled by node policy; set LUMIC_MCP_ALLOW_MUTATIONS=1 when starting the local MCP server"
@@ -2007,6 +2373,19 @@ fn require_mutation(approved: bool) -> Result<(), String> {
     }
     if !approved {
         return Err("this mutation requires approved=true after reviewing its plan/status".into());
+    }
+    let scopes = std::env::var("LUMIC_MCP_SCOPES").unwrap_or_default();
+    let allowed = scopes.split(',').map(str::trim).any(|value| {
+        value == "*"
+            || value == scope
+            || value
+                .strip_suffix(".*")
+                .is_some_and(|prefix| scope.starts_with(&format!("{prefix}.")))
+    });
+    if !allowed {
+        return Err(format!(
+            "MCP scope '{scope}' is not granted by LUMIC_MCP_SCOPES"
+        ));
     }
     Ok(())
 }
@@ -2064,7 +2443,7 @@ impl ServerHandler for LumicMcpServer {
                 .build(),
         )
         .with_instructions(
-            "Use STATUS/diagnosis and application_plan_deployment before APPLY tools. Mutations require both node policy LUMIC_MCP_ALLOW_MUTATIONS=1 and approved=true. Lumic exposes typed capabilities only and never unrestricted shell execution.",
+            "Use STATUS/diagnosis and application_plan_deployment before APPLY tools. Mutations require node policy LUMIC_MCP_ALLOW_MUTATIONS=1, a matching LUMIC_MCP_SCOPES grant, and approved=true. Lumic exposes typed capabilities only and never unrestricted shell execution.",
         )
     }
 
@@ -2140,6 +2519,7 @@ mod tests {
             "managed_service_declare_dependency",
             "managed_service_database_create",
             "managed_service_backup",
+            "managed_service_backup_verify",
             "managed_service_restore",
             "application_attach_managed_service",
             "recipe_catalog",
@@ -2176,6 +2556,18 @@ mod tests {
             "coordinated_deployment_report",
             "remote_operation_sign",
             "remote_operation_apply",
+            "operations_timeline",
+            "operations_incident",
+            "operations_provider_signal",
+            "operations_webhook_plan",
+            "operations_webhook_apply",
+            "operations_subscription_apply",
+            "operations_rule_plan",
+            "operations_rule_apply",
+            "operations_run_once",
+            "operations_observe",
+            "operations_deliveries",
+            "operations_configuration_rollback",
         ] {
             assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
         }
@@ -2187,8 +2579,13 @@ mod tests {
         assert!(require_mutation(true).is_err());
         unsafe { std::env::set_var("LUMIC_MCP_ALLOW_MUTATIONS", "1") };
         assert!(require_mutation(false).is_err());
+        assert!(require_mutation(true).is_err());
+        unsafe { std::env::set_var("LUMIC_MCP_SCOPES", "mutations,operations.*") };
         assert!(require_mutation(true).is_ok());
+        assert!(require_scope("operations.automate", true).is_ok());
+        assert!(require_scope("secrets.read", true).is_err());
         unsafe { std::env::remove_var("LUMIC_MCP_ALLOW_MUTATIONS") };
+        unsafe { std::env::remove_var("LUMIC_MCP_SCOPES") };
     }
 
     #[tokio::test]

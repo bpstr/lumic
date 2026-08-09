@@ -1,0 +1,49 @@
+name: Nightly build
+
+on:
+  schedule:
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: x86_64-unknown-linux-musl
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
+      - run: cargo build -p lumic-cli --release --target x86_64-unknown-linux-musl
+      - run: cp target/x86_64-unknown-linux-musl/release/lumic lumic-x86_64-unknown-linux-musl
+      - name: Smoke installer images
+        run: |
+          chmod +x lumic-x86_64-unknown-linux-musl tests/install-smoke.sh install.sh
+          for image in ubuntu:22.04 ubuntu:24.04 debian:12 debian:13; do
+            docker run --rm \
+              -v "$PWD/lumic-x86_64-unknown-linux-musl:/opt/lumic:ro" \
+              -v "$PWD/install.sh:/install.sh:ro" \
+              -v "$PWD/tests/install-smoke.sh:/test.sh:ro" \
+              -e LUMIC_TEST_BINARY=/opt/lumic \
+              "$image" /test.sh
+          done
+      - name: Publish rolling nightly prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly lumic-x86_64-unknown-linux-musl \
+            --prerelease \
+            --title "Lumic Nightly $(date -u +%Y-%m-%d)" \
+            --notes "Automated tested nightly build from main at $GITHUB_SHA."

@@ -1,0 +1,26 @@
+[workspace]
+members = [
+  "crates/lumic-core",
+  "crates/lumic-platform",
+  "crates/lumic-cli",
+  "crates/lumic-daemon",
+  "crates/lumic-mcp",
+]
+resolver = "2"
+
+[workspace.package]
+version = "2.0.0-alpha.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/bpstr/lumic"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

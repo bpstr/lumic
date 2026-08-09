@@ -1,10 +1,6 @@
-/vendor
+/target
 /.idea
-Homestead.json
-Homestead.yaml
-.env
-.phpunit.result.cache
-docs/.vitepress/dist
-docs/.vitepress/cache
+/.vscode
 .DS_Store
-node_modules
+*.log
+.env

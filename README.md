@@ -1,95 +1,90 @@
-<p align="center"><a href="https://laravel.com" target="_blank">
-    <img src="https://raw.githubusercontent.com/bpstr/lumic/main/public/lumic.svg#gh-light-mode-only" width="420" alt="Lumic Logo">
-</a></p>
+# Lumic
 
-<p align="center">
-<a href="https://www.linux.org/" title="Go to Linux homepage"><img src="https://img.shields.io/badge/OS-Linux-blue?logo=linux&logoColor=white" alt="OS - Linux"></a>
-<a href="https://lumic.cc/"><img src="https://img.shields.io/static/v1?label=License&message=MIT&color=2ea44f" alt="License - MIT"></a>
-</p>
+<p align="center"><img src="assets/lumic.svg" alt="Lumic" width="260"></p>
 
+**From empty VPS to managed infrastructure in one command.**
 
-# Lumic Server Management
+Lumic is a host-native server, application, and infrastructure management system for Linux, built in Rust. It provisions machines, manages runtimes and services, hosts repositories, performs zero-downtime deployments, observes the host, emits events and notifications, and exposes the same capabilities through CLI, UI, API, and MCP.
 
-Lumic is a server management system for web servers. It is designed to be a simple and easy to use system for managing your web servers on a single VPS. Lumic is built on top of the Lumen PHP framework.
+Lumic manages Linux directly. Containers are a supported workload and deployment feature, not the foundation of the product.
 
-## Installation
-
-Install stackscript on Linode. This will install all the necessary packages and dependencies to run Lumic. 
-
-Alternatively run the following command on any Ubuntu 20.04 server to install Lumic.
-```bash
-bash <(curl -s https://raw.githubusercontent.com/bpstr/lumic/main/lumic.sh)
+```text
+        Lumic
+          │
+   ┌──────┼──────┐
+   │      │      │
+  CLI     UI     MCP
+   │      │      │
+   └──────┼──────┘
+          │
+       Linux VPS
 ```
 
-## Features
-
-- [x] Create Nginx server blocks and configuration
-- [x] Manage PHP versions and extensions
-- [x] Create SSL certificates with Let's Encrypt
-- [x] Create MySQL databases and users
-- [x] Create and manage SFTP users
-- [x] Manage deployments from Git repositories
-- [x] Manage cron jobs
-- [x] Manage domain aliases (server names)
-- [x] List files and folders
-
-## Production Requirements
-
-Lumic is intended for a single fresh Ubuntu VPS where it is allowed to manage host services. Do not run production commands on a development laptop or shared host unless you have isolated the environment.
-
-Required host services and paths:
-
-- Ubuntu 20.04 compatible package repositories
-- Nginx with configuration under `/etc/nginx`
-- PHP-FPM sockets under `/var/run/php/php{version}-fpm.sock`
-- MariaDB or MySQL available to the configured root/admin user
-- Certbot for Let's Encrypt certificates
-- Writable project roots at `/var/www` and `/var/git`
-- Writable application storage at `/var/www/html/storage`
-
-Required environment variables:
-
-- `APP_NAME`, `APP_ENV`, `APP_KEY`, `APP_URL`, `APP_IP`, `APP_TIMEZONE`
-- `WEBMASTER_EMAIL`
-- `ROOT_USER_NAME`, `ROOT_USER_PASS`
-- `MYSQL_ROOT_USER`, `MYSQL_ROOT_PASS`
-- `AVAILABLE_PHP_VERSIONS`
-- `NGINX_ROOT_PATH`, `NGINX_LOG_PATH`, `DOCROOT_PATH`, `GITROOT_PATH`
-- `DB_CONNECTION`, `CACHE_DRIVER`, `QUEUE_CONNECTION`
-
-Safe locally: validation tests, model tests, Blade rendering, and code that fakes Artisan/process calls.
-
-Production VPS only: `lumic.sh`, `dir:prepare`, `db:create`, `ssl:certificate`, `nginx:test`, `nginx:restart`, `git:deploy`, `ftp:create-user`, and any command that writes to `/var/www`, `/var/git`, `/etc/nginx`, MySQL, Certbot, system users, or system cron.
-
-Install script recovery notes:
-
-- If Nginx fails, run `nginx -t`, inspect `/etc/nginx/nginx.conf` and `/etc/nginx/sites-enabled/home.conf`, then restart with `sudo service nginx restart`.
-- If Certbot fails, verify DNS points to the VPS and ports 80/443 are open, then rerun the certificate command for the affected server.
-- If MySQL setup fails, verify `MYSQL_ROOT_USER` and `MYSQL_ROOT_PASS` in `/var/www/html/.env`, then check MariaDB status with `sudo systemctl status mariadb`.
-- If permissions fail, restore application ownership with `sudo chown -R www-data:www-data /var/www/html` and ensure `storage` and `database` are writable by the web user.
-- The installer writes `/etc/cron.d/lumic.crontab` and installs it with `crontab`; inspect both if queue or scheduled tasks stop running.
-
-## Lumen PHP Framework
-
-Laravel Lumen is a stunningly fast PHP micro-framework for building web applications with expressive, elegant syntax. We believe development must be an enjoyable, creative experience to be truly fulfilling. Lumen attempts to take the pain out of development by easing common tasks used in the majority of web projects, such as routing, database abstraction, queueing, and caching.
-
-### Official Documentation
-
-Documentation for the framework can be found on the [Lumen website](https://lumen.laravel.com/docs).
-
-### Security Vulnerabilities
-
-If you discover a security vulnerability within Lumen, please send an e-mail to Taylor Otwell at taylor@laravel.com. All security vulnerabilities will be promptly addressed.
-
-### License
-
-The Lumen framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
-
-
-### Troubleshooting
+## One command
 
 ```bash
-sudo chown -R www-data:www-data /var/www
+ssh root@server 'curl -fsSL https://lumic.cc/install | sh'
 ```
 
-#### Documentation
+The target experience is simple: install Lumic once, then stop treating SSH, `apt`, `systemctl`, nginx files, certificates, deployment scripts, and service debugging as the normal interface to a VPS.
+
+## Product pillars
+
+- **Server** — OS, resources, packages, users, networking, firewall, storage, processes, updates, logs and security.
+- **Applications** — Git source, runtime, environment, domains, SSL, workers, jobs, storage, health and zero-downtime deployments.
+- **Services** — PostgreSQL, MariaDB, Redis/Valkey, search, storage, queues, Agnative and other managed services.
+- **Infrastructure** — multiple autonomous Lumic nodes, roles, environments and conventional multi-server topologies without becoming Kubernetes.
+- **Automation** — events, webhooks, notifications, deterministic remediation and audit history.
+- **Interfaces** — clean Rust UI, CLI and MCP over the same capability model.
+
+## Core design laws
+
+1. **Host-native first.** Use Linux directly; do not make Docker the architecture.
+2. **Use Linux rather than replacing Linux.** Prefer trusted native tools such as apt, systemd, Git and nginx behind typed Lumic capabilities.
+3. **No raw shell as the normal API.** MCP/UI/CLI call structured operations such as `package.install`, `service.restart`, `application.deploy` and `server.diagnose`.
+4. **Policy before privilege.** Native commands and packages are whitelisted/validated; dangerous operations are explicit and auditable.
+5. **Plan before apply.** Material changes should support inspection, validation and rollback where practical.
+6. **One capability model.** UI, CLI, API and MCP must not grow separate business logic.
+7. **Autonomous nodes.** A Lumic VPS stays useful without a mandatory central cloud.
+8. **Evidence over magic.** Diagnostics expose measurements and correlations; AI performs reasoning on top.
+9. **Nightly is a product channel.** Early Lumic improves every night while stable remains conservative.
+10. **Extensibility without core bloat.** Packages, components, managed services, application recipes and roles have progressively richer contracts.
+
+## Workspace
+
+```text
+crates/
+├── lumic-core       domain types, capabilities, plans, events, policy
+├── lumic-platform   host detection + Linux adapters
+├── lumic-cli        human command-line interface
+├── lumic-daemon     long-running node service
+└── lumic-mcp        agent-facing MCP surface
+```
+
+The future Rust UI and HTTP API should call the same application/core services; they must not become a second implementation.
+
+## Development
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo run -p lumic-cli -- status
+```
+
+Read in this order before substantial work:
+
+1. [`docs/PRODUCT.md`](docs/PRODUCT.md)
+2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+3. [`docs/ROADMAP.md`](docs/ROADMAP.md)
+4. [`AGENTS.md`](AGENTS.md)
+5. [`docs/CODEX_KICKOFF.md`](docs/CODEX_KICKOFF.md)
+6. [`docs/CODEX_NIGHTLY.md`](docs/CODEX_NIGHTLY.md)
+
+## Versions
+
+- `main` — Lumic v2 development.
+- `v1` — historical Laravel implementation.
+- `nightly` releases — automated prerelease builds from `main` during early development.
+
+Lumic v2 is intentionally early. The architecture and CI are established before broad feature implementation so nightly development can add capabilities without repeatedly reshaping the foundation.

@@ -1,0 +1,11 @@
+[package]
+name = "lumic-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lumic-core = { path = "../lumic-core" }
+lumic-platform = { path = "../lumic-platform" }

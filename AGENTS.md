@@ -1,151 +1,99 @@
-# AGENTS.md
+# Agent instructions
 
-Instructions for AI coding agents working on Lumic.
+These instructions apply to Codex, Claude and other coding agents working on Lumic.
 
-<!-- codebase-memory-mcp:start -->
-## Codebase Knowledge Graph
+## Mission
 
-This project uses codebase-memory-mcp. Prefer graph tools over raw text search for code discovery:
+Build Lumic into a host-native Linux server operating layer for developers and operators. The defining workflow is: install Lumic on a fresh VPS once; afterwards humans and coding agents manage the machine through structured Lumic capabilities instead of routine SSH administration.
 
-1. `search_graph` or equivalent graph search to find functions, classes, routes, and variables.
-2. `trace_path` to inspect callers/callees when changing behavior.
-3. `get_code_snippet` to read exact function/class source after finding a qualified name.
-4. `query_graph` for complex relationships.
-5. `get_architecture` for the high-level project map.
+## Non-negotiable product boundaries
 
-Fall back to `rg`, file reads, or shell tools for README/docs, configs, string literals, generated files, or when graph results are insufficient.
-<!-- codebase-memory-mcp:end -->
+- Rust is the product stack. Do not introduce Laravel, Node, TypeScript or another application runtime for Lumic itself without an explicit architectural decision.
+- Docker/container support is a feature, not a core abstraction and not a reason to shape unrelated APIs around containers.
+- Do not duplicate Linux subsystems. Wrap trusted native mechanisms such as apt, systemd, Git and nginx with validation, policy, plans, audit and stable domain contracts.
+- Do not expose unrestricted shell execution as the default CLI/API/MCP model.
+- Keep UI, CLI, HTTP and MCP as adapters over the same application/core behavior.
+- Prefer additive architecture. New services, runtimes, recipes and integrations should implement contracts rather than require rewrites of core orchestration.
 
-## Application Summary
+## Safety model
 
-Lumic is a Laravel Lumen 10 server-management panel for a single VPS. It manages website/server records, Nginx server-block templates, Let's Encrypt SSL certificates, MySQL databases, basic status views, and Git deployment workflows.
+Infrastructure code is destructive by nature. Every mutating capability must consider:
 
-This repository is not just a web CRUD app. Several commands can modify host-level services and filesystem paths such as Nginx, MySQL, Certbot, `/var/www`, and `/var/git`.
+1. input validation and shell-injection avoidance;
+2. privilege requirements;
+3. allow/deny policy;
+4. idempotency;
+5. dry-run/plan support where meaningful;
+6. preconditions;
+7. before/after audit data;
+8. failure behavior;
+9. rollback or recovery guidance;
+10. tests on supported operating systems.
 
-## Stack
+Never interpolate untrusted strings into `sh -c`. Prefer direct process execution with separated arguments. Package operations must validate package identifiers and policy before invoking the OS package manager.
 
-- PHP 8.1+
-- Laravel Lumen 10
-- Eloquent ORM
-- Blade templates
-- Artisan console commands
-- Queue jobs
-- PHPUnit 10
-- VitePress documentation
+## Architecture rules
 
-## Repository Map
+Dependency direction:
 
-- `README.md`: Product overview, installation notes, and feature checklist.
-- `routes/web.php`: Primary UI routes and `/api/status`.
-- `app/Models/Server.php`: Server/site model and computed filesystem paths.
-- `app/Models/Database.php`: Database credential model.
-- `app/Console/CommandBase.php`: Shared shell execution helper.
-- `app/Console/Commands`: Host-level operational commands.
-- `app/Jobs`: Setup, SSL, and deploy orchestration.
-- `resources/views`: UI, layout, sample Nginx configs, and generated cron block.
-- `config/server.php`: Available Nginx template metadata.
-- `database/migrations`: Schema for servers, databases, jobs, and cron jobs.
-- `tests`: PHPUnit tests.
-
-## Development Commands
-
-Install dependencies:
-
-```bash
-composer install
-npm install
+```text
+interfaces (CLI/UI/HTTP/MCP)
+            ↓
+application orchestration
+            ↓
+       lumic-core
+            ↑
+platform/service adapters
 ```
 
-Run tests:
+`lumic-core` must not know clap, HTTP transports, UI frameworks, MCP transports or Linux command syntax.
+
+`lumic-platform` owns host detection and OS mechanisms. Begin with Debian/Ubuntu but model package/service/firewall/filesystem/process operations through traits and typed results.
+
+A capability should look semantically like `InstallPackage { package }`, not `RunCommand { command }`.
+
+## Integration levels
+
+Keep these separate:
+
+- **Package**: a whitelisted native package with detection/version metadata.
+- **Component**: something attached/configured to a runtime or service, e.g. PHP extension or PostgreSQL extension.
+- **Managed service**: lifecycle + config + health + logs + upgrades + events, e.g. PostgreSQL, Redis, nginx, Agnative.
+- **Application recipe**: declarative application installation/composition, e.g. Laravel, WordPress, Forgejo.
+- **Role**: composition for a server/node purpose, e.g. app, cache, Git, media, worker.
+
+Do not turn every apt package into a managed service.
+
+## Development requirements
+
+Before finishing a change:
 
 ```bash
-vendor/bin/phpunit
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
 ```
 
-Run docs locally:
+If a change affects host behavior, add/update integration coverage under `tests/` and CI image matrices. Do not claim an OS is supported without automated install/detection coverage.
 
-```bash
-npm run docs:dev
-```
+## Documentation requirements
 
-Build docs:
+Changes that introduce a capability must document:
 
-```bash
-npm run docs:build
-```
+- user intent/use case;
+- CLI shape;
+- MCP shape if agent-relevant;
+- plan/apply behavior;
+- permissions/policy;
+- OS support;
+- events emitted;
+- failure and recovery behavior;
+- tests.
 
-## Architecture Notes
+## UX direction
 
-Most user-facing behavior is currently defined as route closures in `routes/web.php`, although controller classes exist. Persistent state is concentrated in `Server` and `Database` models.
+The UI is black/white/gray, restrained, fast and stable. It should feel like a serious appliance console, not a crowded hosting dashboard. Progressive disclosure is preferred: simple status/actions first, underlying service/config/process details available to experts.
 
-Operational workflows generally follow this shape:
+## Nightly development
 
-1. A route creates or updates a model.
-2. The route calls an Artisan command or dispatches a job.
-3. The command/job renders Blade templates or shells out to system tools.
-4. System files, services, databases, or deploy directories are updated.
-
-Key commands:
-
-- `nginx:config {server}`: Render an Nginx config into `storage/blocks/{server}.conf`.
-- `dir:prepare {server}`: Create project directories and run `chown`.
-- `db:create {database}`: Create MySQL database/user/grants.
-- `ssl:certificate {server} {--force=}`: Run Certbot and update SSL timestamp.
-- `template:install {server}`: Write a starter `index.html`.
-- `git:deploy {server}`: Clone/pull/reset Git repo and rsync into web root.
-- `nginx:restart`: Restart Nginx.
-- `cron:table`: Render the current crontab as a Blade table block.
-
-Key jobs:
-
-- `ServerSetupJob`: Processes pending Nginx config blocks and runs server provisioning.
-- `ForceSslCertJob`: Forces certificate generation/renewal for a server.
-- `GitDeployJob`: Scans deploy logs and invokes `git:deploy` for eligible servers.
-
-## Safety Rules
-
-- Do not run commands that touch Nginx, MySQL, Certbot, `/var/www`, `/var/git`, service restarts, `git reset --hard`, or `rsync` unless the user explicitly asks and the environment is safe.
-- Treat request input as unsafe. Validate domains, paths, Git URLs, template names, database names, usernames, and passwords before they reach shell commands or SQL.
-- Be extremely careful with `CommandBase::exec()`: it runs shell commands through Symfony Process from a shell command line.
-- Prefer tests or mocks over exercising real host-level side effects.
-- Preserve user changes in the worktree. Do not reset, delete, or overwrite unrelated files.
-
-## Testing Expectations
-
-When changing behavior, run the most focused safe tests available:
-
-```bash
-vendor/bin/phpunit
-```
-
-For command changes, add coverage around argument handling, generated command strings, rendered file contents, or model updates. Avoid invoking real system tools in tests.
-
-For route changes, cover auth, validation, redirects, and model writes. The current app uses route closures, so small feature tests are often more useful than heavy refactors.
-
-## Security and Correctness Hotspots
-
-- `routes/web.php` mass-assigns request data into models in multiple places.
-- `/explorer` uses direct `mysqli` queries against the local MySQL server.
-- `CreateDatabaseCommand` builds SQL passed through shell commands.
-- `GitDeployCommand` injects the GitHub token into clone URLs and runs repository hook scripts from `.lumic/hooks`.
-- `SslCertificateCommand` runs Certbot for real domains.
-- `RestartNginxCommand` restarts the host service.
-- Auth cookies and Basic Auth credentials are custom hashed values based on environment variables.
-
-Changes in these areas should be reviewed as security-sensitive.
-
-## Known Caveats
-
-- The README marks PHP extension management, FTP users, deploys, cron management, aliases, and file browsing as incomplete or partial.
-- `GitDeployJob` does not directly deploy only the server passed to its constructor; it scans servers and deploy logs.
-- Some naming in setup/database orchestration appears inconsistent with the `Database` model fields. Verify behavior before depending on it.
-- Many commands assume an Ubuntu-style production host with Nginx, MySQL, Certbot, and appropriate permissions.
-
-## Agent Workflow
-
-1. Read `README.md` and this file before broad changes.
-2. Use the code graph to locate affected models, commands, jobs, routes, and views.
-3. Inspect call paths before changing host-level behavior.
-4. Make the smallest change that satisfies the task.
-5. Add or update focused tests when practical.
-6. Run safe verification commands and report anything that could not be tested locally.
+Nightly work must improve the product without destabilizing architecture. Prefer one coherent vertical slice, bug fix, test expansion or documented capability per run. Never manufacture features just to create activity. CI must be green before merging. See `docs/CODEX_NIGHTLY.md`.

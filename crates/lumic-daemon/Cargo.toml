@@ -1,0 +1,18 @@
+[package]
+name = "lumic-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "lumicd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+lumic-platform = { path = "../lumic-platform" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

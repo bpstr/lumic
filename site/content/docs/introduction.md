@@ -1,26 +1,26 @@
 +++
 title = "Introduction"
-description = "What Lumic is, what it replaces, and the rules that keep it simple."
+description = "What Lumic Control Center is, what it replaces, and the rules that keep it simple."
 weight = 10
 [extra]
 kicker = "START"
 status = "foundation"
 +++
 
-Lumic is a self-hosted server, application and infrastructure manager for Linux written in Rust.
+**Lumic Control Center** (short name: **Lumic**) is a self-hosted server, application and infrastructure manager for Linux written in Rust. Its public home is [lumic.cc](https://lumic.cc).
 
 Its defining workflow is simple:
 
 ```bash
-ssh root@server 'curl -fsSL https://lumic.cc/install | sh'
+ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'
 ```
 
-After installation, the server becomes a Lumic node. Humans can operate it through the CLI and UI; coding agents can operate it through MCP.
+After installation, the server becomes an autonomous Lumic node. Humans can operate it through the CLI and UI; coding agents can operate it through MCP. No Lumic relay service or central account is required for the normal architecture.
 
 ## The model
 
 ```text
-        Lumic
+ Lumic Control Center
           │
    ┌──────┼──────┐
    │      │      │
@@ -44,4 +44,4 @@ Lumic combines useful parts of traditional hosting panels, OS managers, deployme
 
 ## Current status
 
-The v2 repository currently contains the Rust workspace, CLI/daemon/MCP boundaries, installer foundation and multi-OS CI. Host facts, systemd installation, real MCP operations and managed capabilities are being implemented in Phase 0.
+The v2 repository contains the Rust workspace, CLI/daemon/MCP boundaries, installer foundation, public documentation deployment and multi-OS CI. The MVP is being hardened toward the first real VPS installation.

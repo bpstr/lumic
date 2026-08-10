@@ -100,6 +100,7 @@ impl PackagePolicy {
             "php8.1-fpm",
             "php8.1-intl",
             "php8.1-mbstring",
+            "php8.1-mysql",
             "php8.1-xml",
             "php8.1-zip",
             "php8.2-cli",
@@ -107,6 +108,7 @@ impl PackagePolicy {
             "php8.2-fpm",
             "php8.2-intl",
             "php8.2-mbstring",
+            "php8.2-mysql",
             "php8.2-xml",
             "php8.2-zip",
             "php8.3-cli",
@@ -114,6 +116,7 @@ impl PackagePolicy {
             "php8.3-fpm",
             "php8.3-intl",
             "php8.3-mbstring",
+            "php8.3-mysql",
             "php8.3-xml",
             "php8.3-zip",
             "php8.4-cli",
@@ -121,6 +124,7 @@ impl PackagePolicy {
             "php8.4-fpm",
             "php8.4-intl",
             "php8.4-mbstring",
+            "php8.4-mysql",
             "php8.4-xml",
             "php8.4-zip",
             "python3-certbot-nginx",
@@ -245,5 +249,20 @@ mod tests {
             })
             .unwrap();
         assert_eq!(reviewed.trust_source, PackageTrustSource::BuiltInPolicy);
+    }
+
+    #[test]
+    fn versioned_php_component_packages_are_trusted() {
+        let policy = PackagePolicy::default_catalog();
+
+        for version in ["8.1", "8.2", "8.3", "8.4"] {
+            for component in ["curl", "intl", "mbstring", "mysql", "xml", "zip"] {
+                let package = PackageName::parse(format!("php{version}-{component}")).unwrap();
+                assert!(
+                    policy.authorize(&package).is_ok(),
+                    "versioned PHP component package {package} is not trusted"
+                );
+            }
+        }
     }
 }

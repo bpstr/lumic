@@ -14,5 +14,4 @@ sudo env DEBIAN_FRONTEND=noninteractive apt-get purge -y \
   mysql-client \
   mysql-client-8.0 \
   mysql-client-core-8.0
-sudo rm -rf -- /etc/mysql /var/lib/mysql
-sudo env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
+sudo rm -rf -- /var/lib/mysql

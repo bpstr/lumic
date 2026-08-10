@@ -40,6 +40,8 @@ jobs:
       - run: cargo audit --deny warnings
       - run: cargo build --locked -p lumic-cli --release
       - run: cargo build --locked -p lumic-cli -p lumic-daemon --release --target x86_64-unknown-linux-musl
+      - name: Reset runner MySQL for fresh-host coverage
+        run: tests/reset-github-runner-mysql.sh
       - name: Run capability smoke tests
         env:
           LUMIC_TEST_BINARY: target/x86_64-unknown-linux-musl/release/lumic

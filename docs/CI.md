@@ -17,6 +17,10 @@ CI is infrastructure product testing, not just Rust compilation.
 - package identifier/policy regression tests, durable event-store tests, and a real local-Git static deploy/persistence/rollback integration test
 - a live Ubuntu 24.04 WordPress golden gate covering pinned artifact verification, PHP/MySQL/nginx provisioning, WP-CLI and HTTP health, convergent second install, duplicate-resource rejection, and safe uninstall retention
 
+GitHub-hosted Ubuntu images include a password-initialized MySQL instance. Before live
+service and recipe gates, CI removes that runner fixture so Lumic is tested against the
+fresh-host installation contract used on a new VPS.
+
 As host features grow, add privileged/VM/systemd tests instead of pretending Docker images model a complete VPS. Containers are acceptable for OS-detection/install/status smoke coverage only. Process timeout, bounded-output and argv behavior is covered by host-runner tests outside containers.
 
 ## Nightly channel

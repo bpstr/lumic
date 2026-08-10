@@ -22,5 +22,7 @@ jobs:
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       - run: cargo build --locked -p lumic-cli --release
       - run: sudo apt-get update
+      - name: Reset runner MySQL for fresh-host coverage
+        run: tests/reset-github-runner-mysql.sh
       - name: Install, reconcile and safely remove WordPress
         run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" "$PWD/tests/wordpress-golden.sh"

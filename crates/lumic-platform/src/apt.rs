@@ -105,6 +105,15 @@ impl AptPackageManager {
         package: &PackageName,
         context: &OperationContext,
     ) -> Result<PackageMutation> {
+        self.install_with_environment(package, context, &[]).await
+    }
+
+    pub(crate) async fn install_with_environment(
+        &self,
+        package: &PackageName,
+        context: &OperationContext,
+        environment: &[(&str, &str)],
+    ) -> Result<PackageMutation> {
         self.policy.authorize(package)?;
         let record = self.inspect(package).await?;
         let installed = record.installed_version;
@@ -132,6 +141,11 @@ impl AptPackageManager {
             "--",
             package.as_str(),
         ]);
+        spec.environment.extend(
+            environment
+                .iter()
+                .map(|(key, value)| ((*key).into(), (*value).into())),
+        );
         spec.timeout = Duration::from_secs(600);
         let output = self
             .run_mutation(spec, package, "install", context, installed)

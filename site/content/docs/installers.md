@@ -6,7 +6,8 @@ status = "native package setup implemented"
 +++
 
 Lumic includes a fixed software catalog for WordPress prerequisites, PHP, MySQL, PostgreSQL,
-Redis, Typesense, Meilisearch, nginx, Apache, Node.js, and NVM. The authenticated operator UI
+Redis, Typesense, Meilisearch, Valkey, RabbitMQ, MinIO, OpenSearch, Memcached, MongoDB,
+ClickHouse, Prometheus, Grafana, Loki, nginx, Apache, Node.js, and NVM. The authenticated operator UI
 shows these entries under **Installers**, including the installed and apt
 candidate version of every required package.
 
@@ -37,26 +38,32 @@ The catalog currently resolves to these native packages:
 | Redis | `redis-server` |
 | Typesense | `typesense-server` |
 | Meilisearch | `meilisearch` |
+| Valkey | `valkey-server` |
+| RabbitMQ | `rabbitmq-server` |
+| MinIO | `minio` |
+| OpenSearch | `opensearch` |
+| Memcached | `memcached` |
+| MongoDB | `mongodb-org` |
+| ClickHouse | `clickhouse-server` |
+| Prometheus | `prometheus` |
+| Grafana | `grafana` |
+| Loki | `loki` |
 | nginx | `nginx` |
 | Apache | `apache2` |
 | Node.js | `nodejs`, `npm` |
 | NVM | `git`, `curl` prerequisites, then pinned `nvm-sh/nvm` Git checkout |
 
-Typesense and Meilisearch require their package to have a candidate in an apt
+Typesense, Meilisearch, Valkey, MinIO, OpenSearch, MongoDB, ClickHouse, Grafana, and Loki require their package to have a candidate in an apt
 source already configured and trusted by the operator. Lumic does not silently
 add third-party repositories or keys. Status marks these installers as
 **Repository required**, plan names the missing packages as a precondition, and
 setup refuses to start any apt mutation until every missing package has a
 candidate.
 
-Once that prerequisite is satisfied, Typesense and Meilisearch can also be
-installed through the managed-service commands. That path adds loopback-only
-provider configuration, a generated private credential, systemd lifecycle,
-health validation, and reusable application endpoint bindings; the Installers
-page itself remains package setup only.
+Once that prerequisite is satisfied, every service listed above can also be installed through the managed-service commands. That path adds loopback-only provider configuration, systemd lifecycle, and provider health validation. Providers that require bootstrap credentials receive generated private secrets. The Installers page itself remains package setup only.
 
 PHP, WordPress prerequisites, the default MySQL-compatible server, PostgreSQL,
-Redis, nginx, Apache, Node.js, and the NVM prerequisites are distribution-backed.
+Redis, RabbitMQ, Memcached, Prometheus, nginx, Apache, Node.js, and the NVM prerequisites are distribution-backed.
 If their candidates are absent on a fresh server, status reports **Package index
 refresh needed** instead of incorrectly asking for another repository. The UI
 keeps the installer actionable as **Refresh index and set up**. Apply runs an

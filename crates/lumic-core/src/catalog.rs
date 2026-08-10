@@ -528,6 +528,16 @@ const BUILT_IN_SERVICES: &[&str] = &[
     include_str!("../catalog/services/redis.toml"),
     include_str!("../catalog/services/typesense.toml"),
     include_str!("../catalog/services/meilisearch.toml"),
+    include_str!("../catalog/services/valkey.toml"),
+    include_str!("../catalog/services/rabbitmq.toml"),
+    include_str!("../catalog/services/minio.toml"),
+    include_str!("../catalog/services/opensearch.toml"),
+    include_str!("../catalog/services/memcached.toml"),
+    include_str!("../catalog/services/mongodb.toml"),
+    include_str!("../catalog/services/clickhouse.toml"),
+    include_str!("../catalog/services/prometheus.toml"),
+    include_str!("../catalog/services/grafana.toml"),
+    include_str!("../catalog/services/loki.toml"),
 ];
 const BUILT_IN_RUNTIMES: &[&str] = &[
     include_str!("../catalog/runtimes/php.toml"),
@@ -654,8 +664,27 @@ mod tests {
     #[test]
     fn built_in_catalog_is_valid_and_contains_foundation_definitions() {
         let catalog = Catalog::built_in().unwrap();
-        assert_eq!(catalog.services().count(), 6);
-        assert!(catalog.service("nginx").is_some());
+        assert_eq!(catalog.services().count(), 16);
+        for id in [
+            "nginx",
+            "mysql",
+            "postgresql",
+            "redis",
+            "typesense",
+            "meilisearch",
+            "valkey",
+            "rabbitmq",
+            "minio",
+            "opensearch",
+            "memcached",
+            "mongodb",
+            "clickhouse",
+            "prometheus",
+            "grafana",
+            "loki",
+        ] {
+            assert!(catalog.service(id).is_some(), "missing service {id}");
+        }
         assert!(catalog.runtime("php").is_some());
         assert!(catalog.application("wordpress").is_some());
     }

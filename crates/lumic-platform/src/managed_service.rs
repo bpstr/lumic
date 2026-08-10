@@ -267,7 +267,10 @@ impl ManagedServiceManager {
         }
         service.configuration.validate()?;
         let package = PackageName::parse(&package)?;
-        let package_mutation = self.packages.install(&package, context).await?;
+        let package_mutation = self
+            .packages
+            .install_with_environment(&package, context, driver.package_install_environment())
+            .await?;
         if context.dry_run {
             return Ok(ManagedServiceMutation {
                 service,
@@ -1479,6 +1482,16 @@ fn managed_kind_for_definition(definition_id: &str) -> Result<ManagedServiceKind
         "redis" => Ok(ManagedServiceKind::Redis),
         "typesense" => Ok(ManagedServiceKind::Typesense),
         "meilisearch" => Ok(ManagedServiceKind::Meilisearch),
+        "valkey" => Ok(ManagedServiceKind::Valkey),
+        "rabbitmq" => Ok(ManagedServiceKind::Rabbitmq),
+        "minio" => Ok(ManagedServiceKind::Minio),
+        "opensearch" => Ok(ManagedServiceKind::Opensearch),
+        "memcached" => Ok(ManagedServiceKind::Memcached),
+        "mongodb" => Ok(ManagedServiceKind::Mongodb),
+        "clickhouse" => Ok(ManagedServiceKind::Clickhouse),
+        "prometheus" => Ok(ManagedServiceKind::Prometheus),
+        "grafana" => Ok(ManagedServiceKind::Grafana),
+        "loki" => Ok(ManagedServiceKind::Loki),
         _ => Err(LumicError::InvalidInput {
             field: "definition".into(),
             message: format!(

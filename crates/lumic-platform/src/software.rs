@@ -208,7 +208,11 @@ impl SoftwareManager {
         for name in definition.packages {
             packages.push(
                 self.packages
-                    .install(&PackageName::parse(*name)?, context)
+                    .install_with_environment(
+                        &PackageName::parse(*name)?,
+                        context,
+                        software_install_environment(definition.id),
+                    )
                     .await?,
             );
         }
@@ -419,6 +423,14 @@ impl SoftwareManager {
     }
 }
 
+fn software_install_environment(id: &str) -> &'static [(&'static str, &'static str)] {
+    if id == "opensearch" {
+        crate::service_driver::OPENSEARCH_INSTALL_ENVIRONMENT
+    } else {
+        &[]
+    }
+}
+
 fn unavailable_package_names(packages: &[PackageRecord]) -> Vec<String> {
     packages
         .iter()
@@ -457,6 +469,15 @@ fn ensure_packages_available(status: &SoftwareStatus) -> Result<()> {
 mod tests {
     use super::*;
     use lumic_core::{ErrorCode, OperationInterface};
+
+    #[test]
+    fn opensearch_disables_demo_security_during_package_install() {
+        assert_eq!(
+            software_install_environment("opensearch"),
+            crate::service_driver::OPENSEARCH_INSTALL_ENVIRONMENT
+        );
+        assert!(software_install_environment("prometheus").is_empty());
+    }
 
     #[tokio::test]
     async fn nvm_setup_requires_an_explicit_target_user() {

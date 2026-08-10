@@ -387,7 +387,7 @@ struct InstallPackage {
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct SoftwareInput {
-    /// One of: wordpress, php, mysql, postgresql, redis, typesense, meilisearch, nginx, apache, nodejs, nvm.
+    /// One of Lumic's built-in software catalog IDs, including the managed service IDs.
     software: String,
     /// Existing Linux account. Required to inspect NVM; ignored by system-scoped installers.
     user: Option<String>,
@@ -395,7 +395,7 @@ struct SoftwareInput {
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct SetupSoftware {
-    /// One of: wordpress, php, mysql, postgresql, redis, typesense, meilisearch, nginx, apache, nodejs, nvm.
+    /// One of Lumic's built-in software catalog IDs, including the managed service IDs.
     software: String,
     /// Existing Linux account. Required for NVM; ignored by system-scoped installers.
     user: Option<String>,
@@ -468,14 +468,14 @@ struct OperationRequest {
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct DetectManagedService {
-    /// One of: mysql, postgresql, redis, typesense, meilisearch.
+    /// A built-in managed service driver ID.
     kind: String,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct InstallManagedService {
     service: String,
-    /// One of: mysql, postgresql, redis, typesense, meilisearch.
+    /// A built-in managed service driver ID.
     kind: String,
     #[serde(default)]
     approved: bool,
@@ -1893,7 +1893,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "managed_service_detect",
-        description = "Detect a native MySQL, PostgreSQL, Redis, Typesense, or Meilisearch package, systemd state, version and provider health without adopting or changing it. Read-only."
+        description = "Detect a built-in native managed service package, systemd state, version and provider health without adopting or changing it. Read-only."
     )]
     async fn managed_service_detect(
         &self,
@@ -1925,7 +1925,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "managed_service_plan_install",
-        description = "Resolve native package, systemd, health validation, risk and recovery steps for MySQL, PostgreSQL, Redis, Typesense, or Meilisearch. Read-only; call before managed_service_install."
+        description = "Resolve native package, systemd, health validation, risk and recovery steps for a built-in managed service. Read-only; call before managed_service_install."
     )]
     fn managed_service_plan_install(
         &self,
@@ -1940,7 +1940,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "managed_service_install",
-        description = "Install and reconcile one MySQL, PostgreSQL, Redis, Typesense, or Meilisearch service through apt, validated configuration, generated secrets where required, systemd, and a provider health gate. Mutating: requires node policy enablement and approved=true."
+        description = "Install and reconcile one built-in managed service through apt, validated configuration, generated secrets where required, systemd, and a provider health gate. Mutating: requires node policy enablement and approved=true."
     )]
     async fn managed_service_install(
         &self,
@@ -3068,7 +3068,17 @@ fn parse_managed_kind(kind: &str) -> Result<ManagedServiceKind, String> {
         "redis" => Ok(ManagedServiceKind::Redis),
         "typesense" => Ok(ManagedServiceKind::Typesense),
         "meilisearch" => Ok(ManagedServiceKind::Meilisearch),
-        _ => Err("kind must be one of: mysql, postgresql, redis, typesense, meilisearch".into()),
+        "valkey" => Ok(ManagedServiceKind::Valkey),
+        "rabbitmq" => Ok(ManagedServiceKind::Rabbitmq),
+        "minio" => Ok(ManagedServiceKind::Minio),
+        "opensearch" => Ok(ManagedServiceKind::Opensearch),
+        "memcached" => Ok(ManagedServiceKind::Memcached),
+        "mongodb" => Ok(ManagedServiceKind::Mongodb),
+        "clickhouse" => Ok(ManagedServiceKind::Clickhouse),
+        "prometheus" => Ok(ManagedServiceKind::Prometheus),
+        "grafana" => Ok(ManagedServiceKind::Grafana),
+        "loki" => Ok(ManagedServiceKind::Loki),
+        _ => Err("kind must be one of: mysql, postgresql, redis, typesense, meilisearch, valkey, rabbitmq, minio, opensearch, memcached, mongodb, clickhouse, prometheus, grafana, loki".into()),
     }
 }
 
@@ -3310,6 +3320,16 @@ mod tests {
             ("redis", ManagedServiceKind::Redis),
             ("typesense", ManagedServiceKind::Typesense),
             ("meilisearch", ManagedServiceKind::Meilisearch),
+            ("valkey", ManagedServiceKind::Valkey),
+            ("rabbitmq", ManagedServiceKind::Rabbitmq),
+            ("minio", ManagedServiceKind::Minio),
+            ("opensearch", ManagedServiceKind::Opensearch),
+            ("memcached", ManagedServiceKind::Memcached),
+            ("mongodb", ManagedServiceKind::Mongodb),
+            ("clickhouse", ManagedServiceKind::Clickhouse),
+            ("prometheus", ManagedServiceKind::Prometheus),
+            ("grafana", ManagedServiceKind::Grafana),
+            ("loki", ManagedServiceKind::Loki),
         ] {
             assert_eq!(parse_managed_kind(value), Ok(expected));
         }

@@ -27,7 +27,7 @@ Using apt through Lumic does not mean exposing arbitrary apt execution. A packag
 
 Mutating operations should consider preconditions, idempotency, plan/dry-run support, failure behavior, before/after state, rollback/recovery and audit metadata.
 
-Managed MySQL/PostgreSQL credentials are generated from the operating system random source, stored below private Lumic state with mode `0600`, passed to native tools over stdin and represented externally only by opaque `secret://` references. MySQL/PostgreSQL/Redis reference configurations are loopback-only and allow only bounded provider settings. Failed configuration health checks restore the previous native file or remove a newly created file.
+Managed database and bootstrap credentials are generated from the operating system random source, stored below private Lumic state with mode `0600`, and represented externally only by opaque `secret://` references. Database credentials are passed to native tools over stdin. Every built-in managed-service configuration is loopback-only and accepts only bounded provider settings. Failed configuration health checks restore the previous native file or remove a newly created file. OpenSearch disables its security plugin only for the enforced loopback-only single-node configuration; Lumic rejects direct non-loopback exposure.
 
 Certificate issuance accepts only Lumic's registered Certbot/Let's Encrypt provider and validated DNS names. Commands use separated arguments. Certificate resource state contains certificate and private-key paths, but never private-key contents or the contact email. Attaching a certificate is a locked, atomic nginx configuration change; Lumic validates nginx before reload and restores the previous configuration on failure.
 

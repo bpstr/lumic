@@ -1,0 +1,67 @@
+schema_version = 1
+definition_version = 1
+id = "valkey"
+name = "Valkey"
+category = "cache"
+description = "Redis-compatible cache and queue service"
+driver = "valkey"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "Port"
+type = "port"
+default = 6379
+apply = "restart"
+
+[[configuration]]
+key = "maxmemory"
+label = "Memory limit"
+type = "bytes"
+minimum = 0
+default = 0
+apply = "reload"
+
+[[configuration]]
+key = "maxmemory_policy"
+label = "Eviction policy"
+type = "enum"
+values = ["noeviction", "allkeys-lru", "allkeys-lfu", "volatile-lru"]
+default = "noeviction"
+apply = "reload"
+
+[[outputs]]
+key = "connection"
+type = "tcp_endpoint"
+capability = "cache.valkey"
+
+[[platforms]]
+distribution = "debian"
+package = "valkey-server"
+unit = "valkey-server.service"
+data_path = "/var/lib/valkey"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "valkey-server"
+unit = "valkey-server.service"
+data_path = "/var/lib/valkey"

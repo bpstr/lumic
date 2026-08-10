@@ -166,6 +166,12 @@ Typesense and Meilisearch are now trusted built-in drivers on the existing manag
 
 Each service generates a 256-bit credential in Lumic's mode-0600 secret store. Persisted service and application state contains only secret references. Both providers bind to loopback, publish a reusable `http` output and a sensitive provider-specific credential output, and validate their unauthenticated `/health` endpoint without exposing credentials in process arguments. Application attachment records role-scoped endpoint and credential bindings; reverse-dependency validation rejects removal while either output is consumed. Search database primitives and backup/restore remain explicitly unsupported rather than emulating provider behavior through shell hooks.
 
+### 2026-08-10 — Native service catalog expanded
+
+Valkey, RabbitMQ, MinIO, OpenSearch, Memcached, MongoDB, ClickHouse, Prometheus, Grafana, and Loki now have reviewed built-in catalog definitions, allowlisted packages, registered Rust drivers, provider-specific configuration, health gates, and Debian/Ubuntu platform mappings. The existing status/plan/apply, atomic configuration rollback, systemd lifecycle, audit/event, and schema-v2 state paths are reused without adding provider branches to orchestration.
+
+Every new service binds to loopback. MinIO uses generated root credentials and a hardened Lumic-owned dynamic-user unit; Grafana receives a generated administrator password; Prometheus receives a bind-aware systemd override; OpenSearch disables packaged demo security during installation and runs single-node with its security plugin disabled, so it cannot be exposed beyond loopback. External package sources must already be configured by the operator. Backup/restore and child-resource operations return explicit unsupported errors. Catalog and driver behavior have workspace unit coverage; live provider lifecycle coverage remains future work and is not included in the supported-host claim.
+
 ### 2026-08-10 — Reusable application resources complete
 
 Immutable artifacts now use a shared manager rather than recipe-local download code. The manager validates versioned HTTPS definitions, serializes concurrent acquisition with an artifact lock, rejects symlink/non-file cache entries, streams SHA-256 verification, uses a private temporary download and atomically commits only verified bytes. WordPress consumes this manager for both apply and inspection, so cached bytes are reverified before use.

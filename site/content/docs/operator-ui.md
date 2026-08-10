@@ -51,8 +51,8 @@ The UI provides:
 - events and bounded journal logs;
 - expert systemd unit, configuration/data paths, version, bind address and port;
 - recipe catalog and installed-version state;
-- a default installer catalog for WordPress prerequisites, PHP, MySQL, PostgreSQL, Redis,
-  Typesense, Meilisearch, nginx, Apache, Node.js, and per-user NVM, with
+- a default installer catalog for WordPress prerequisites, PHP, all built-in managed-service
+  packages, nginx, Apache, Node.js, and per-user NVM, with
   installed/candidate versions
   and a CSRF-protected plan/confirm/setup flow;
 - host accounts, listeners, mounts, timers and pending updates;

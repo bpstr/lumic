@@ -1,0 +1,51 @@
+schema_version = 1
+definition_version = 1
+id = "mongodb"
+name = "MongoDB"
+category = "database"
+description = "Document database server"
+driver = "mongodb"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "Port"
+type = "port"
+default = 27017
+apply = "restart"
+
+[[outputs]]
+key = "connection"
+type = "tcp_endpoint"
+capability = "database.mongodb"
+
+[[platforms]]
+distribution = "debian"
+package = "mongodb-org"
+unit = "mongod.service"
+data_path = "/var/lib/mongodb"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "mongodb-org"
+unit = "mongod.service"
+data_path = "/var/lib/mongodb"

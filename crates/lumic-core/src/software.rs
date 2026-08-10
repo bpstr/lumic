@@ -11,6 +11,11 @@ pub enum SoftwareCategory {
     Cache,
     Search,
     WebServer,
+    Queue,
+    Storage,
+    Analytics,
+    Monitoring,
+    Logging,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +41,11 @@ impl fmt::Display for SoftwareCategory {
             Self::Cache => "cache",
             Self::Search => "search",
             Self::WebServer => "web server",
+            Self::Queue => "queue",
+            Self::Storage => "storage",
+            Self::Analytics => "analytics",
+            Self::Monitoring => "monitoring",
+            Self::Logging => "logging",
         })
     }
 }
@@ -58,6 +68,16 @@ const POSTGRESQL_PACKAGES: &[&str] = &["postgresql"];
 const REDIS_PACKAGES: &[&str] = &["redis-server"];
 const TYPESENSE_PACKAGES: &[&str] = &["typesense-server"];
 const MEILISEARCH_PACKAGES: &[&str] = &["meilisearch"];
+const VALKEY_PACKAGES: &[&str] = &["valkey-server"];
+const RABBITMQ_PACKAGES: &[&str] = &["rabbitmq-server"];
+const MINIO_PACKAGES: &[&str] = &["minio"];
+const OPENSEARCH_PACKAGES: &[&str] = &["opensearch"];
+const MEMCACHED_PACKAGES: &[&str] = &["memcached"];
+const MONGODB_PACKAGES: &[&str] = &["mongodb-org"];
+const CLICKHOUSE_PACKAGES: &[&str] = &["clickhouse-server"];
+const PROMETHEUS_PACKAGES: &[&str] = &["prometheus"];
+const GRAFANA_PACKAGES: &[&str] = &["grafana"];
+const LOKI_PACKAGES: &[&str] = &["loki"];
 const NGINX_PACKAGES: &[&str] = &["nginx"];
 const APACHE_PACKAGES: &[&str] = &["apache2"];
 const NODEJS_PACKAGES: &[&str] = &["nodejs", "npm"];
@@ -126,6 +146,96 @@ pub const SOFTWARE_CATALOG: &[SoftwareDefinition] = &[
         setup_scope: SoftwareSetupScope::System,
         package_source: SoftwarePackageSource::ExternalRepository,
         packages: MEILISEARCH_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "valkey",
+        name: "Valkey",
+        category: SoftwareCategory::Cache,
+        description: "Valkey cache server from a configured apt source",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::ExternalRepository,
+        packages: VALKEY_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "rabbitmq",
+        name: "RabbitMQ",
+        category: SoftwareCategory::Queue,
+        description: "RabbitMQ message broker",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::Distribution,
+        packages: RABBITMQ_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "minio",
+        name: "MinIO",
+        category: SoftwareCategory::Storage,
+        description: "MinIO object storage from a configured apt source",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::ExternalRepository,
+        packages: MINIO_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "opensearch",
+        name: "OpenSearch",
+        category: SoftwareCategory::Search,
+        description: "OpenSearch server from a configured apt source",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::ExternalRepository,
+        packages: OPENSEARCH_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "memcached",
+        name: "Memcached",
+        category: SoftwareCategory::Cache,
+        description: "Memcached cache server",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::Distribution,
+        packages: MEMCACHED_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "mongodb",
+        name: "MongoDB",
+        category: SoftwareCategory::Database,
+        description: "MongoDB server from a configured apt source",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::ExternalRepository,
+        packages: MONGODB_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "clickhouse",
+        name: "ClickHouse",
+        category: SoftwareCategory::Analytics,
+        description: "ClickHouse analytics database from a configured apt source",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::ExternalRepository,
+        packages: CLICKHOUSE_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "prometheus",
+        name: "Prometheus",
+        category: SoftwareCategory::Monitoring,
+        description: "Prometheus metrics server",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::Distribution,
+        packages: PROMETHEUS_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "grafana",
+        name: "Grafana",
+        category: SoftwareCategory::Monitoring,
+        description: "Grafana visualization server from a configured apt source",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::ExternalRepository,
+        packages: GRAFANA_PACKAGES,
+    },
+    SoftwareDefinition {
+        id: "loki",
+        name: "Loki",
+        category: SoftwareCategory::Logging,
+        description: "Loki log aggregation server from a configured apt source",
+        setup_scope: SoftwareSetupScope::System,
+        package_source: SoftwarePackageSource::ExternalRepository,
+        packages: LOKI_PACKAGES,
     },
     SoftwareDefinition {
         id: "nginx",
@@ -257,6 +367,16 @@ mod tests {
             "redis",
             "typesense",
             "meilisearch",
+            "valkey",
+            "rabbitmq",
+            "minio",
+            "opensearch",
+            "memcached",
+            "mongodb",
+            "clickhouse",
+            "prometheus",
+            "grafana",
+            "loki",
             "nginx",
             "apache",
             "nodejs",
@@ -290,7 +410,17 @@ mod tests {
 
     #[test]
     fn only_third_party_catalog_entries_require_external_repositories() {
-        for id in ["typesense", "meilisearch"] {
+        for id in [
+            "typesense",
+            "meilisearch",
+            "valkey",
+            "minio",
+            "opensearch",
+            "mongodb",
+            "clickhouse",
+            "grafana",
+            "loki",
+        ] {
             assert_eq!(
                 software(id).unwrap().package_source,
                 SoftwarePackageSource::ExternalRepository
@@ -303,6 +433,9 @@ mod tests {
             "mysql",
             "postgresql",
             "redis",
+            "rabbitmq",
+            "memcached",
+            "prometheus",
             "nginx",
             "apache",
             "nodejs",

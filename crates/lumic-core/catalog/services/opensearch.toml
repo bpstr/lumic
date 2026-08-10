@@ -1,0 +1,58 @@
+schema_version = 1
+definition_version = 1
+id = "opensearch"
+name = "OpenSearch"
+category = "search"
+description = "Search, analytics, and log indexing service"
+driver = "opensearch"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "HTTP port"
+type = "port"
+default = 9200
+apply = "restart"
+
+[[configuration]]
+key = "cluster_name"
+label = "Cluster name"
+type = "string"
+default = "lumic"
+apply = "restart"
+
+[[outputs]]
+key = "http"
+type = "http_endpoint"
+capability = "search.opensearch"
+
+[[platforms]]
+distribution = "debian"
+package = "opensearch"
+unit = "opensearch.service"
+data_path = "/var/lib/opensearch"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "opensearch"
+unit = "opensearch.service"
+data_path = "/var/lib/opensearch"

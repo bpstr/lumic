@@ -10,6 +10,16 @@ pub enum ManagedServiceKind {
     Redis,
     Typesense,
     Meilisearch,
+    Valkey,
+    Rabbitmq,
+    Minio,
+    Opensearch,
+    Memcached,
+    Mongodb,
+    Clickhouse,
+    Prometheus,
+    Grafana,
+    Loki,
 }
 
 impl ManagedServiceKind {
@@ -20,6 +30,16 @@ impl ManagedServiceKind {
             Self::Redis => "redis",
             Self::Typesense => "typesense",
             Self::Meilisearch => "meilisearch",
+            Self::Valkey => "valkey",
+            Self::Rabbitmq => "rabbitmq",
+            Self::Minio => "minio",
+            Self::Opensearch => "opensearch",
+            Self::Memcached => "memcached",
+            Self::Mongodb => "mongodb",
+            Self::Clickhouse => "clickhouse",
+            Self::Prometheus => "prometheus",
+            Self::Grafana => "grafana",
+            Self::Loki => "loki",
         }
     }
 }

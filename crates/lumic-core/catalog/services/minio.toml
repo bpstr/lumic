@@ -1,0 +1,74 @@
+schema_version = 1
+definition_version = 1
+id = "minio"
+name = "MinIO"
+category = "other"
+description = "S3-compatible object storage"
+driver = "minio"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "API port"
+type = "port"
+default = 9000
+apply = "restart"
+
+[[configuration]]
+key = "console_port"
+label = "Console port"
+type = "port"
+default = 9001
+apply = "restart"
+
+[[configuration]]
+key = "root_user"
+label = "Root user"
+type = "secret"
+required = true
+sensitive = true
+apply = "restart"
+
+[[configuration]]
+key = "root_password"
+label = "Root password"
+type = "secret"
+required = true
+sensitive = true
+apply = "restart"
+
+[[outputs]]
+key = "http"
+type = "http_endpoint"
+capability = "storage.s3"
+
+[[platforms]]
+distribution = "debian"
+package = "minio"
+unit = "minio.service"
+data_path = "/var/lib/minio"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "minio"
+unit = "minio.service"
+data_path = "/var/lib/minio"

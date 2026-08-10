@@ -1,0 +1,58 @@
+schema_version = 1
+definition_version = 1
+id = "prometheus"
+name = "Prometheus"
+category = "other"
+description = "Metrics collection and time-series monitoring"
+driver = "prometheus"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "HTTP port"
+type = "port"
+default = 9090
+apply = "restart"
+
+[[configuration]]
+key = "scrape_interval"
+label = "Scrape interval"
+type = "string"
+default = "15s"
+apply = "restart"
+
+[[outputs]]
+key = "http"
+type = "http_endpoint"
+capability = "metrics.prometheus"
+
+[[platforms]]
+distribution = "debian"
+package = "prometheus"
+unit = "prometheus.service"
+data_path = "/var/lib/prometheus"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "prometheus"
+unit = "prometheus.service"
+data_path = "/var/lib/prometheus"

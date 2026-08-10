@@ -85,7 +85,7 @@ Epic A release mechanism implemented: external Git mirror/fetch, isolated releas
 
 ## Phase 4 — Managed services and data
 
-Epic B mechanism implemented and extended by the resource-framework work: managed identity/configuration/secrets/dependencies, read-only native detection, plan/install/update/remove/lifecycle, health/log hooks, events/audits, MySQL/PostgreSQL database/user/grant primitives, MySQL/PostgreSQL/Redis local backup/restore, typed application references, and role-scoped database/credential bindings. MySQL, PostgreSQL and Redis are the deliberately small reference set.
+Epic B mechanism implemented and extended by the resource-framework work: managed identity/configuration/secrets/dependencies, read-only native detection, plan/install/update/remove/lifecycle, health/log hooks, events/audits, MySQL/PostgreSQL database/user/grant primitives, MySQL/PostgreSQL/Redis local backup/restore, typed application references, and role-scoped database/credential bindings. The native catalog also includes Typesense, Meilisearch, Valkey, RabbitMQ, MinIO, OpenSearch, Memcached, MongoDB, ClickHouse, Prometheus, Grafana, and Loki with provider configuration and health gates.
 
 - managed service lifecycle contract.
 - service configuration/state/secrets.
@@ -95,7 +95,7 @@ Epic B mechanism implemented and extended by the resource-framework work: manage
 - PostgreSQL reference.
 - generic service health/log/event integration.
 
-Nightly expands the catalog to MariaDB, Typesense, Meilisearch, Agnative, MinIO, RabbitMQ, NATS and others.
+Nightly expands provider-native backup/restore, child resources, live-host coverage, and further catalog breadth such as Agnative and NATS.
 
 **Exit:** services are first-class Lumic resources rather than ad-hoc packages.
 

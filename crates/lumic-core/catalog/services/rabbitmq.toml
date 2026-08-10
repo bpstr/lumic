@@ -1,0 +1,58 @@
+schema_version = 1
+definition_version = 1
+id = "rabbitmq"
+name = "RabbitMQ"
+category = "other"
+description = "AMQP message broker"
+driver = "rabbitmq"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "AMQP port"
+type = "port"
+default = 5672
+apply = "restart"
+
+[[configuration]]
+key = "memory_high_watermark"
+label = "Memory high watermark"
+type = "string"
+default = "0.4"
+apply = "restart"
+
+[[outputs]]
+key = "connection"
+type = "tcp_endpoint"
+capability = "queue.amqp"
+
+[[platforms]]
+distribution = "debian"
+package = "rabbitmq-server"
+unit = "rabbitmq-server.service"
+data_path = "/var/lib/rabbitmq"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "rabbitmq-server"
+unit = "rabbitmq-server.service"
+data_path = "/var/lib/rabbitmq"

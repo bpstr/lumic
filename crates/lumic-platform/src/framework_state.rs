@@ -342,6 +342,16 @@ fn service_from_instance(instance: &ServiceInstance) -> Result<ManagedService> {
         "redis" => ManagedServiceKind::Redis,
         "typesense" => ManagedServiceKind::Typesense,
         "meilisearch" => ManagedServiceKind::Meilisearch,
+        "valkey" => ManagedServiceKind::Valkey,
+        "rabbitmq" => ManagedServiceKind::Rabbitmq,
+        "minio" => ManagedServiceKind::Minio,
+        "opensearch" => ManagedServiceKind::Opensearch,
+        "memcached" => ManagedServiceKind::Memcached,
+        "mongodb" => ManagedServiceKind::Mongodb,
+        "clickhouse" => ManagedServiceKind::Clickhouse,
+        "prometheus" => ManagedServiceKind::Prometheus,
+        "grafana" => ManagedServiceKind::Grafana,
+        "loki" => ManagedServiceKind::Loki,
         _ => {
             return Err(invalid(
                 "service.definition_id",
@@ -574,13 +584,7 @@ fn prefixed_id(value: &str, prefix: &str) -> Result<String> {
 
 fn migrate_service(service: ManagedService) -> Result<ServiceInstance> {
     let kind = service.kind;
-    let definition_id = match kind {
-        ManagedServiceKind::Mysql => "mysql",
-        ManagedServiceKind::Postgresql => "postgresql",
-        ManagedServiceKind::Redis => "redis",
-        ManagedServiceKind::Typesense => "typesense",
-        ManagedServiceKind::Meilisearch => "meilisearch",
-    };
+    let definition_id = kind.id();
     let desired_state = match service.desired_state {
         lumic_core::managed_service::DesiredServiceState::Running => DesiredServiceState::Running,
         lumic_core::managed_service::DesiredServiceState::Stopped => DesiredServiceState::Stopped,
@@ -588,7 +592,11 @@ fn migrate_service(service: ManagedService) -> Result<ServiceInstance> {
     let updated = narrow_timestamp(service.updated_at_unix_ms)?;
     let address = service.configuration.bind_address;
     let port = service.configuration.port;
-    let endpoint = format!("{address}:{port}");
+    let endpoint = if address.contains(':') {
+        format!("[{address}]:{port}")
+    } else {
+        format!("{address}:{port}")
+    };
     let mut outputs = ResourceOutputs::from([
         (
             "address".into(),
@@ -609,7 +617,7 @@ fn migrate_service(service: ManagedService) -> Result<ServiceInstance> {
         (
             "endpoint".into(),
             ResourceOutput {
-                value: Value::String(endpoint),
+                value: Value::String(endpoint.clone()),
                 sensitive: false,
                 updated_at_unix_ms: updated,
             },
@@ -622,7 +630,7 @@ fn migrate_service(service: ManagedService) -> Result<ServiceInstance> {
         outputs.insert(
             "http".into(),
             ResourceOutput {
-                value: Value::String(format!("http://{address}:{port}")),
+                value: Value::String(format!("http://{endpoint}")),
                 sensitive: false,
                 updated_at_unix_ms: updated,
             },

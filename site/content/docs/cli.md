@@ -16,7 +16,7 @@ lumic app list
 lumic app create <name> --domain <domain> --runtime static|php|node
 lumic app credential import <name> <private-key-path>
 lumic app repository set <app> <url> --branch main
-lumic app provision <app> [--component intl] [--component zip]
+lumic app provision <php-app> --runtime-version 8.3 [--component intl] [--component zip]
 lumic app health <app> --path /health --port 80
 lumic app process worker <app> <name> -- php artisan queue:work
 lumic app process schedule <app> <name> --on-calendar daily -- php task.php
@@ -28,13 +28,15 @@ lumic app tls <app> --email admin@example.com
 lumic app inspect <app>
 lumic app delete <app>
 
+lumic managed-service catalog
+lumic managed-service schema <definition>
 lumic managed-service list
-lumic managed-service detect postgresql|redis
+lumic managed-service detect <definition>
 lumic managed-service inspect <service>
-lumic managed-service plan-install <service> postgresql|redis
-lumic managed-service install <service> postgresql|redis [--dry-run]
+lumic managed-service plan-install <service> <definition>
+lumic managed-service install <service> <definition> [--dry-run]
 lumic managed-service configure <service> [--bind 127.0.0.1] [--port <port>] [--setting key=value]
-lumic managed-service start|stop|restart <service>
+lumic managed-service start|stop|restart <service> [--dry-run]
 lumic managed-service update|remove <service> [--dry-run]
 lumic managed-service logs <service> [--lines 100]
 lumic managed-service declare-dependency <service> <dependency> --purpose <text>
@@ -151,11 +153,13 @@ Package search is discovery only and never grants trust. Installation and remova
 
 ## Application deployment
 
-`app provision` installs only packages in Lumic's explicit runtime/component catalog and writes an nginx site atomically. Lumic runs `nginx -t` before reload and restores the prior configuration if validation or reload fails. PHP currently supports `curl`, `intl`, `mbstring`, `xml`, and `zip` components. Node has a minimal package/build/proxy foundation; the two acceptance references are static and generic PHP Git applications.
+`app provision` installs only packages in Lumic's explicit runtime/component catalog. PHP requires `--runtime-version`; `8.1`, `8.2`, `8.3`, and `8.4` are allowlisted, and the selected version must be present in the node's configured apt repositories. PHP currently supports `curl`, `intl`, `mbstring`, `xml`, and `zip` components, each resolved to the selected version-qualified package. Supplying a runtime version for a non-PHP application is rejected.
+
+nginx is installed and recorded independently, not as an implicit runtime dependency. Lumic writes the owned web host atomically, runs `nginx -t` before activation, binds PHP sites to the selected runtime's published FPM socket, and restores the prior configuration if validation, reload, or resource-state persistence fails. Node has a minimal package/build/proxy foundation; the two acceptance references are static and generic PHP Git applications.
 
 Deployment is a separate plan/apply flow. `app plan` shows the intended source change, risks, preconditions, validation and recovery. `app deploy` mirrors Git, checks out an isolated release, runs Composer or npm when the corresponding manifest/lock exists, validates the runtime entry point, switches `current` atomically, then runs the configured local HTTP health check. A failed health check automatically restores the previous release. Deployment phase results, source commits and rollback state remain in history.
 
-SSH keys are copied into Lumic's mode-`0600` credential store and application metadata retains only the named reference. Workers and schedules become validated systemd service/timer units; commands remain argv data and do not use `sh -c`. TLS uses Certbot's nginx integration after web provisioning and records certificate events.
+SSH keys are copied into Lumic's mode-`0600` credential store and application metadata retains only the named reference. Workers and schedules become validated systemd service/timer units; commands remain argv data and do not use `sh -c`. `app tls` uses the trusted Certbot/Let's Encrypt provider after web provisioning. Certbot obtains a named certificate with `certonly`; Lumic attaches it to the owned nginx resource, validates and reloads with rollback, and persists an explicit certificate binding. The contact email and private-key contents are not written to resource state.
 
 ## Nightly updates
 
@@ -165,4 +169,4 @@ Generic outbound webhooks and framework-specific recipe breadth are later work a
 
 ## Managed services and UI
 
-Managed-service commands return structured JSON and compose approved apt packages, systemd, atomic provider configuration and provider health checks. PostgreSQL adds database/user/grant and local dump/restore primitives; Redis adds local snapshot/restore. Generated database passwords are never printed—the CLI returns only a private secret reference. `ui token rotate` is the exception for an operator credential: it prints the newly generated token once and stores only its digest.
+Managed-service commands return structured JSON and compose approved apt packages, systemd, atomic provider configuration and provider health checks. MySQL and PostgreSQL add database/user/grant and local dump/restore primitives; Redis adds local snapshot/restore. Generated database passwords are never printed—the CLI returns only a private secret reference. `ui token rotate` is the exception for an operator credential: it prints the newly generated token once and stores only its digest.

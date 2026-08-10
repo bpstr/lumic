@@ -90,6 +90,8 @@ A capability should look semantically like `InstallPackage { package }`, not `Ru
 
 ## Integration levels
 
+When implementing or changing a Lumic integration—including a package, component, runtime, managed service, service resource, artifact, application process or schedule, binding, provider, or application definition—consult `.agents/skills/lumic-integration-authoring/SKILL.md` and its relevant references before editing code.
+
 Keep these separate:
 
 - **Package**: a whitelisted native package with detection/version metadata.

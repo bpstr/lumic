@@ -17,6 +17,18 @@ The canonical public installer is served directly from [lumic.cc](https://lumic.
 ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'
 ```
 
+To install and provision a dedicated passwordless MCP key in the same SSH login, generate a key used only for Lumic and pass its public half to the installer:
+
+```bash
+MCP_KEY="$HOME/.ssh/lumic-server"
+test -f "$MCP_KEY" || ssh-keygen -q -t ed25519 -N '' -C lumic-mcp -f "$MCP_KEY"
+MCP_PUBLIC_KEY="$(cat "$MCP_KEY.pub")"
+ssh root@server "export LUMIC_MCP_AUTHORIZED_KEY='$MCP_PUBLIC_KEY'; curl -fsSL https://lumic.cc/install.sh | sh"
+codex mcp add lumic-server -- ssh -T -o BatchMode=yes -i "$MCP_KEY" root@server
+```
+
+The installed `authorized_keys` entry uses OpenSSH `restrict` plus a forced `lumic mcp serve` command. That dedicated key cannot request a root shell, port forwarding or an arbitrary command. Keep ordinary unrestricted administration keys out of the agent configuration.
+
 When already connected to the server:
 
 ```bash
@@ -25,7 +37,7 @@ curl -fsSL https://lumic.cc/install.sh | sudo sh
 
 `https://lumic.cc/install.sh` is published from the repository's root `install.sh` during the documentation deployment, so the website and repository always use the same installer source. `https://lumic.cc/install` is kept as a compatibility alias.
 
-The installer detects the operating system and architecture, selects the requested release channel, downloads the matching Lumic binary, verifies that the binary can report its version, and installs it to `/usr/local/bin/lumic` by default. The daemon/system-service bootstrap continues to evolve with the MVP.
+The installer detects the operating system and architecture, selects the requested release channel, downloads the matching Lumic binaries, verifies their versions and the built-in MCP adapter, installs them under `/usr/local/bin`, creates the first UI credential, and enables `lumicd`. It prints the one-time UI token, tunnel URL and MCP command at the end.
 
 ## Channels
 
@@ -42,15 +54,17 @@ curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_CHANNEL=nightly sh
 
 A node never silently changes channels.
 
-Stable installation resolves GitHub's latest stable release. Pin an exact immutable release when required:
+Stable installation resolves GitHub's latest stable release. Pin an exact immutable stable or prerelease when required:
 
 ```bash
-curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_VERSION=1.0.0 sh
+curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_VERSION=2.0.0-alpha.1 sh
 ```
+
+Exact prerelease versions are opt-in and do not change the node's recorded stable/nightly channel. GitHub marks prerelease tags separately, so they never replace the latest stable release.
 
 Release downloads include SHA-256 files and GitHub artifact attestations. The installer enforces the checksum; a downloaded binary can also be checked independently with `gh attestation verify <artifact> --repo bpstr/lumic`.
 
-Installer inputs are environment variables: `LUMIC_CHANNEL` (`stable` or `nightly`), `LUMIC_VERSION` for an explicit stable version, `LUMIC_INSTALL_DIR`, `LUMIC_CONFIG_DIR`, and `LUMIC_STATE_DIR`. `LUMIC_INSTALL_BINARY` and optional `LUMIC_INSTALL_DAEMON_BINARY` are reserved for local/CI installation and may use the host's native architecture. Published release artifacts remain x86_64-only until other architectures have automated release coverage. Installing identical artifacts twice is a no-op; different verified artifacts replace them atomically.
+Installer inputs are environment variables: `LUMIC_CHANNEL` (`stable` or `nightly`), `LUMIC_VERSION` for an explicit stable or prerelease version, `LUMIC_INSTALL_DIR`, `LUMIC_CONFIG_DIR`, `LUMIC_STATE_DIR`, and optional `LUMIC_MCP_AUTHORIZED_KEY` for a dedicated restricted OpenSSH key. `LUMIC_INSTALL_BINARY` and optional `LUMIC_INSTALL_DAEMON_BINARY` are reserved for local/CI installation and may use the host's native architecture. Published release artifacts remain x86_64-only until other architectures have automated release coverage. Installing identical artifacts twice is a no-op; different verified artifacts replace them atomically.
 
 ## Self-update
 
@@ -84,7 +98,7 @@ For the operational summary, including recent changes and anything needing atten
 lumic how-are-you
 ```
 
-Create the initial UI credential and connect over an SSH tunnel:
+The installer creates the initial UI credential if none exists. Rotate it later if needed, then connect over an SSH tunnel:
 
 ```bash
 sudo lumic ui token rotate
@@ -95,6 +109,6 @@ The UI listens on `127.0.0.1:8080` by default. `LUMIC_UI_BIND` may select anothe
 
 ## Supported systems
 
-Installer/detection and attention-summary smoke coverage runs on Ubuntu 22.04, Ubuntu 24.04, Debian 12 and Debian 13 on x86_64. A live PostgreSQL/Redis lifecycle/database/backup scenario runs on Ubuntu 24.04. Additional distributions and architectures require automated detection and installation coverage before being documented as supported.
+Installer/detection and attention-summary smoke coverage runs on Ubuntu 22.04, Ubuntu 24.04, Debian 12 and Debian 13 on x86_64. A live MySQL/PostgreSQL/Redis lifecycle/database/backup scenario runs on Ubuntu 24.04. Additional distributions and architectures require automated detection and installation coverage before being documented as supported.
 
 Continue with the [first-VPS guide](@/docs/first-vps.md), then use the [feature matrix](@/docs/feature-matrix.md) to distinguish implemented behavior from nightly expansion.

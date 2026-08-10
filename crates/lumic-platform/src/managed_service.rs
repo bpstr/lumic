@@ -4,12 +4,16 @@ use crate::{
     atomic_file::{restore_backup, write_atomic},
     audit_store::AuditStore,
     event_store::EventStore,
+    framework_state::FrameworkStateStore,
     secret_store::SecretStore,
+    service_driver::{DriverRestoreReplacement, ServiceDriverRegistry},
     systemd::{ServiceAction, SystemdServiceManager},
 };
 use lumic_core::{
     LumicError, OperationContext, Plan, Result,
     application::{ApplicationServiceReference, unix_time_ms},
+    binding::Binding,
+    catalog::{Catalog, ServiceDefinition},
     events::{AuditRecord, Event},
     managed_service::{
         BackupStatus, BackupVerification, Database, DatabaseUser, DesiredServiceState,
@@ -18,16 +22,15 @@ use lumic_core::{
         install_plan, validate_database_identifier, validate_resource_id,
     },
     package::PackageName,
+    resource::{ResourceKind, ResourceOutputs, ResourceRecord, ResourceRef},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use std::{
-    fs::{self, OpenOptions},
-    io::{Read, Write},
+    collections::BTreeMap,
+    fs,
+    io::Read,
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 #[derive(Debug, Clone)]
@@ -38,70 +41,26 @@ struct ConfigurationChange {
     changed: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ServiceDefinition {
-    package: &'static str,
-    unit: &'static str,
-    data_path: &'static str,
-}
-
-impl ServiceDefinition {
-    const fn for_kind(kind: ManagedServiceKind) -> Self {
-        match kind {
-            ManagedServiceKind::Postgresql => Self {
-                package: "postgresql",
-                unit: "postgresql.service",
-                data_path: "/var/lib/postgresql",
-            },
-            ManagedServiceKind::Redis => Self {
-                package: "redis-server",
-                unit: "redis-server.service",
-                data_path: "/var/lib/redis",
-            },
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct ManagedServiceStore {
-    path: PathBuf,
+    framework: FrameworkStateStore,
 }
 
 impl ManagedServiceStore {
     fn at_state_dir(state_dir: impl AsRef<Path>) -> Self {
         Self {
-            path: state_dir.as_ref().join("managed-services.json"),
+            framework: FrameworkStateStore::at_state_dir(state_dir),
         }
     }
 
     fn load(&self) -> Result<ManagedServiceState> {
-        if !self.path.exists() {
-            return Ok(ManagedServiceState::default());
-        }
-        serde_json::from_slice(&fs::read(&self.path).map_err(state_io)?).map_err(|error| {
-            LumicError::Internal {
-                message: format!("managed-service state is invalid: {error}"),
-            }
-        })
+        self.framework
+            .load_managed_service_state(current_state_time())
     }
 
     fn save(&self, state: &ManagedServiceState) -> Result<()> {
-        let parent = self.path.parent().ok_or_else(|| LumicError::Internal {
-            message: "managed-service state path has no parent".into(),
-        })?;
-        fs::create_dir_all(parent).map_err(state_io)?;
-        let temporary = parent.join(format!(".managed-services-{}.tmp", std::process::id()));
-        let mut options = OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut file = options.open(&temporary).map_err(state_io)?;
-        serde_json::to_writer_pretty(&mut file, state).map_err(|error| LumicError::Internal {
-            message: format!("could not serialize managed-service state: {error}"),
-        })?;
-        file.write_all(b"\n").map_err(state_io)?;
-        file.sync_all().map_err(state_io)?;
-        fs::rename(temporary, &self.path).map_err(state_io)
+        self.framework
+            .save_managed_service_state(state, current_state_time())
     }
 }
 
@@ -135,6 +94,40 @@ impl ManagedServiceManager {
 
     pub fn list(&self) -> Result<Vec<ManagedService>> {
         Ok(self.store.load()?.services)
+    }
+
+    /// Returns the trusted service catalog used by every public adapter.
+    pub fn catalog(&self) -> Result<Vec<ServiceDefinition>> {
+        Ok(Catalog::built_in()?.services().cloned().collect())
+    }
+
+    pub fn schema(&self, definition_id: &str) -> Result<ServiceDefinition> {
+        Catalog::built_in()?
+            .service(definition_id)
+            .cloned()
+            .ok_or_else(|| LumicError::InvalidInput {
+                field: "definition".into(),
+                message: "unknown service catalog definition".into(),
+            })
+    }
+
+    pub fn plan_catalog_install(&self, id: &str, definition_id: &str) -> Result<Plan> {
+        self.plan_install(id, managed_kind_for_definition(definition_id)?)
+    }
+
+    pub async fn install_catalog(
+        &self,
+        id: &str,
+        definition_id: &str,
+        context: &OperationContext,
+    ) -> Result<ManagedServiceMutation> {
+        self.install(id, managed_kind_for_definition(definition_id)?, context)
+            .await
+    }
+
+    pub async fn detect_catalog(&self, definition_id: &str) -> Result<ManagedServiceStatus> {
+        self.detect(managed_kind_for_definition(definition_id)?)
+            .await
     }
 
     pub fn databases(&self, id: &str) -> Result<Vec<Database>> {
@@ -177,16 +170,17 @@ impl ManagedServiceManager {
     }
 
     pub async fn detect(&self, kind: ManagedServiceKind) -> Result<ManagedServiceStatus> {
-        let definition = ServiceDefinition::for_kind(kind);
+        let (package, systemd_unit) = service_definition(kind)?;
+        let configuration = default_service_configuration(kind)?;
         let now = unix_time_ms();
         self.inspect_service(ManagedService {
             id: kind.id().into(),
             name: kind.id().into(),
             kind,
-            package: definition.package.into(),
-            systemd_unit: definition.unit.into(),
+            package,
+            systemd_unit,
             desired_state: DesiredServiceState::Running,
-            configuration: ServiceConfiguration::defaults(kind),
+            configuration,
             secret_references: Vec::new(),
             dependencies: Vec::new(),
             created_at_unix_ms: now,
@@ -222,7 +216,7 @@ impl ManagedServiceManager {
             enabled: systemd.enabled,
             health,
             health_message,
-            paths: self.paths(&service),
+            paths: self.paths(&service)?,
         })
     }
 
@@ -233,7 +227,7 @@ impl ManagedServiceManager {
         context: &OperationContext,
     ) -> Result<ManagedServiceMutation> {
         validate_resource_id("service", id)?;
-        let definition = ServiceDefinition::for_kind(kind);
+        let (package, systemd_unit) = service_definition(kind)?;
         let existing = self
             .store
             .load()?
@@ -249,21 +243,30 @@ impl ManagedServiceManager {
             });
         }
         let now = unix_time_ms();
-        let service = existing.clone().unwrap_or_else(|| ManagedService {
+        let configuration = default_service_configuration(kind)?;
+        let mut service = existing.clone().unwrap_or_else(|| ManagedService {
             id: id.into(),
             name: id.into(),
             kind,
-            package: definition.package.into(),
-            systemd_unit: definition.unit.into(),
+            package: package.clone(),
+            systemd_unit: systemd_unit.clone(),
             desired_state: DesiredServiceState::Running,
-            configuration: ServiceConfiguration::defaults(kind),
+            configuration,
             secret_references: Vec::new(),
             dependencies: Vec::new(),
             created_at_unix_ms: now,
             updated_at_unix_ms: now,
         });
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(kind)?;
+        for secret_name in driver.secret_names() {
+            let reference = service_secret_reference(id, secret_name);
+            if !service.secret_references.contains(&reference) {
+                service.secret_references.push(reference);
+            }
+        }
         service.configuration.validate()?;
-        let package = PackageName::parse(definition.package)?;
+        let package = PackageName::parse(&package)?;
         let package_mutation = self.packages.install(&package, context).await?;
         if context.dry_run {
             return Ok(ManagedServiceMutation {
@@ -274,28 +277,70 @@ impl ManagedServiceManager {
                     .into(),
             });
         }
-        let configured = self.write_configuration(&service).await?;
-        if let Err(error) = self
-            .systemd
-            .apply(definition.unit, ServiceAction::Enable, context)
-            .await
+        if self
+            .packages
+            .inspect(&package)
+            .await?
+            .installed_version
+            .is_none()
+        {
+            return Err(LumicError::Process {
+                executable: "apt-get".into(),
+                message: format!(
+                    "package '{}' was not installed after apt completed",
+                    package
+                ),
+            });
+        }
+        let created_secrets = self.create_missing_service_secrets(&service, driver)?;
+        let configured = match self.write_configuration(&service).await {
+            Ok(configured) => configured,
+            Err(error) => {
+                self.delete_secrets(&created_secrets)?;
+                return Err(error);
+            }
+        };
+        if configuration_requires_daemon_reload(&configured)
+            && let Err(error) = self.systemd.daemon_reload().await
         {
             self.restore_configuration(&configured)?;
+            let _ = self.systemd.daemon_reload().await;
+            self.delete_secrets(&created_secrets)?;
             return Err(error);
         }
         if let Err(error) = self
             .systemd
-            .apply(definition.unit, ServiceAction::Restart, context)
+            .apply(&systemd_unit, ServiceAction::Enable, context)
             .await
         {
             self.restore_configuration(&configured)?;
+            if configuration_requires_daemon_reload(&configured) {
+                let _ = self.systemd.daemon_reload().await;
+            }
+            self.delete_secrets(&created_secrets)?;
+            return Err(error);
+        }
+        if let Err(error) = self
+            .systemd
+            .apply(&systemd_unit, ServiceAction::Restart, context)
+            .await
+        {
+            self.restore_configuration(&configured)?;
+            if configuration_requires_daemon_reload(&configured) {
+                let _ = self.systemd.daemon_reload().await;
+            }
+            self.delete_secrets(&created_secrets)?;
             return Err(error);
         }
         let (health, message) = self.health(&service).await;
         if health != ServiceHealth::Healthy {
             self.restore_configuration(&configured)?;
+            if configuration_requires_daemon_reload(&configured) {
+                let _ = self.systemd.daemon_reload().await;
+            }
+            self.delete_secrets(&created_secrets)?;
             return Err(LumicError::Process {
-                executable: definition.unit.into(),
+                executable: systemd_unit,
                 message: format!("service failed post-install health validation: {message}"),
             });
         }
@@ -479,6 +524,20 @@ impl ManagedServiceManager {
             ));
         }
         let service = self.find_service(id)?;
+        let framework = FrameworkStateStore::at_state_dir(&self.state_dir)
+            .load_or_migrate(current_state_time())?;
+        framework
+            .bindings
+            .assert_removable(&ResourceRef::new(ResourceKind::ManagedService, id)?)?;
+        for resource in framework.resources.iter().filter(|resource| {
+            resource
+                .attributes
+                .get("provider_service_id")
+                .and_then(Value::as_str)
+                == Some(id)
+        }) {
+            framework.bindings.assert_removable(&resource.resource)?;
+        }
         if !context.dry_run {
             self.systemd
                 .apply(&service.systemd_unit, ServiceAction::Stop, context)
@@ -543,12 +602,22 @@ impl ManagedServiceManager {
         let before = service.configuration.clone();
         service.configuration = configuration;
         let backup = self.write_configuration(&service).await?;
+        if configuration_requires_daemon_reload(&backup)
+            && let Err(error) = self.systemd.daemon_reload().await
+        {
+            self.restore_configuration(&backup)?;
+            let _ = self.systemd.daemon_reload().await;
+            return Err(error);
+        }
         if let Err(error) = self
             .systemd
             .apply(&service.systemd_unit, ServiceAction::Restart, context)
             .await
         {
             self.restore_configuration(&backup)?;
+            if configuration_requires_daemon_reload(&backup) {
+                let _ = self.systemd.daemon_reload().await;
+            }
             let _ = self
                 .systemd
                 .apply(&service.systemd_unit, ServiceAction::Restart, context)
@@ -558,6 +627,9 @@ impl ManagedServiceManager {
         let (health, message) = self.health(&service).await;
         if health != ServiceHealth::Healthy {
             self.restore_configuration(&backup)?;
+            if configuration_requires_daemon_reload(&backup) {
+                self.systemd.daemon_reload().await?;
+            }
             self.systemd
                 .apply(&service.systemd_unit, ServiceAction::Restart, context)
                 .await?;
@@ -612,7 +684,9 @@ impl ManagedServiceManager {
         if let Some(owner) = owner {
             validate_database_identifier("owner", owner)?;
         }
-        let service = self.postgresql(service_id)?;
+        let service = self.find_service(service_id)?;
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
         let mut state = self.store.load()?;
         if let Some(existing) = state
             .databases
@@ -631,12 +705,7 @@ impl ManagedServiceManager {
         if context.dry_run {
             return Ok(database);
         }
-        let owner_clause = owner
-            .map(|value| format!(" OWNER \"{value}\""))
-            .unwrap_or_default();
-        self.psql(&format!(
-            "SELECT 'CREATE DATABASE \"{name}\"{owner_clause}' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{name}') \\gexec\n"
-        ))
+        self.run(driver.create_database_command(name, owner)?)
             .await?;
         state.databases.push(database.clone());
         self.store.save(&state)?;
@@ -658,7 +727,9 @@ impl ManagedServiceManager {
         context: &OperationContext,
     ) -> Result<DatabaseUser> {
         validate_database_identifier("user", name)?;
-        let service = self.postgresql(service_id)?;
+        let service = self.find_service(service_id)?;
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
         let mut state = self.store.load()?;
         if let Some(existing) = state
             .users
@@ -686,13 +757,7 @@ impl ManagedServiceManager {
         let password = String::from_utf8(password).map_err(|_| LumicError::Internal {
             message: "generated secret is not UTF-8".into(),
         })?;
-        let escaped = password.replace('\'', "''");
-        if let Err(error) = self
-            .psql(&format!(
-                "DO $lumic$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{name}') THEN ALTER ROLE \"{name}\" PASSWORD '{escaped}'; ELSE CREATE ROLE \"{name}\" LOGIN PASSWORD '{escaped}'; END IF; END $lumic$;\n"
-            ))
-            .await
-        {
+        if let Err(error) = self.run(driver.create_user_command(name, &password)?).await {
             self.secrets.delete(&secret_reference)?;
             return Err(error);
         }
@@ -721,7 +786,9 @@ impl ManagedServiceManager {
     ) -> Result<DatabaseUser> {
         validate_database_identifier("database", database)?;
         validate_database_identifier("user", user)?;
-        let service = self.postgresql(service_id)?;
+        let service = self.find_service(service_id)?;
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
         let mut state = self.store.load()?;
         if !state
             .databases
@@ -744,10 +811,8 @@ impl ManagedServiceManager {
         if context.dry_run {
             return Ok(item.clone());
         }
-        self.psql(&format!(
-            "GRANT ALL PRIVILEGES ON DATABASE \"{database}\" TO \"{user}\";\n"
-        ))
-        .await?;
+        self.run(driver.grant_database_command(database, user)?)
+            .await?;
         item.databases.push(database.into());
         item.updated_at_unix_ms = unix_time_ms();
         let item = item.clone();
@@ -779,14 +844,10 @@ impl ManagedServiceManager {
             None => format!("{service_id}-{now}"),
         };
         let directory = PathBuf::from("/var/backups/lumic").join(service_id);
-        let path = match service.kind {
-            ManagedServiceKind::Postgresql => {
-                database
-                    .ok_or_else(|| invalid("database", "PostgreSQL backup requires a database"))?;
-                directory.join(format!("{backup_id}.dump"))
-            }
-            ManagedServiceKind::Redis => directory.join(format!("{backup_id}.rdb")),
-        };
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
+        let plan = driver.backup_plan(&service, database, &directory, &backup_id)?;
+        let path = plan.path.clone();
         if context.dry_run {
             return Ok(ServiceBackup {
                 id: backup_id,
@@ -801,32 +862,11 @@ impl ManagedServiceManager {
             });
         }
         fs::create_dir_all(&directory).map_err(state_io)?;
-        match service.kind {
-            ManagedServiceKind::Postgresql => {
-                let database = database.expect("validated above");
-                self.run(ProcessSpec::new("chown").args([
-                    "postgres:postgres",
-                    "--",
-                    directory.to_string_lossy().as_ref(),
-                ]))
-                .await?;
-                self.run(ProcessSpec::new("runuser").args([
-                    "-u",
-                    "postgres",
-                    "--",
-                    "pg_dump",
-                    "--format=custom",
-                    "--file",
-                    path.to_string_lossy().as_ref(),
-                    "--",
-                    database,
-                ]))
-                .await?;
-            }
-            ManagedServiceKind::Redis => {
-                self.redis_cli(&service, &["SAVE"]).await?;
-                fs::copy("/var/lib/redis/dump.rdb", &path).map_err(state_io)?;
-            }
+        for command in plan.commands {
+            self.run(command).await?;
+        }
+        if let Some(source) = plan.copy_source {
+            fs::copy(source, &path).map_err(state_io)?;
         }
         let backup = ServiceBackup {
             id: backup_id,
@@ -880,14 +920,18 @@ impl ManagedServiceManager {
             .checksum_sha256
             .as_ref()
             .map(|expected| expected == &checksum);
-        let mut header = [0_u8; 5];
+        let mut header = [0_u8; 16];
         let read = fs::File::open(path)
             .and_then(|mut file| file.read(&mut header))
             .map_err(state_io)?;
         let extension = path.extension().and_then(|value| value.to_str());
         let format_valid = match extension {
-            Some("dump") => read == 5 && &header == b"PGDMP",
-            Some("rdb") => read == 5 && &header == b"REDIS",
+            Some("dump") => read >= 5 && &header[..5] == b"PGDMP",
+            Some("rdb") => read >= 5 && &header[..5] == b"REDIS",
+            Some("sql") => {
+                read >= 12
+                    && (header.starts_with(b"-- MySQL dump") || header.starts_with(b"/*M!999999"))
+            }
             _ => false,
         };
         let verified = size_matches && checksum_matches.unwrap_or(true) && format_valid;
@@ -928,82 +972,66 @@ impl ManagedServiceManager {
         if context.dry_run {
             return Ok(source);
         }
-        match service.kind {
-            ManagedServiceKind::Postgresql => {
-                let database = source
-                    .database
-                    .as_deref()
-                    .ok_or_else(|| invalid("backup", "PostgreSQL backup has no database"))?;
-                self.run(ProcessSpec::new("runuser").args([
-                    "-u",
-                    "postgres",
-                    "--",
-                    "pg_restore",
-                    "--clean",
-                    "--if-exists",
-                    "--exit-on-error",
-                    "--dbname",
-                    database,
-                    "--",
-                    &source.path,
-                ]))
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
+        let plan = driver.restore_plan(Path::new(&source.path), source.database.as_deref())?;
+        if plan.stop_service {
+            self.systemd
+                .apply(&service.systemd_unit, ServiceAction::Stop, context)
                 .await?;
-                let (health, message) = self.health(&service).await;
-                if health != ServiceHealth::Healthy {
-                    return Err(LumicError::Process {
-                        executable: service.systemd_unit.clone(),
-                        message: format!(
-                            "PostgreSQL restore completed but health failed: {message}"
-                        ),
-                    });
-                }
+        }
+        let had_target = plan
+            .replacement
+            .as_ref()
+            .map(|replacement| replacement.target.is_file());
+        if let Some(replacement) = &plan.replacement
+            && had_target == Some(true)
+            && let Err(error) =
+                fs::copy(&replacement.target, &replacement.safety_copy).map_err(state_io)
+        {
+            if plan.stop_service {
+                let _ = self
+                    .systemd
+                    .apply(&service.systemd_unit, ServiceAction::Start, context)
+                    .await;
             }
-            ManagedServiceKind::Redis => {
+            return Err(error);
+        }
+        let apply_result = async {
+            for command in plan.commands {
+                self.run(command).await?;
+            }
+            if let Some(replacement) = &plan.replacement {
+                fs::copy(&source.path, &replacement.target).map_err(state_io)?;
+                self.set_configuration_owner(&replacement.target, replacement.owner)
+                    .await?;
+            }
+            if plan.stop_service {
                 self.systemd
-                    .apply(&service.systemd_unit, ServiceAction::Stop, context)
+                    .apply(&service.systemd_unit, ServiceAction::Start, context)
                     .await?;
-                let target = Path::new("/var/lib/redis/dump.rdb");
-                let safety = Path::new("/var/lib/redis/dump.rdb.lumic-before-restore");
-                let had_target = target.is_file();
-                if had_target && let Err(error) = fs::copy(target, safety).map_err(state_io) {
-                    let _ = self
-                        .systemd
-                        .apply(&service.systemd_unit, ServiceAction::Start, context)
-                        .await;
-                    return Err(error);
-                }
-                let replacement = async {
-                    fs::copy(&source.path, target).map_err(state_io)?;
-                    self.run(ProcessSpec::new("chown").args([
-                        "redis:redis",
-                        "--",
-                        target.to_string_lossy().as_ref(),
-                    ]))
-                    .await?;
-                    self.systemd
-                        .apply(&service.systemd_unit, ServiceAction::Start, context)
-                        .await?;
-                    let (health, message) = self.health(&service).await;
-                    if health != ServiceHealth::Healthy {
-                        return Err(LumicError::Process {
-                            executable: service.systemd_unit.clone(),
-                            message: format!("Redis restore failed health validation: {message}"),
-                        });
-                    }
-                    Ok(())
-                }
-                .await;
-                if let Err(error) = replacement {
-                    self.recover_redis_restore(target, safety, had_target, &service, context)
-                        .await
-                        .map_err(|recovery| LumicError::Internal {
-                            message: format!(
-                                "Redis restore failed ({error}); recovery also failed ({recovery})"
-                            ),
-                        })?;
-                    return Err(error);
-                }
             }
+            let (health, message) = self.health(&service).await;
+            if health != ServiceHealth::Healthy {
+                return Err(LumicError::Process {
+                    executable: service.systemd_unit.clone(),
+                    message: format!("restore completed but health validation failed: {message}"),
+                });
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = apply_result {
+            if let (Some(replacement), Some(had_target)) = (&plan.replacement, had_target) {
+                self.recover_restore(replacement, had_target, &service, context)
+                    .await
+                    .map_err(|recovery| LumicError::Internal {
+                        message: format!(
+                            "restore failed ({error}); recovery also failed ({recovery})"
+                        ),
+                    })?;
+            }
+            return Err(error);
         }
         let restored = ServiceBackup {
             id: format!("restore-{backup_id}-{}", unix_time_ms()),
@@ -1033,12 +1061,20 @@ impl ManagedServiceManager {
         context: &OperationContext,
     ) -> Result<lumic_core::application::Application> {
         let state = self.store.load()?;
-        if !state
+        let managed_service = state
             .services
             .iter()
-            .any(|item| item.id == reference.service_id)
-        {
-            return Err(not_found(&reference.service_id));
+            .find(|item| item.id == reference.service_id)
+            .ok_or_else(|| not_found(&reference.service_id))?;
+        let is_search = matches!(
+            managed_service.kind,
+            ManagedServiceKind::Typesense | ManagedServiceKind::Meilisearch
+        );
+        if is_search && (reference.database.is_some() || reference.user.is_some()) {
+            return Err(invalid(
+                "service_reference",
+                "search services expose an endpoint and credential, not a database or user",
+            ));
         }
         if let Some(database) = &reference.database
             && !state
@@ -1051,20 +1087,66 @@ impl ManagedServiceManager {
                 "database is not managed by this service",
             ));
         }
-        reference.secret_reference = if let Some(name) = &reference.user {
-            Some(
-                state
-                    .users
-                    .iter()
-                    .find(|item| item.service_id == reference.service_id && item.name == *name)
-                    .ok_or_else(|| invalid("user", "user is not managed by this service"))?
-                    .secret_reference
-                    .clone(),
-            )
+        let user = if let Some(name) = &reference.user {
+            let user = state
+                .users
+                .iter()
+                .find(|item| item.service_id == reference.service_id && item.name == *name)
+                .ok_or_else(|| invalid("user", "user is not managed by this service"))?;
+            if let Some(database) = &reference.database
+                && !user.databases.iter().any(|granted| granted == database)
+            {
+                return Err(invalid(
+                    "user",
+                    "database user has not been granted access to the selected database",
+                ));
+            }
+            Some(user)
         } else {
             None
         };
-        application_service.attach_service(application, reference, context)
+        reference.secret_reference = if is_search {
+            let secret_name = search_secret_name(managed_service.kind).expect("search kind");
+            let secret_reference = service_secret_reference(&managed_service.id, secret_name);
+            if !managed_service
+                .secret_references
+                .contains(&secret_reference)
+            {
+                return Err(invalid(
+                    "secret_reference",
+                    "search service is missing its managed credential",
+                ));
+            }
+            Some(secret_reference)
+        } else {
+            user.map(|user| user.secret_reference.clone())
+        };
+        let current_application = application_service.inspect(application)?;
+        if context.dry_run {
+            return Ok(current_application);
+        }
+
+        // Upgrade older schema-v2 child resources with the typed outputs used below.
+        self.store.save(&state)?;
+        let framework_store = FrameworkStateStore::at_state_dir(&self.state_dir);
+        let previous_framework = framework_store.load_or_migrate(current_state_time())?;
+        let mut framework = previous_framework.clone();
+        persist_application_service_bindings(
+            &mut framework,
+            &current_application,
+            managed_service,
+            &reference,
+            current_state_time(),
+        )?;
+        framework_store.save(&framework)?;
+
+        match application_service.attach_service(application, reference, context) {
+            Ok(application) => Ok(application),
+            Err(error) => {
+                framework_store.save(&previous_framework)?;
+                Err(error)
+            }
+        }
     }
 
     fn find_service(&self, id: &str) -> Result<ManagedService> {
@@ -1077,17 +1159,6 @@ impl ManagedServiceManager {
             .ok_or_else(|| not_found(id))
     }
 
-    fn postgresql(&self, id: &str) -> Result<ManagedService> {
-        let service = self.find_service(id)?;
-        if service.kind != ManagedServiceKind::Postgresql {
-            return Err(invalid(
-                "service",
-                "database and user primitives require PostgreSQL",
-            ));
-        }
-        Ok(service)
-    }
-
     fn upsert_service(&self, service: ManagedService) -> Result<()> {
         let mut state = self.store.load()?;
         if let Some(existing) = state.services.iter_mut().find(|item| item.id == service.id) {
@@ -1098,27 +1169,11 @@ impl ManagedServiceManager {
         self.store.save(&state)
     }
 
-    fn paths(&self, service: &ManagedService) -> ServicePaths {
-        let definition = ServiceDefinition::for_kind(service.kind);
-        ServicePaths {
-            systemd_unit: definition.unit.into(),
-            configuration_paths: match service.kind {
-                ManagedServiceKind::Postgresql => vec![
-                    self.postgresql_config_path()
-                        .unwrap_or_else(|| {
-                            PathBuf::from("/etc/postgresql/*/*/conf.d/99-lumic.conf")
-                        })
-                        .to_string_lossy()
-                        .into_owned(),
-                ],
-                ManagedServiceKind::Redis => vec![
-                    "/etc/redis/redis.conf".into(),
-                    "/etc/redis/lumic.conf".into(),
-                ],
-            },
-            data_path: definition.data_path.into(),
-            log_source: format!("journalctl --unit {}", definition.unit),
-        }
+    fn paths(&self, service: &ManagedService) -> Result<ServicePaths> {
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
+        let discovered = self.postgresql_config_path();
+        Ok(driver.paths(service, discovered))
     }
 
     async fn write_configuration(
@@ -1126,83 +1181,77 @@ impl ManagedServiceManager {
         service: &ManagedService,
     ) -> Result<Vec<ConfigurationChange>> {
         self.validate_settings(service.kind, &service.configuration)?;
-        match service.kind {
-            ManagedServiceKind::Postgresql => {
-                let path = self.postgresql_config_path().ok_or_else(|| {
-                    invalid(
-                        "configuration",
-                        "could not discover the Debian PostgreSQL cluster conf.d directory",
-                    )
-                })?;
-                let mut content = format!(
-                    "# Managed by Lumic\nlisten_addresses = '{}'\nport = {}\n",
-                    service.configuration.bind_address, service.configuration.port
-                );
-                for (key, value) in &service.configuration.settings {
-                    content.push_str(&format!("{key} = '{value}'\n"));
-                }
-                let existed_before = path.is_file();
-                let result = write_atomic(&path, content.as_bytes(), 0o640)?;
-                let changes = vec![ConfigurationChange {
-                    path,
-                    backup: result.backup,
-                    existed_before,
-                    changed: result.changed,
-                }];
-                if let Err(error) = self
-                    .set_configuration_owner(&changes[0].path, "root:postgres")
-                    .await
-                {
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
+        let mut secrets = BTreeMap::new();
+        for name in driver.secret_names() {
+            let reference = service_secret_reference(&service.id, name);
+            if !service.secret_references.contains(&reference) {
+                return Err(invalid(
+                    "secret_reference",
+                    &format!("managed service is missing required secret '{name}'"),
+                ));
+            }
+            let value = String::from_utf8(self.secrets.read(&reference)?)
+                .map_err(|_| invalid("secret_reference", "managed service secret is not UTF-8"))?;
+            if value.is_empty() || value.len() > 4_096 || value.chars().any(char::is_control) {
+                return Err(invalid(
+                    "secret_reference",
+                    "managed service secret must be bounded single-line text",
+                ));
+            }
+            secrets.insert((*name).to_owned(), value);
+        }
+        let files = driver.configuration_files(service, self.postgresql_config_path(), &secrets)?;
+        let mut changes = Vec::new();
+        for file in files {
+            let path = file.path;
+            let existed_before = path.is_file();
+            let result = match write_atomic(&path, file.content.as_bytes(), file.mode) {
+                Ok(result) => result,
+                Err(error) => {
                     self.restore_configuration(&changes)?;
                     return Err(error);
                 }
-                Ok(changes)
-            }
-            ManagedServiceKind::Redis => {
-                let main = Path::new("/etc/redis/redis.conf");
-                let include = "include /etc/redis/lumic.conf";
-                let existing = fs::read_to_string(main).map_err(state_io)?;
-                let mut changes = Vec::new();
-                if !existing.lines().any(|line| line.trim() == include) {
-                    let content = format!("{}\n{include}\n", existing.trim_end());
-                    let result = write_atomic(main, content.as_bytes(), 0o640)?;
-                    changes.push(ConfigurationChange {
-                        path: main.to_path_buf(),
-                        backup: result.backup,
-                        existed_before: true,
-                        changed: result.changed,
-                    });
-                }
-                let mut content = format!(
-                    "# Managed by Lumic\nbind {}\nport {}\n",
-                    service.configuration.bind_address, service.configuration.port
-                );
-                for (key, value) in &service.configuration.settings {
-                    content.push_str(&format!("{key} {value}\n"));
-                }
-                let path = Path::new("/etc/redis/lumic.conf");
-                let existed_before = path.is_file();
-                match write_atomic(path, content.as_bytes(), 0o640) {
-                    Ok(result) => {
-                        changes.push(ConfigurationChange {
-                            path: path.to_path_buf(),
-                            backup: result.backup,
-                            existed_before,
-                            changed: result.changed,
-                        });
-                        if let Err(error) = self.set_configuration_owner(path, "root:redis").await {
-                            self.restore_configuration(&changes)?;
-                            return Err(error);
-                        }
-                        Ok(changes)
-                    }
-                    Err(error) => {
-                        self.restore_configuration(&changes)?;
-                        Err(error)
-                    }
-                }
+            };
+            changes.push(ConfigurationChange {
+                path: path.clone(),
+                backup: result.backup,
+                existed_before,
+                changed: result.changed,
+            });
+            if let Err(error) = self.set_configuration_owner(&path, file.owner).await {
+                self.restore_configuration(&changes)?;
+                return Err(error);
             }
         }
+        Ok(changes)
+    }
+
+    fn create_missing_service_secrets(
+        &self,
+        service: &ManagedService,
+        driver: &dyn crate::service_driver::ServiceDriver,
+    ) -> Result<Vec<String>> {
+        let mut created = Vec::new();
+        for name in driver.secret_names() {
+            let reference = service_secret_reference(&service.id, name);
+            if !self.secrets.exists(&reference)? {
+                if let Err(error) = self.secrets.create(&reference) {
+                    self.delete_secrets(&created)?;
+                    return Err(error);
+                }
+                created.push(reference);
+            }
+        }
+        Ok(created)
+    }
+
+    fn delete_secrets(&self, references: &[String]) -> Result<()> {
+        for reference in references {
+            self.secrets.delete(reference)?;
+        }
+        Ok(())
     }
 
     fn restore_configuration(&self, changes: &[ConfigurationChange]) -> Result<()> {
@@ -1223,10 +1272,9 @@ impl ManagedServiceManager {
         Ok(())
     }
 
-    async fn recover_redis_restore(
+    async fn recover_restore(
         &self,
-        target: &Path,
-        safety: &Path,
+        replacement: &DriverRestoreReplacement,
         had_target: bool,
         service: &ManagedService,
         context: &OperationContext,
@@ -1236,18 +1284,14 @@ impl ManagedServiceManager {
             .apply(&service.systemd_unit, ServiceAction::Stop, context)
             .await;
         if had_target {
-            if !safety.is_file() {
-                return Err(invalid("backup", "Redis recovery snapshot is missing"));
+            if !replacement.safety_copy.is_file() {
+                return Err(invalid("backup", "restore recovery snapshot is missing"));
             }
-            fs::copy(safety, target).map_err(state_io)?;
-            self.run(ProcessSpec::new("chown").args([
-                "redis:redis",
-                "--",
-                target.to_string_lossy().as_ref(),
-            ]))
-            .await?;
-        } else if target.exists() {
-            fs::remove_file(target).map_err(state_io)?;
+            fs::copy(&replacement.safety_copy, &replacement.target).map_err(state_io)?;
+            self.set_configuration_owner(&replacement.target, replacement.owner)
+                .await?;
+        } else if replacement.target.exists() {
+            fs::remove_file(&replacement.target).map_err(state_io)?;
         }
         self.systemd
             .apply(&service.systemd_unit, ServiceAction::Start, context)
@@ -1256,7 +1300,7 @@ impl ManagedServiceManager {
         if health != ServiceHealth::Healthy {
             return Err(LumicError::Process {
                 executable: service.systemd_unit.clone(),
-                message: format!("Redis recovery failed health validation: {message}"),
+                message: format!("restore recovery failed health validation: {message}"),
             });
         }
         Ok(())
@@ -1290,36 +1334,19 @@ impl ManagedServiceManager {
         kind: ManagedServiceKind,
         configuration: &ServiceConfiguration,
     ) -> Result<()> {
-        let allowed: &[&str] = match kind {
-            ManagedServiceKind::Postgresql => &["max_connections", "shared_buffers", "work_mem"],
-            ManagedServiceKind::Redis => &["maxmemory", "maxmemory_policy", "timeout"],
-        };
-        if let Some(key) = configuration
-            .settings
-            .keys()
-            .find(|key| !allowed.contains(&key.as_str()))
-        {
-            return Err(invalid(
-                "settings",
-                &format!("unsupported {kind} setting: {key}"),
-            ));
-        }
-        Ok(())
+        ServiceDriverRegistry::built_in()?
+            .legacy_driver(kind)?
+            .validate_configuration(configuration)
     }
 
     async fn health(&self, service: &ManagedService) -> (ServiceHealth, String) {
-        let result = match service.kind {
-            ManagedServiceKind::Postgresql => {
-                self.run(ProcessSpec::new("pg_isready").args([
-                    "--host",
-                    &service.configuration.bind_address,
-                    "--port",
-                    &service.configuration.port.to_string(),
-                ]))
-                .await
-            }
-            ManagedServiceKind::Redis => self.redis_cli(service, &["PING"]).await,
+        let probe = match ServiceDriverRegistry::built_in()
+            .and_then(|registry| Ok(registry.legacy_driver(service.kind)?.health_probe(service)))
+        {
+            Ok(probe) => probe,
+            Err(error) => return (ServiceHealth::Unhealthy, error.to_string()),
         };
+        let result = self.run(probe).await;
         match result {
             Ok(output) => (
                 ServiceHealth::Healthy,
@@ -1327,35 +1354,6 @@ impl ManagedServiceManager {
             ),
             Err(error) => (ServiceHealth::Unhealthy, error.to_string()),
         }
-    }
-
-    async fn redis_cli(
-        &self,
-        service: &ManagedService,
-        arguments: &[&str],
-    ) -> Result<ProcessOutput> {
-        self.run(redis_cli_spec(
-            &service.configuration.bind_address,
-            service.configuration.port,
-            arguments,
-        ))
-        .await
-    }
-
-    async fn psql(&self, sql: &str) -> Result<()> {
-        let mut spec = ProcessSpec::new("runuser").args([
-            "-u",
-            "postgres",
-            "--",
-            "psql",
-            "--no-psqlrc",
-            "--set",
-            "ON_ERROR_STOP=1",
-            "--quiet",
-        ]);
-        spec.timeout = Duration::from_secs(60);
-        spec.stdin = Some(sql.as_bytes().to_vec());
-        self.run(spec).await.map(|_| ())
     }
 
     async fn run(&self, spec: ProcessSpec) -> Result<ProcessOutput> {
@@ -1453,16 +1451,58 @@ fn database_user_secret_reference(service_id: &str, user: &str) -> String {
     format!("{service_id}-{}-password", user.replace('_', "-"))
 }
 
-fn redis_cli_spec(bind_address: &str, port: u16, arguments: &[&str]) -> ProcessSpec {
-    let mut spec =
-        ProcessSpec::new("redis-cli").args(["-h", bind_address, "-p", &port.to_string()]);
-    spec.args
-        .extend(arguments.iter().map(|value| (*value).to_owned()));
-    spec
+fn service_secret_reference(service_id: &str, secret_name: &str) -> String {
+    format!("{service_id}-{}", secret_name.replace('_', "-"))
+}
+
+fn configuration_requires_daemon_reload(changes: &[ConfigurationChange]) -> bool {
+    changes
+        .iter()
+        .any(|change| change.changed && change.path.starts_with("/etc/systemd/system"))
 }
 
 fn not_found(id: &str) -> LumicError {
     invalid("service", &format!("managed service '{id}' was not found"))
+}
+
+fn managed_kind_for_definition(definition_id: &str) -> Result<ManagedServiceKind> {
+    let definition = Catalog::built_in()?
+        .service(definition_id)
+        .cloned()
+        .ok_or_else(|| LumicError::InvalidInput {
+            field: "definition".into(),
+            message: "unknown service catalog definition".into(),
+        })?;
+    match definition.driver.as_str() {
+        "mysql" => Ok(ManagedServiceKind::Mysql),
+        "postgresql" => Ok(ManagedServiceKind::Postgresql),
+        "redis" => Ok(ManagedServiceKind::Redis),
+        "typesense" => Ok(ManagedServiceKind::Typesense),
+        "meilisearch" => Ok(ManagedServiceKind::Meilisearch),
+        _ => Err(LumicError::InvalidInput {
+            field: "definition".into(),
+            message: format!(
+                "catalog definition '{}' has no managed-service driver",
+                definition.id
+            ),
+        }),
+    }
+}
+
+fn service_definition(kind: ManagedServiceKind) -> Result<(String, String)> {
+    let registry = ServiceDriverRegistry::built_in()?;
+    let definition = registry.definition(kind.id())?;
+    let platform = definition
+        .platforms
+        .iter()
+        .find(|platform| matches!(platform.distribution.as_str(), "debian" | "ubuntu"))
+        .ok_or_else(|| invalid("service.platform", "no supported native platform mapping"))?;
+    Ok((platform.package.clone(), platform.unit.clone()))
+}
+
+fn default_service_configuration(kind: ManagedServiceKind) -> Result<ServiceConfiguration> {
+    let registry = ServiceDriverRegistry::built_in()?;
+    Ok(registry.legacy_driver(kind)?.default_configuration())
 }
 
 fn state_io(error: std::io::Error) -> LumicError {
@@ -1471,15 +1511,159 @@ fn state_io(error: std::io::Error) -> LumicError {
     }
 }
 
+fn current_state_time() -> u64 {
+    u64::try_from(unix_time_ms()).unwrap_or(u64::MAX)
+}
+
+fn persist_application_service_bindings(
+    state: &mut crate::framework_state::FrameworkState,
+    application: &lumic_core::application::Application,
+    service: &ManagedService,
+    reference: &ApplicationServiceReference,
+    now: u64,
+) -> Result<()> {
+    let application_ref = ResourceRef::new(ResourceKind::Application, &application.id)?;
+    if let Some(existing) = state
+        .resources
+        .iter_mut()
+        .find(|resource| resource.resource == application_ref)
+    {
+        existing.updated_at_unix_ms = now;
+    } else {
+        state.resources.push(ResourceRecord {
+            resource: application_ref.clone(),
+            attributes: BTreeMap::from([
+                ("domain".into(), Value::String(application.domain.clone())),
+                ("resource_type".into(), Value::String("application".into())),
+            ]),
+            outputs: ResourceOutputs::new(),
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+        });
+    }
+
+    let database_input = format!("{}_database", reference.role);
+    let endpoint_input = format!("{}_endpoint", reference.role);
+    let credential_input = format!("{}_credential", reference.role);
+    state.bindings.0.retain(|binding| {
+        binding.consumer != application_ref
+            || (binding.input != database_input
+                && binding.input != endpoint_input
+                && binding.input != credential_input)
+    });
+    if let Some(secret_name) = search_secret_name(service.kind) {
+        replace_binding(
+            &mut state.bindings.0,
+            Binding {
+                id: binding_id("endpoint", &application.id, &reference.role),
+                producer: ResourceRef::new(ResourceKind::ManagedService, &reference.service_id)?,
+                output: "http".into(),
+                consumer: application_ref.clone(),
+                input: endpoint_input,
+                created_at_unix_ms: now,
+            },
+        );
+        replace_binding(
+            &mut state.bindings.0,
+            Binding {
+                id: binding_id("credential", &application.id, &reference.role),
+                producer: ResourceRef::new(ResourceKind::ManagedService, &reference.service_id)?,
+                output: secret_name.into(),
+                consumer: application_ref,
+                input: credential_input,
+                created_at_unix_ms: now,
+            },
+        );
+        return state.validate();
+    }
+    if let Some(database) = &reference.database {
+        replace_binding(
+            &mut state.bindings.0,
+            Binding {
+                id: binding_id("database", &application.id, &reference.role),
+                producer: ResourceRef::new(
+                    ResourceKind::ServiceResource,
+                    format!("database.{}-{database}", reference.service_id),
+                )?,
+                output: "database".into(),
+                consumer: application_ref.clone(),
+                input: database_input,
+                created_at_unix_ms: now,
+            },
+        );
+    }
+    if let Some(user) = &reference.user {
+        replace_binding(
+            &mut state.bindings.0,
+            Binding {
+                id: binding_id("credential", &application.id, &reference.role),
+                producer: ResourceRef::new(
+                    ResourceKind::ServiceResource,
+                    format!("database-user.{}-{user}", reference.service_id),
+                )?,
+                output: "credential".into(),
+                consumer: application_ref,
+                input: credential_input,
+                created_at_unix_ms: now,
+            },
+        );
+    }
+    state.validate()
+}
+
+fn search_secret_name(kind: ManagedServiceKind) -> Option<&'static str> {
+    match kind {
+        ManagedServiceKind::Typesense => Some("api_key"),
+        ManagedServiceKind::Meilisearch => Some("master_key"),
+        _ => None,
+    }
+}
+
+fn replace_binding(bindings: &mut Vec<Binding>, binding: Binding) {
+    bindings.retain(|existing| {
+        existing.id != binding.id
+            && !(existing.consumer == binding.consumer && existing.input == binding.input)
+    });
+    bindings.push(binding);
+}
+
+fn binding_id(kind: &str, application: &str, role: &str) -> String {
+    let digest = Sha256::digest(format!("{application}\0{role}\0{kind}").as_bytes());
+    format!("application-{kind}-{digest:x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lumic_core::application::{Application, ApplicationRuntime, HealthCheck, TlsState};
 
     fn temp_dir(name: &str) -> PathBuf {
         let path =
             std::env::temp_dir().join(format!("lumic-managed-{name}-{}", std::process::id()));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    fn application_fixture(now: u128) -> Application {
+        Application {
+            id: "demo".into(),
+            name: "demo".into(),
+            domain: "demo.example.com".into(),
+            www_alias: false,
+            root: "/var/lib/lumic/apps/demo".into(),
+            runtime: ApplicationRuntime::Php,
+            repository: None,
+            environment_references: BTreeMap::new(),
+            service_references: Vec::new(),
+            health_check: HealthCheck::default(),
+            processes: Vec::new(),
+            web_configured: false,
+            tls: TlsState::default(),
+            release_retention: 5,
+            health_status: "not_deployed".into(),
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+        }
     }
 
     #[test]
@@ -1494,7 +1678,7 @@ mod tests {
             package: "postgresql".into(),
             systemd_unit: "postgresql.service".into(),
             desired_state: DesiredServiceState::Running,
-            configuration: ServiceConfiguration::defaults(ManagedServiceKind::Postgresql),
+            configuration: default_service_configuration(ManagedServiceKind::Postgresql).unwrap(),
             secret_references: Vec::new(),
             dependencies: Vec::new(),
             created_at_unix_ms: now,
@@ -1507,6 +1691,8 @@ mod tests {
             })
             .unwrap();
         assert_eq!(store.load().unwrap().services, vec![service]);
+        assert!(directory.join("resources.json").exists());
+        assert!(!directory.join("managed-services.json").exists());
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1514,7 +1700,7 @@ mod tests {
     fn provider_settings_are_explicitly_allowlisted() {
         let directory = temp_dir("settings");
         let manager = ManagedServiceManager::at_state_dir(&directory);
-        let mut config = ServiceConfiguration::defaults(ManagedServiceKind::Redis);
+        let mut config = default_service_configuration(ManagedServiceKind::Redis).unwrap();
         config.settings.insert("requirepass".into(), "leak".into());
         assert!(
             manager
@@ -1532,10 +1718,183 @@ mod tests {
     }
 
     #[test]
-    fn redis_cli_uses_supported_connection_flags() {
-        let spec = redis_cli_spec("127.0.0.1", 6379, &["PING"]);
-        assert_eq!(spec.executable, "redis-cli");
-        assert_eq!(spec.args, ["-h", "127.0.0.1", "-p", "6379", "PING"]);
+    fn multiple_application_databases_use_distinct_secret_reference_bindings() {
+        let directory = temp_dir("application-database-bindings");
+        let store = ManagedServiceStore::at_state_dir(&directory);
+        let now = unix_time_ms();
+        let service = ManagedService {
+            id: "mysql".into(),
+            name: "mysql".into(),
+            kind: ManagedServiceKind::Mysql,
+            package: "default-mysql-server".into(),
+            systemd_unit: "mysql.service".into(),
+            desired_state: DesiredServiceState::Running,
+            configuration: default_service_configuration(ManagedServiceKind::Mysql).unwrap(),
+            secret_references: vec![
+                "mysql-primary-password".into(),
+                "mysql-audit-password".into(),
+            ],
+            dependencies: Vec::new(),
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+        };
+        store
+            .save(&ManagedServiceState {
+                services: vec![service.clone()],
+                databases: vec![
+                    Database {
+                        id: "mysql-primary".into(),
+                        service_id: "mysql".into(),
+                        name: "primary".into(),
+                        owner: None,
+                        created_at_unix_ms: now,
+                    },
+                    Database {
+                        id: "mysql-audit".into(),
+                        service_id: "mysql".into(),
+                        name: "audit".into(),
+                        owner: None,
+                        created_at_unix_ms: now,
+                    },
+                ],
+                users: vec![
+                    DatabaseUser {
+                        id: "mysql-primary_user".into(),
+                        service_id: "mysql".into(),
+                        name: "primary_user".into(),
+                        secret_reference: "mysql-primary-password".into(),
+                        databases: vec!["primary".into()],
+                        created_at_unix_ms: now,
+                        updated_at_unix_ms: now,
+                    },
+                    DatabaseUser {
+                        id: "mysql-audit_user".into(),
+                        service_id: "mysql".into(),
+                        name: "audit_user".into(),
+                        secret_reference: "mysql-audit-password".into(),
+                        databases: vec!["audit".into()],
+                        created_at_unix_ms: now,
+                        updated_at_unix_ms: now,
+                    },
+                ],
+                backups: Vec::new(),
+            })
+            .unwrap();
+        let application = application_fixture(now);
+        let framework_store = FrameworkStateStore::at_state_dir(&directory);
+        let mut framework = framework_store.load().unwrap();
+        for (role, database, user, secret) in [
+            (
+                "primary",
+                "primary",
+                "primary_user",
+                "mysql-primary-password",
+            ),
+            ("audit", "audit", "audit_user", "mysql-audit-password"),
+        ] {
+            persist_application_service_bindings(
+                &mut framework,
+                &application,
+                &service,
+                &ApplicationServiceReference {
+                    service_id: "mysql".into(),
+                    role: role.into(),
+                    database: Some(database.into()),
+                    user: Some(user.into()),
+                    secret_reference: Some(secret.into()),
+                },
+                current_state_time(),
+            )
+            .unwrap();
+        }
+        assert_eq!(framework.bindings.0.len(), 4);
+        let credential_outputs = framework
+            .resources
+            .iter()
+            .filter_map(|resource| resource.outputs.get("credential"))
+            .collect::<Vec<_>>();
+        assert_eq!(credential_outputs.len(), 2);
+        assert!(credential_outputs.iter().all(|output| {
+            output.sensitive
+                && output
+                    .value
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("secret://"))
+        }));
+        assert!(framework.validate().is_ok());
+        assert!(
+            framework
+                .bindings
+                .assert_removable(
+                    &ResourceRef::new(ResourceKind::ServiceResource, "database.mysql-primary")
+                        .unwrap()
+                )
+                .is_err()
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn search_attachment_publishes_endpoint_and_credential_bindings() {
+        let directory = temp_dir("application-search-bindings");
+        let now = unix_time_ms();
+        let service = ManagedService {
+            id: "search".into(),
+            name: "search".into(),
+            kind: ManagedServiceKind::Typesense,
+            package: "typesense-server".into(),
+            systemd_unit: "typesense-server.service".into(),
+            desired_state: DesiredServiceState::Running,
+            configuration: default_service_configuration(ManagedServiceKind::Typesense).unwrap(),
+            secret_references: vec!["search-api-key".into()],
+            dependencies: Vec::new(),
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+        };
+        ManagedServiceStore::at_state_dir(&directory)
+            .save(&ManagedServiceState {
+                services: vec![service.clone()],
+                ..Default::default()
+            })
+            .unwrap();
+        let mut framework = FrameworkStateStore::at_state_dir(&directory)
+            .load()
+            .unwrap();
+        persist_application_service_bindings(
+            &mut framework,
+            &application_fixture(now),
+            &service,
+            &ApplicationServiceReference {
+                service_id: "search".into(),
+                role: "search".into(),
+                database: None,
+                user: None,
+                secret_reference: Some("search-api-key".into()),
+            },
+            current_state_time(),
+        )
+        .unwrap();
+
+        assert_eq!(framework.bindings.0.len(), 2);
+        assert!(
+            framework
+                .bindings
+                .0
+                .iter()
+                .any(|binding| { binding.output == "http" && binding.input == "search_endpoint" })
+        );
+        assert!(framework.bindings.0.iter().any(|binding| {
+            binding.output == "api_key" && binding.input == "search_credential"
+        }));
+        assert!(
+            framework
+                .bindings
+                .assert_removable(
+                    &ResourceRef::new(ResourceKind::ManagedService, "search").unwrap()
+                )
+                .is_err()
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -1579,18 +1938,21 @@ mod tests {
         let directory = temp_dir("dependencies");
         let store = ManagedServiceStore::at_state_dir(&directory);
         let now = unix_time_ms();
-        let service = |id: &str, kind| ManagedService {
-            id: id.into(),
-            name: id.into(),
-            kind,
-            package: ServiceDefinition::for_kind(kind).package.into(),
-            systemd_unit: ServiceDefinition::for_kind(kind).unit.into(),
-            desired_state: DesiredServiceState::Running,
-            configuration: ServiceConfiguration::defaults(kind),
-            secret_references: Vec::new(),
-            dependencies: Vec::new(),
-            created_at_unix_ms: now,
-            updated_at_unix_ms: now,
+        let service = |id: &str, kind| {
+            let (package, systemd_unit) = service_definition(kind).unwrap();
+            ManagedService {
+                id: id.into(),
+                name: id.into(),
+                kind,
+                package,
+                systemd_unit,
+                desired_state: DesiredServiceState::Running,
+                configuration: default_service_configuration(kind).unwrap(),
+                secret_references: Vec::new(),
+                dependencies: Vec::new(),
+                created_at_unix_ms: now,
+                updated_at_unix_ms: now,
+            }
         };
         store
             .save(&ManagedServiceState {

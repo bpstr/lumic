@@ -279,9 +279,7 @@ impl InfrastructureService {
     pub fn read_model(&self) -> Result<InfrastructureReadModel> {
         let state = self.store.load()?;
         Ok(InfrastructureReadModel {
-            local_node: state
-                .local_node
-                .ok_or_else(|| invalid("node", "node identity has not been initialized"))?,
+            local_node: state.local_node,
             repositories: state.repositories,
             mirrors: state.mirrors,
             triggers: state.triggers,
@@ -1613,6 +1611,16 @@ mod tests {
         assert!(node_b.verify_remote_request(&request, &context).is_err());
         fs::remove_dir_all(root_a).unwrap();
         fs::remove_dir_all(root_b).unwrap();
+    }
+
+    #[test]
+    fn read_model_reports_an_uninitialized_local_node() {
+        let (root, service) = service("read-model-uninitialized");
+
+        let model = service.read_model().unwrap();
+
+        assert_eq!(model.local_node, None);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

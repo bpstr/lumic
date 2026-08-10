@@ -1,0 +1,19 @@
+schema_version = 1
+definition_version = 1
+id = "node"
+name = "Node.js"
+description = "Versioned Node.js application runtime"
+driver = "node"
+instance_policy = "versioned"
+
+[[configuration]]
+key = "version"
+label = "Node.js version"
+type = "version"
+required = true
+apply = "recreate"
+
+[[outputs]]
+key = "executable"
+type = "executable"
+capability = "runtime.node"

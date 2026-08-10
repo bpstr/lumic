@@ -113,7 +113,7 @@ jobs:
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       - run: cargo build --locked -p lumic-cli --release
       - run: sudo apt-get update
-      - name: PostgreSQL and Redis live lifecycle smoke test
+      - name: MySQL, PostgreSQL and Redis live lifecycle smoke test
         run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_MANAGED_SERVICE_LIVE=1 "$PWD/tests/epic-b-smoke.sh"
       - name: Laravel and Redis intelligence apply and rollback smoke test
         run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_EPIC_F_LIVE=1 "$PWD/tests/epic-f-smoke.sh"

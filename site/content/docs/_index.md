@@ -22,7 +22,7 @@ A fresh VPS becomes an autonomous Lumic node with the daemon, CLI, management su
 lumic how-are-you
 ```
 
-The CLI, UI and MCP `server_attention` tool expose the same factual health, recent changes, active incidents, upcoming attention and recommendations. Local stdio MCP onboarding is documented in the [MCP guide](@/docs/mcp.md); authenticated remote MCP transport is not implemented.
+The CLI, UI and MCP `server_attention` tool expose the same factual health, recent changes, active incidents, upcoming attention and recommendations. Installed stdio, restricted SSH and optional authenticated Streamable HTTP onboarding are documented in the [MCP guide](@/docs/mcp.md).
 
 ## 3. Open the UI
 

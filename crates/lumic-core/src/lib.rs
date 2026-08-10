@@ -3,15 +3,24 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 pub mod application;
+pub mod application_lifecycle;
+pub mod artifact;
 pub mod attention;
+pub mod binding;
+pub mod catalog;
+pub mod certificate;
 pub mod events;
 pub mod infrastructure;
 pub mod intelligence;
 pub mod managed_service;
 pub mod operations;
 pub mod package;
+pub mod pipeline;
 pub mod recipe;
+pub mod resource;
 pub mod server;
+pub mod service;
+pub mod software;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -52,29 +52,81 @@ pub struct PackagePolicy {
     allowed: BTreeSet<PackageName>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageRequirement {
+    pub name: PackageName,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageTrustSource {
+    BuiltInPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewedPackageRequirement {
+    pub requirement: PackageRequirement,
+    pub trust_source: PackageTrustSource,
+}
+
 impl PackagePolicy {
     pub fn default_catalog() -> Self {
         let names = [
             "ca-certificates",
             "certbot",
+            "apache2",
             "composer",
             "curl",
+            "default-mysql-server",
             "ffmpeg",
             "git",
             "nginx",
+            "meilisearch",
             "nodejs",
+            "npm",
             "php",
             "php-cli",
             "php-common",
             "php-curl",
             "php-fpm",
             "php-intl",
+            "php-mysql",
             "php-mbstring",
             "php-xml",
             "php-zip",
+            "php8.1-cli",
+            "php8.1-curl",
+            "php8.1-fpm",
+            "php8.1-intl",
+            "php8.1-mbstring",
+            "php8.1-xml",
+            "php8.1-zip",
+            "php8.2-cli",
+            "php8.2-curl",
+            "php8.2-fpm",
+            "php8.2-intl",
+            "php8.2-mbstring",
+            "php8.2-xml",
+            "php8.2-zip",
+            "php8.3-cli",
+            "php8.3-curl",
+            "php8.3-fpm",
+            "php8.3-intl",
+            "php8.3-mbstring",
+            "php8.3-xml",
+            "php8.3-zip",
+            "php8.4-cli",
+            "php8.4-curl",
+            "php8.4-fpm",
+            "php8.4-intl",
+            "php8.4-mbstring",
+            "php8.4-xml",
+            "php8.4-zip",
             "python3-certbot-nginx",
             "postgresql",
             "redis-server",
+            "typesense-server",
         ];
         Self {
             allowed: names
@@ -97,6 +149,39 @@ impl PackagePolicy {
                 capability: crate::Capability::new(format!("package.install.{package}")),
             })
         }
+    }
+
+    pub fn review(&self, requirement: PackageRequirement) -> Result<ReviewedPackageRequirement> {
+        if requirement.reason.trim().is_empty()
+            || requirement.reason.len() > 256
+            || requirement.reason.contains(['\n', '\r', '\0'])
+        {
+            return Err(LumicError::InvalidInput {
+                field: "package.reason".into(),
+                message: "must be a short, non-empty explanation".into(),
+            });
+        }
+        self.authorize(&requirement.name)?;
+        Ok(ReviewedPackageRequirement {
+            requirement,
+            trust_source: PackageTrustSource::BuiltInPolicy,
+        })
+    }
+
+    pub fn review_names(
+        &self,
+        packages: &[String],
+        reason: &str,
+    ) -> Result<Vec<ReviewedPackageRequirement>> {
+        packages
+            .iter()
+            .map(|package| {
+                self.review(PackageRequirement {
+                    name: PackageName::parse(package)?,
+                    reason: reason.into(),
+                })
+            })
+            .collect()
     }
 
     pub fn allowed(&self) -> impl Iterator<Item = &PackageName> {
@@ -148,5 +233,17 @@ mod tests {
                 .authorize(&PackageName::parse("unknown-good-name").unwrap())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn package_trust_is_derived_only_after_policy_review() {
+        let policy = PackagePolicy::default_catalog();
+        let reviewed = policy
+            .review(PackageRequirement {
+                name: PackageName::parse("nginx").unwrap(),
+                reason: "serve the application".into(),
+            })
+            .unwrap();
+        assert_eq!(reviewed.trust_source, PackageTrustSource::BuiltInPolicy);
     }
 }

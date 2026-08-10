@@ -1,5 +1,5 @@
 use crate::{LumicError, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,12 +63,130 @@ pub enum ApplicationProcessKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduleTiming {
+    Calendar { expression: String },
+    Interval { seconds: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissedRunPolicy {
+    RunImmediately,
+    Skip,
+}
+
+/// Backend-neutral timing and missed-run intent for an application job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ApplicationSchedule {
+    pub timing: ScheduleTiming,
+    pub missed_run_policy: MissedRunPolicy,
+    pub jitter_seconds: u64,
+}
+
+impl ApplicationSchedule {
+    pub fn calendar(expression: impl Into<String>) -> Self {
+        Self {
+            timing: ScheduleTiming::Calendar {
+                expression: expression.into(),
+            },
+            missed_run_policy: MissedRunPolicy::RunImmediately,
+            jitter_seconds: 0,
+        }
+    }
+
+    pub fn interval(seconds: u64) -> Self {
+        Self {
+            timing: ScheduleTiming::Interval { seconds },
+            missed_run_policy: MissedRunPolicy::RunImmediately,
+            jitter_seconds: 0,
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        match &self.timing {
+            ScheduleTiming::Calendar { expression }
+                if expression.is_empty()
+                    || expression.len() > 128
+                    || expression.contains(['\n', '\r', '\0']) =>
+            {
+                Err(invalid_schedule("calendar expression is invalid"))
+            }
+            ScheduleTiming::Interval { seconds } if *seconds == 0 => {
+                Err(invalid_schedule("interval must be greater than zero"))
+            }
+            _ if self.jitter_seconds > 86_400 => {
+                Err(invalid_schedule("jitter must not exceed one day"))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ApplicationSchedule {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Representation {
+            Legacy(String),
+            Structured {
+                timing: ScheduleTiming,
+                missed_run_policy: MissedRunPolicy,
+                #[serde(default)]
+                jitter_seconds: u64,
+            },
+        }
+
+        Ok(match Representation::deserialize(deserializer)? {
+            Representation::Legacy(expression) => Self::calendar(expression),
+            Representation::Structured {
+                timing,
+                missed_run_policy,
+                jitter_seconds,
+            } => Self {
+                timing,
+                missed_run_policy,
+                jitter_seconds,
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplicationProcess {
     pub name: String,
     pub kind: ApplicationProcessKind,
     pub command: Vec<String>,
-    pub schedule: Option<String>,
+    pub schedule: Option<ApplicationSchedule>,
     pub enabled: bool,
+}
+
+impl ApplicationProcess {
+    pub fn validate(&self) -> Result<()> {
+        validate_slug("process", &self.name)?;
+        validate_command(&self.command)?;
+        match self.kind {
+            ApplicationProcessKind::Worker if self.schedule.is_some() => {
+                Err(invalid_schedule("worker processes cannot have a schedule"))
+            }
+            ApplicationProcessKind::Schedule => self
+                .schedule
+                .as_ref()
+                .ok_or_else(|| invalid_schedule("scheduled processes require timing"))?
+                .validate(),
+            ApplicationProcessKind::Worker => Ok(()),
+        }
+    }
+}
+
+fn invalid_schedule(message: &str) -> LumicError {
+    LumicError::InvalidInput {
+        field: "schedule".into(),
+        message: message.into(),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -261,5 +379,22 @@ mod tests {
         assert!(validate_repository_url("https://example.com/repo.git").is_ok());
         assert!(validate_command(&["php".into(), "artisan".into()]).is_ok());
         assert!(validate_command(&["sh\n-c".into()]).is_err());
+    }
+
+    #[test]
+    fn schedule_deserialization_migrates_legacy_calendar_strings() {
+        let schedule: ApplicationSchedule = serde_json::from_str("\"daily\"").unwrap();
+        assert_eq!(schedule, ApplicationSchedule::calendar("daily"));
+        assert!(
+            serde_json::to_string(&schedule)
+                .unwrap()
+                .contains("missed_run_policy")
+        );
+    }
+
+    #[test]
+    fn interval_schedules_reject_zero_seconds() {
+        assert!(ApplicationSchedule::interval(0).validate().is_err());
+        assert!(ApplicationSchedule::interval(60).validate().is_ok());
     }
 }

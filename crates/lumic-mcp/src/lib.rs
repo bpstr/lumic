@@ -1,11 +1,16 @@
 //! Model Context Protocol adapter over Lumic's typed host capabilities.
 
+mod transport;
+
+pub use transport::{McpHttpCredentialStore, serve_stdio, streamable_http_router};
+
 use lumic_core::{
     HostFacts, OperationContext, OperationInterface,
     application::{
-        ApplicationProcess, ApplicationProcessKind, ApplicationRuntime,
+        ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, ApplicationSchedule,
         ApplicationServiceReference, Deployment,
     },
+    binding::Binding,
     infrastructure::{
         DeploymentMemberStatus, EnvironmentBundle, EnvironmentTier, EnvironmentTransform,
         MembershipKind, NodeEnrollment, NodeRole, RemoteOperation, ResourceEndpoint,
@@ -18,6 +23,7 @@ use lumic_core::{
     },
     package::PackageName,
     recipe::RecipeInstallRequest,
+    resource::{ResourceKind, ResourceRef},
     server::{
         FirewallDecision, FirewallRule, NetworkProtocol, ProcessSignal, RemediationAction,
         UpdateScope,
@@ -35,7 +41,9 @@ use lumic_platform::{
     managed_service::ManagedServiceManager,
     operations::OperationsService,
     recipe::RecipeManager,
+    resource_framework::ResourceFramework,
     server::HostOperator,
+    software::SoftwareManager,
     systemd::{ServiceAction, SystemdServiceManager},
 };
 use rmcp::{
@@ -327,6 +335,8 @@ struct SetRepository {
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct ProvisionApplication {
     app: String,
+    /// Required for PHP. Supported values: 8.1, 8.2, 8.3, 8.4.
+    runtime_version: Option<String>,
     #[serde(default)]
     components: Vec<String>,
     approved: bool,
@@ -376,20 +386,96 @@ struct InstallPackage {
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct SoftwareInput {
+    /// One of: wordpress, php, mysql, postgresql, redis, typesense, meilisearch, nginx, apache, nodejs, nvm.
+    software: String,
+    /// Existing Linux account. Required to inspect NVM; ignored by system-scoped installers.
+    user: Option<String>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct SetupSoftware {
+    /// One of: wordpress, php, mysql, postgresql, redis, typesense, meilisearch, nginx, apache, nodejs, nvm.
+    software: String,
+    /// Existing Linux account. Required for NVM; ignored by system-scoped installers.
+    user: Option<String>,
+    #[serde(default)]
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct ManagedServiceId {
     service: String,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct CatalogSchemaRequest {
+    definition: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ResourceRequest {
+    /// Resource kind such as managed_service, application, runtime, or artifact.
+    kind: String,
+    id: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct OptionalResourceRequest {
+    kind: Option<String>,
+    id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ResourcePlanRequest {
+    /// install, start, stop, restart, update, or remove.
+    action: String,
+    service: String,
+    definition: Option<String>,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ResourceApplyRequest {
+    /// install, start, stop, restart, update, or remove.
+    action: String,
+    service: String,
+    definition: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct CreateResourceBinding {
+    id: String,
+    producer_kind: String,
+    producer_id: String,
+    output: String,
+    consumer_kind: String,
+    consumer_id: String,
+    input: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RemoveResourceBinding {
+    binding: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct OperationRequest {
+    operation: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct DetectManagedService {
-    /// One of: postgresql, redis.
+    /// One of: mysql, postgresql, redis, typesense, meilisearch.
     kind: String,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct InstallManagedService {
     service: String,
-    /// One of: postgresql, redis.
+    /// One of: mysql, postgresql, redis, typesense, meilisearch.
     kind: String,
     #[serde(default)]
     approved: bool,
@@ -1032,8 +1118,9 @@ impl LumicMcpServer {
         require_mutation(request.approved)?;
         to_json(
             &application_service()
-                .provision(
+                .provision_versioned(
                     &request.app,
+                    request.runtime_version.as_deref(),
                     &request.components,
                     &operation_context("application_provision"),
                 )
@@ -1097,7 +1184,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "application_enable_tls",
-        description = "Install Certbot, issue a Let's Encrypt certificate through nginx, and enable HTTPS redirect. Mutating and externally observable: requires node policy enablement and approved=true."
+        description = "Install the trusted Certbot packages, issue a named Let's Encrypt certificate, then atomically attach it to the owned nginx web host with validation, reload, rollback, and a persisted resource binding. Mutating and externally observable: requires node policy enablement and approved=true."
     )]
     async fn application_enable_tls(
         &self,
@@ -1134,7 +1221,7 @@ impl LumicMcpServer {
             name: request.name,
             kind,
             command: request.command,
-            schedule: request.schedule,
+            schedule: request.schedule.map(ApplicationSchedule::calendar),
             enabled: request.enabled,
         };
         to_json(
@@ -1565,6 +1652,238 @@ impl LumicMcpServer {
     }
 
     #[tool(
+        name = "resource_catalog",
+        description = "List trusted service, runtime, and application catalog definitions, including capabilities, schemas, outputs, and platform mappings. Read-only."
+    )]
+    fn resource_catalog(&self) -> Result<String, String> {
+        to_json(&resource_framework().catalog().map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "resource_schema",
+        description = "Return one trusted service definition and the exact shared configuration schema used by CLI, UI, MCP, and its driver. Read-only."
+    )]
+    fn resource_schema(
+        &self,
+        Parameters(request): Parameters<CatalogSchemaRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &resource_framework()
+                .service_schema(&request.definition)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "resource_plan",
+        description = "Resolve a catalog-driven install or typed lifecycle plan without mutation. Use resource_apply only after reviewing it."
+    )]
+    async fn resource_plan(
+        &self,
+        Parameters(request): Parameters<ResourcePlanRequest>,
+    ) -> Result<String, String> {
+        let manager = managed_service_manager();
+        let context = planning_context("resource_plan");
+        match request.action.as_str() {
+            "install" => to_json(
+                &manager
+                    .plan_catalog_install(
+                        &request.service,
+                        request
+                            .definition
+                            .as_deref()
+                            .ok_or("definition is required for install")?,
+                    )
+                    .map_err(string_error)?,
+            ),
+            "start" => to_json(
+                &manager
+                    .lifecycle(&request.service, ServiceAction::Start, &context)
+                    .await
+                    .map_err(string_error)?,
+            ),
+            "stop" => to_json(
+                &manager
+                    .lifecycle(&request.service, ServiceAction::Stop, &context)
+                    .await
+                    .map_err(string_error)?,
+            ),
+            "restart" => to_json(
+                &manager
+                    .lifecycle(&request.service, ServiceAction::Restart, &context)
+                    .await
+                    .map_err(string_error)?,
+            ),
+            "update" => to_json(
+                &manager
+                    .update(&request.service, &context)
+                    .await
+                    .map_err(string_error)?,
+            ),
+            "remove" => to_json(
+                &manager
+                    .remove(&request.service, false, &context)
+                    .await
+                    .map_err(string_error)?,
+            ),
+            _ => Err("action must be install, start, stop, restart, update, or remove".into()),
+        }
+    }
+
+    #[tool(
+        name = "resource_apply",
+        description = "Apply a catalog install or a typed start, stop, restart, update, or remove action. Mutating: requires node policy enablement and approved=true."
+    )]
+    async fn resource_apply(
+        &self,
+        Parameters(request): Parameters<ResourceApplyRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let manager = managed_service_manager();
+        let context = operation_context("resource_apply");
+        let mutation = match request.action.as_str() {
+            "install" => {
+                manager
+                    .install_catalog(
+                        &request.service,
+                        request
+                            .definition
+                            .as_deref()
+                            .ok_or("definition is required for install")?,
+                        &context,
+                    )
+                    .await
+            }
+            "start" => {
+                manager
+                    .lifecycle(&request.service, ServiceAction::Start, &context)
+                    .await
+            }
+            "stop" => {
+                manager
+                    .lifecycle(&request.service, ServiceAction::Stop, &context)
+                    .await
+            }
+            "restart" => {
+                manager
+                    .lifecycle(&request.service, ServiceAction::Restart, &context)
+                    .await
+            }
+            "update" => manager.update(&request.service, &context).await,
+            "remove" => manager.remove(&request.service, false, &context).await,
+            _ => {
+                return Err(
+                    "action must be install, start, stop, restart, update, or remove".into(),
+                );
+            }
+        };
+        to_json(&mutation.map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "resource_inspect",
+        description = "Inspect one persisted resource with secret values redacted. Read-only."
+    )]
+    fn resource_inspect(
+        &self,
+        Parameters(request): Parameters<ResourceRequest>,
+    ) -> Result<String, String> {
+        let resource = resource_ref(&request.kind, &request.id)?;
+        to_json(
+            &resource_framework()
+                .inspect(&resource)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "resource_bindings",
+        description = "List explicit producer-output to consumer-input bindings, optionally filtered to one resource. Read-only."
+    )]
+    fn resource_bindings(
+        &self,
+        Parameters(request): Parameters<OptionalResourceRequest>,
+    ) -> Result<String, String> {
+        let resource = optional_resource_ref(request.kind.as_deref(), request.id.as_deref())?;
+        to_json(
+            &resource_framework()
+                .bindings(resource.as_ref())
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "resource_binding_apply",
+        description = "Create an explicit validated resource binding. Rejects missing outputs, duplicate consumer inputs, and cycles. Mutating: requires policy enablement and approved=true."
+    )]
+    fn resource_binding_apply(
+        &self,
+        Parameters(request): Parameters<CreateResourceBinding>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let binding = Binding {
+            id: request.id,
+            producer: resource_ref(&request.producer_kind, &request.producer_id)?,
+            output: request.output,
+            consumer: resource_ref(&request.consumer_kind, &request.consumer_id)?,
+            input: request.input,
+            created_at_unix_ms: current_unix_ms(),
+        };
+        to_json(
+            &resource_framework()
+                .bind(binding, false)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "resource_binding_remove",
+        description = "Remove one explicit resource binding by stable id. Mutating: requires policy enablement and approved=true."
+    )]
+    fn resource_binding_remove(
+        &self,
+        Parameters(request): Parameters<RemoveResourceBinding>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &resource_framework()
+                .unbind(&request.binding, false)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "resource_operations",
+        description = "List durable pipeline operation journals, optionally filtered to one target resource. Read-only and suitable for progress/failure monitoring."
+    )]
+    fn resource_operations(
+        &self,
+        Parameters(request): Parameters<OptionalResourceRequest>,
+    ) -> Result<String, String> {
+        let resource = optional_resource_ref(request.kind.as_deref(), request.id.as_deref())?;
+        to_json(
+            &resource_framework()
+                .operations(resource.as_ref())
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "resource_operation_inspect",
+        description = "Inspect one durable pipeline operation and every step outcome/message. Read-only."
+    )]
+    fn resource_operation_inspect(
+        &self,
+        Parameters(request): Parameters<OperationRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &resource_framework()
+                .operation(&request.operation)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
         name = "managed_service_list",
         description = "List Lumic-managed native services and their desired configuration. Read-only; secret values are never returned."
     )]
@@ -1574,7 +1893,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "managed_service_detect",
-        description = "Detect a native PostgreSQL or Redis package, systemd state, version and provider health without adopting or changing it. Read-only."
+        description = "Detect a native MySQL, PostgreSQL, Redis, Typesense, or Meilisearch package, systemd state, version and provider health without adopting or changing it. Read-only."
     )]
     async fn managed_service_detect(
         &self,
@@ -1606,7 +1925,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "managed_service_plan_install",
-        description = "Resolve native package, systemd, health validation, risk and recovery steps for PostgreSQL or Redis. Read-only; call before managed_service_install."
+        description = "Resolve native package, systemd, health validation, risk and recovery steps for MySQL, PostgreSQL, Redis, Typesense, or Meilisearch. Read-only; call before managed_service_install."
     )]
     fn managed_service_plan_install(
         &self,
@@ -1621,7 +1940,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "managed_service_install",
-        description = "Install and reconcile one PostgreSQL or Redis service through apt, validated configuration, systemd and a provider health gate. Mutating: requires node policy enablement and approved=true."
+        description = "Install and reconcile one MySQL, PostgreSQL, Redis, Typesense, or Meilisearch service through apt, validated configuration, generated secrets where required, systemd, and a provider health gate. Mutating: requires node policy enablement and approved=true."
     )]
     async fn managed_service_install(
         &self,
@@ -1789,7 +2108,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "managed_service_backup",
-        description = "Create a local PostgreSQL database dump or Redis snapshot and record it in service history. Mutating: requires node policy enablement and approved=true."
+        description = "Create a local MySQL/PostgreSQL database dump or Redis snapshot and record it in service history. Mutating: requires node policy enablement and approved=true."
     )]
     async fn managed_service_backup(
         &self,
@@ -1810,7 +2129,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "managed_service_backup_verify",
-        description = "Verify that a managed backup exists and matches its recorded size, SHA-256 checksum, and native PostgreSQL/Redis format header. Read-only and safe before restore."
+        description = "Verify that a managed backup exists and matches its recorded size, SHA-256 checksum, and native MySQL/PostgreSQL/Redis format header. Read-only and safe before restore."
     )]
     fn managed_service_backup_verify(
         &self,
@@ -1846,7 +2165,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "application_attach_managed_service",
-        description = "Attach a typed managed-service/database/user reference to an application. Secret values remain in the node store. Mutating: requires node policy enablement and approved=true."
+        description = "Attach a typed database/user pair or reusable search endpoint/credential reference to an application. Secret values remain in the node store. Mutating: requires node policy enablement and approved=true."
     )]
     fn application_attach_managed_service(
         &self,
@@ -1901,6 +2220,67 @@ impl LumicMcpServer {
         to_json(
             &AptPackageManager::system(event_store())
                 .install(&package, &operation_context("package_install"))
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "software_catalog",
+        description = "List Lumic's default supported software installers, scopes, descriptions, and prerequisites. Read-only."
+    )]
+    fn software_catalog(&self) -> Result<String, String> {
+        to_json(lumic_core::software::SOFTWARE_CATALOG)
+    }
+
+    #[tool(
+        name = "software_status",
+        description = "Inspect installed and candidate versions for supported software. NVM inspection requires a target Linux user. Read-only."
+    )]
+    async fn software_status(
+        &self,
+        Parameters(SoftwareInput { software, user }): Parameters<SoftwareInput>,
+    ) -> Result<String, String> {
+        to_json(
+            &software_manager()
+                .status_for_user(&software, user.as_deref())
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "software_plan_setup",
+        description = "Resolve setup into exact native packages or pinned per-user NVM actions, risks, preconditions, validation, and recovery. Read-only."
+    )]
+    async fn software_plan_setup(
+        &self,
+        Parameters(SoftwareInput { software, user }): Parameters<SoftwareInput>,
+    ) -> Result<String, String> {
+        to_json(
+            &software_manager()
+                .plan_setup_for_user(&software, user.as_deref())
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "software_setup",
+        description = "Install or idempotently reconcile supported software using its fixed installer contract. Mutating: requires approved=true and node policy enablement."
+    )]
+    async fn software_setup(
+        &self,
+        Parameters(request): Parameters<SetupSoftware>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &software_manager()
+                .setup_for_user(
+                    &request.software,
+                    request.user.as_deref(),
+                    &operation_context("software_setup"),
+                )
                 .await
                 .map_err(string_error)?,
         )
@@ -2585,6 +2965,14 @@ fn managed_service_manager() -> ManagedServiceManager {
     ManagedServiceManager::at_state_dir(state_directory())
 }
 
+fn resource_framework() -> ResourceFramework {
+    ResourceFramework::at_state_dir(state_directory())
+}
+
+fn software_manager() -> SoftwareManager {
+    SoftwareManager::at_state_dir(state_directory())
+}
+
 fn operations_service() -> OperationsService {
     OperationsService::at_state_dir(state_directory())
 }
@@ -2629,7 +3017,7 @@ fn require_mutation(approved: bool) -> Result<(), String> {
 fn require_scope(scope: &str, approved: bool) -> Result<(), String> {
     if std::env::var("LUMIC_MCP_ALLOW_MUTATIONS").as_deref() != Ok("1") {
         return Err(
-            "MCP mutations are disabled by node policy; set LUMIC_MCP_ALLOW_MUTATIONS=1 when starting the local MCP server"
+            "MCP mutations are disabled by node policy; set LUMIC_MCP_ALLOW_MUTATIONS=1 when starting the MCP server"
                 .into(),
         );
     }
@@ -2675,10 +3063,52 @@ fn parse_service_action(action: &str) -> Result<ServiceAction, String> {
 
 fn parse_managed_kind(kind: &str) -> Result<ManagedServiceKind, String> {
     match kind {
+        "mysql" => Ok(ManagedServiceKind::Mysql),
         "postgresql" => Ok(ManagedServiceKind::Postgresql),
         "redis" => Ok(ManagedServiceKind::Redis),
-        _ => Err("kind must be one of: postgresql, redis".into()),
+        "typesense" => Ok(ManagedServiceKind::Typesense),
+        "meilisearch" => Ok(ManagedServiceKind::Meilisearch),
+        _ => Err("kind must be one of: mysql, postgresql, redis, typesense, meilisearch".into()),
     }
+}
+
+fn resource_ref(kind: &str, id: &str) -> Result<ResourceRef, String> {
+    let kind = match kind {
+        "package" => ResourceKind::Package,
+        "component" => ResourceKind::Component,
+        "runtime" => ResourceKind::Runtime,
+        "managed_service" => ResourceKind::ManagedService,
+        "service_resource" => ResourceKind::ServiceResource,
+        "endpoint" => ResourceKind::Endpoint,
+        "application" => ResourceKind::Application,
+        "process" => ResourceKind::Process,
+        "schedule" => ResourceKind::Schedule,
+        "artifact" => ResourceKind::Artifact,
+        "certificate" => ResourceKind::Certificate,
+        "pipeline" => ResourceKind::Pipeline,
+        _ => return Err("unknown resource kind".into()),
+    };
+    ResourceRef::new(kind, id).map_err(string_error)
+}
+
+fn optional_resource_ref(
+    kind: Option<&str>,
+    id: Option<&str>,
+) -> Result<Option<ResourceRef>, String> {
+    match (kind, id) {
+        (None, None) => Ok(None),
+        (Some(kind), Some(id)) => resource_ref(kind, id).map(Some),
+        _ => Err("kind and id must be supplied together".into()),
+    }
+}
+
+fn current_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn operation_context(operation: &str) -> OperationContext {
@@ -2693,6 +3123,13 @@ fn operation_context(operation: &str) -> OperationContext {
         dry_run: false,
         approved: true,
     }
+}
+
+fn planning_context(operation: &str) -> OperationContext {
+    let mut context = operation_context(operation);
+    context.dry_run = true;
+    context.approved = false;
+    context
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -2789,6 +3226,20 @@ mod tests {
                 .any(|tool| tool.name == "application_configure_process")
         );
         for name in [
+            "resource_catalog",
+            "resource_schema",
+            "resource_plan",
+            "resource_apply",
+            "resource_inspect",
+            "resource_bindings",
+            "resource_binding_apply",
+            "resource_binding_remove",
+            "resource_operations",
+            "resource_operation_inspect",
+            "software_catalog",
+            "software_status",
+            "software_plan_setup",
+            "software_setup",
             "managed_service_list",
             "managed_service_detect",
             "managed_service_inspect",
@@ -2849,6 +3300,20 @@ mod tests {
         ] {
             assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
         }
+    }
+
+    #[test]
+    fn managed_service_kind_parser_accepts_built_in_drivers() {
+        for (value, expected) in [
+            ("mysql", ManagedServiceKind::Mysql),
+            ("postgresql", ManagedServiceKind::Postgresql),
+            ("redis", ManagedServiceKind::Redis),
+            ("typesense", ManagedServiceKind::Typesense),
+            ("meilisearch", ManagedServiceKind::Meilisearch),
+        ] {
+            assert_eq!(parse_managed_kind(value), Ok(expected));
+        }
+        assert!(parse_managed_kind("mariadb").is_err());
     }
 
     #[test]

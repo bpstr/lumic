@@ -39,21 +39,28 @@ application behavior.
 
 The UI provides:
 
-- the canonical conversational attention card, including severity, evidence and recommended actions;
-- live server identity and resource overview;
-- application list/detail and typed service references;
+- live server identity followed directly by accessible radial charts for normalized 1-minute load,
+  memory use, and root-disk use, plus rolling CPU and memory line charts; the
+  dashboard samples the node every two seconds, refreshes in place, and retains
+  the five-minute chart history while navigating within the current browser tab;
+- application list/detail, typed service references, and durable lifecycle operation progress/failure details;
 - evidence-backed application fingerprint and dependency graph panels;
 - deployment history, phases and commit detail;
-- managed-service list/detail, provider health and local data records;
+- catalog-driven service cards, shared configuration-schema/install forms, managed-instance detail,
+  provider health and local data records;
 - events and bounded journal logs;
 - expert systemd unit, configuration/data paths, version, bind address and port;
 - recipe catalog and installed-version state;
+- a default installer catalog for WordPress prerequisites, PHP, MySQL, PostgreSQL, Redis,
+  Typesense, Meilisearch, nginx, Apache, Node.js, and per-user NVM, with
+  installed/candidate versions
+  and a CSRF-protected plan/confirm/setup flow;
 - host accounts, listeners, mounts, timers and pending updates;
-- infrastructure identity, trusted/revoked peers, Git repositories/mirrors, portable environments, endpoints, memberships and coordinated deployment state;
+- infrastructure identity, trusted/revoked peers, Git repositories/mirrors, portable environments, endpoints, memberships and coordinated deployment state; on a fresh node, the page remains available and shows the CLI command required to initialize its identity;
 - confirmed restart, deploy, rollback and security-update actions.
 
 Safe actions call the existing shared services and therefore retain their validation, health gates, rollback behavior, events and audits. Installation registers `lumicd.service`; inspect it with `systemctl status lumicd.service` and logs with `journalctl -u lumicd.service`.
 
 The attention card uses the same `AttentionService` as `lumic how-are-you` and MCP. A selected personality changes its phrasing, but the card always includes the complete factual summary and never suppresses a warning.
 
-The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Infrastructure and application-intelligence mutations remain in CLI/MCP for now; the UI shows the deterministic fingerprint evidence and dependency graph without adding a second orchestration path. The initial UI intentionally omits service installation/configuration forms, fine-grained identities, persistent sessions, login throttling and fleet-wide mutation forms. Those are follow-up work rather than a reason to introduce a large frontend framework.
+The authenticated `/api/infrastructure` endpoint exposes the same read model as JSON. Before node initialization its `local_node` field is `null` and the remaining infrastructure collections are still available. Infrastructure and application-intelligence mutations remain in CLI/MCP for now; the UI shows the deterministic fingerprint evidence and dependency graph without adding a second orchestration path. Service pages read the built-in resource catalog directly and submit approved installs through the same manager used by CLI/MCP. Installer setup remains a separate fixed native-package surface. Fine-grained identities, persistent sessions and fleet-wide mutation forms remain follow-up work.

@@ -1,0 +1,55 @@
+schema_version = 1
+definition_version = 1
+id = "postgresql"
+name = "PostgreSQL"
+category = "database"
+description = "Relational database server"
+driver = "postgresql"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+reload = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+backup = true
+restore = true
+remove = true
+resources = true
+
+[[configuration]]
+key = "listen_address"
+label = "Listen address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "Port"
+type = "port"
+default = 5432
+apply = "restart"
+
+[[outputs]]
+key = "connection"
+type = "tcp_endpoint"
+capability = "database.postgresql"
+
+[[platforms]]
+distribution = "debian"
+package = "postgresql"
+unit = "postgresql.service"
+data_path = "/var/lib/postgresql"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "postgresql"
+unit = "postgresql.service"
+data_path = "/var/lib/postgresql"

@@ -1,0 +1,47 @@
+schema_version = 1
+definition_version = 1
+id = "nginx"
+name = "nginx"
+category = "web"
+description = "HTTP server and reverse proxy"
+driver = "nginx"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+reload = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+resources = true
+
+[[configuration]]
+key = "worker_connections"
+label = "Worker connections"
+type = "integer"
+minimum = 128
+maximum = 65535
+default = 1024
+advanced = true
+apply = "reload"
+
+[[outputs]]
+key = "http"
+type = "http_endpoint"
+capability = "web.http"
+
+[[platforms]]
+distribution = "debian"
+package = "nginx"
+unit = "nginx.service"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "nginx"
+unit = "nginx.service"

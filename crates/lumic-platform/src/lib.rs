@@ -19,23 +19,31 @@ use tokio::{
 pub mod app_process;
 pub mod application;
 pub mod apt;
+pub mod artifact;
 pub mod atomic_file;
 pub mod attention;
 pub mod audit_store;
+pub mod certificate;
 pub mod diagnostics;
 pub mod event_store;
+pub mod framework_state;
 pub mod infrastructure;
 pub mod intelligence;
 mod jsonl_store;
 pub mod managed_service;
 pub mod operations;
 pub mod recipe;
+pub mod resource_framework;
+pub mod resource_lock;
 pub mod runtime;
 pub mod secret_store;
 pub mod self_update;
 pub mod server;
+pub mod service_driver;
+pub mod software;
 pub mod systemd;
 pub mod web;
+pub mod wordpress;
 
 pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -187,6 +195,82 @@ impl HostStatusService<LinuxHostDataSource> {
 
 pub fn inspect_host() -> Result<HostFacts> {
     HostStatusService::system().inspect()
+}
+
+/// Aggregate Linux CPU counters captured at a point in time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuTimeSample {
+    total: u64,
+    idle: u64,
+}
+
+impl CpuTimeSample {
+    /// Calculates the non-idle CPU percentage between two counter samples.
+    pub fn usage_since(self, previous: Self) -> Option<f64> {
+        let total = self.total.saturating_sub(previous.total);
+        if total == 0 {
+            return None;
+        }
+        let idle = self.idle.saturating_sub(previous.idle).min(total);
+        Some((total - idle) as f64 / total as f64 * 100.0)
+    }
+}
+
+/// Reads the aggregate CPU counters reported by Linux procfs.
+pub fn inspect_cpu_time() -> Result<CpuTimeSample> {
+    parse_cpu_time(&read_fact("cpu_usage", "/proc/stat")?)
+}
+
+/// Reads the current one-minute load average reported by Linux procfs.
+pub fn inspect_load_average_1m() -> Result<f64> {
+    let input = read_fact("load_average", "/proc/loadavg")?;
+    input
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| inspection_error("load_average", "1 minute load average is missing"))?
+        .parse::<f64>()
+        .map_err(|error| inspection_error("load_average", error))
+}
+
+fn parse_cpu_time(input: &str) -> Result<CpuTimeSample> {
+    let mut fields = input
+        .lines()
+        .next()
+        .ok_or_else(|| inspection_error("cpu_usage", "aggregate CPU counters are missing"))?
+        .split_whitespace();
+    if fields.next() != Some("cpu") {
+        return Err(inspection_error(
+            "cpu_usage",
+            "aggregate CPU counters are missing",
+        ));
+    }
+    let mut next_counter = || {
+        fields
+            .next()
+            .ok_or_else(|| inspection_error("cpu_usage", "CPU counter is missing"))?
+            .parse::<u64>()
+            .map_err(|error| inspection_error("cpu_usage", error))
+    };
+    let user = next_counter()?;
+    let nice = next_counter()?;
+    let system = next_counter()?;
+    let idle = next_counter()?;
+    let io_wait = next_counter()?;
+    let irq = next_counter()?;
+    let soft_irq = next_counter()?;
+    let steal = next_counter()?;
+    let total = user
+        .saturating_add(nice)
+        .saturating_add(system)
+        .saturating_add(idle)
+        .saturating_add(io_wait)
+        .saturating_add(irq)
+        .saturating_add(soft_irq)
+        .saturating_add(steal);
+    Ok(CpuTimeSample {
+        total,
+        idle: idle.saturating_add(io_wait),
+    })
 }
 
 pub fn parse_os_release(input: &str) -> Result<DistributionFacts> {
@@ -636,5 +720,20 @@ mod tests {
         assert!(output.timed_out);
         assert!(!output.success());
         assert!(output.duration < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn cpu_time_sample_calculates_non_idle_usage_between_samples() {
+        let previous = parse_cpu_time("cpu 100 0 100 700 100 0 0 0\n").unwrap();
+        let current = parse_cpu_time("cpu 200 0 200 1000 100 0 0 0\n").unwrap();
+
+        assert_eq!(current.usage_since(previous), Some(40.0));
+    }
+
+    #[test]
+    fn cpu_time_sample_is_unavailable_without_elapsed_cpu_time() {
+        let sample = parse_cpu_time("cpu 100 0 100 700 100 0 0 0\n").unwrap();
+
+        assert_eq!(sample.usage_since(sample), None);
     }
 }

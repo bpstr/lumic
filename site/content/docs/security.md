@@ -21,13 +21,15 @@ Interfaces receive Lumic capabilities rather than a generic shell. Policy can al
 
 ## Package allowlisting
 
-Using apt through Lumic does not mean exposing arbitrary apt execution. A package installation request is validated against policy, resolved through the OS adapter and recorded as an operation.
+Using apt through Lumic does not mean exposing arbitrary apt execution. A package installation request is validated against policy, resolved through the OS adapter and recorded as an operation. Application package requirements include a bounded reason and acquire an explicit trust source only after policy review; syntactic validity never grants installation authority.
 
 ## Plan and audit
 
 Mutating operations should consider preconditions, idempotency, plan/dry-run support, failure behavior, before/after state, rollback/recovery and audit metadata.
 
-Managed PostgreSQL credentials are generated from the operating system random source, stored below private Lumic state with mode `0600`, passed to native tools over stdin and represented externally only by opaque references. PostgreSQL/Redis reference configurations are loopback-only and allow only bounded provider settings. Failed configuration health checks restore the previous native file or remove a newly created file.
+Managed MySQL/PostgreSQL credentials are generated from the operating system random source, stored below private Lumic state with mode `0600`, passed to native tools over stdin and represented externally only by opaque `secret://` references. MySQL/PostgreSQL/Redis reference configurations are loopback-only and allow only bounded provider settings. Failed configuration health checks restore the previous native file or remove a newly created file.
+
+Certificate issuance accepts only Lumic's registered Certbot/Let's Encrypt provider and validated DNS names. Commands use separated arguments. Certificate resource state contains certificate and private-key paths, but never private-key contents or the contact email. Attaching a certificate is a locked, atomic nginx configuration change; Lumic validates nginx before reload and restores the previous configuration on failure.
 
 The UI binds only to loopback. Its one-time admin token is stored as a digest, sessions are short-lived and in-memory, cookies are HttpOnly/SameSite=Strict, mutation forms are CSRF protected, and responses include restrictive browser headers. Remote UI access requires an operator-provided authenticated TLS reverse proxy or an SSH tunnel.
 

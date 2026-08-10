@@ -4,7 +4,7 @@ description = "Structured infrastructure capabilities for Codex, Claude and othe
 weight = 70
 [extra]
 kicker = "AGENTS"
-status = "local policy-gated operations implemented"
+status = "stdio and authenticated Streamable HTTP implemented"
 +++
 
 MCP is a first-class Lumic interface and the highest-leverage way to operate multiple nodes.
@@ -48,10 +48,10 @@ Mutating operations should carry actor/interface/correlation metadata into Lumic
 
 ## Current implementation
 
-The MCP server uses the official Rust SDK over local stdio:
+The installed `lumic` binary contains the MCP adapter. Serve it over stdio:
 
 ```bash
-cargo run -p lumic-mcp
+lumic mcp serve
 ```
 
 It publishes `lumic://server/status`, `lumic://server/attention`, and these shared-service tools:
@@ -61,6 +61,13 @@ inspect_server                  diagnose_server
 server_attention
 service_inspect                 service_apply
 package_inspect                 package_install
+resource_catalog               resource_schema
+resource_plan                  resource_apply
+resource_inspect               resource_bindings
+resource_binding_apply         resource_binding_remove
+resource_operations            resource_operation_inspect
+software_catalog                software_status
+software_plan_setup             software_setup
 application_list                application_inspect
 application_plan_deployment     application_deployments
 application_create              application_configure_process
@@ -109,6 +116,22 @@ incident_context               incident_analyze
 events_list                     audit_list
 ```
 
+The `resource_*` tools are the generic framework surface. Catalog and schema calls return the
+same trusted definitions used by CLI and UI. `resource_plan` is read-only;
+`resource_apply` performs catalog installs or typed lifecycle actions. Inspection redacts sensitive
+values. Binding mutations validate both endpoints and producer outputs, reject duplicate inputs and
+cycles, and take the shared resource lock. Operation queries return durable pipeline and step
+journals so an agent can monitor progress, failures, and recovery messages without scraping logs.
+
+The `managed_service_*` tools remain compatibility aliases for provider-specific database, backup,
+and dependency operations. New generic orchestration should begin with `resource_catalog`.
+
+`application_provision` requires `runtime_version` for PHP (`8.1`, `8.2`, `8.3`, or `8.4`) and accepts allowlisted extension `components`. The selected packages must exist in the node's configured apt repositories. Its result identifies the persisted runtime resource and exact FPM output; nginx web-host state is committed only after native validation and activation succeed.
+
+The software tools include `nodejs` as a system package installer and `nvm` as
+a per-user installer. Pass an existing Linux account in `user` when inspecting,
+planning, or setting up NVM. Mutating setup still requires `approved=true`.
+
 There is no shell tool. Read operations work by default. Every apply tool requires all three:
 
 1. the MCP process was deliberately started with `LUMIC_MCP_ALLOW_MUTATIONS=1`;
@@ -120,19 +143,45 @@ For example:
 ```bash
 LUMIC_MCP_ALLOW_MUTATIONS=1 \
 LUMIC_MCP_SCOPES=mutations,operations.signal,operations.configure,operations.automate,operations.run,application.integrate,incident.analyze \
-LUMIC_MCP_ACTOR=codex cargo run -p lumic-mcp
+LUMIC_MCP_ACTOR=codex lumic mcp serve
 ```
 
-For local Codex development, build the MCP binary and register the stdio command:
+Register a local stdio server in Codex:
 
 ```bash
-cargo build -p lumic-mcp --release
-codex mcp add lumic -- /absolute/path/to/lumic/target/release/lumic-mcp
+codex mcp add lumic -- /usr/local/bin/lumic mcp serve
 codex mcp list
 ```
 
-The ChatGPT desktop app, Codex CLI and IDE extension share Codex's MCP configuration. The equivalent desktop flow is Settings → MCP servers → Add server → STDIO. See the [official Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) for current client setup. The nightly installer currently publishes `lumic` and `lumicd`, not `lumic-mcp`, so this source-build path is explicitly for local development; do not substitute an unauthenticated remote bridge.
+For a remote node, prefer a dedicated SSH key whose server-side `authorized_keys` entry is forced to `/usr/local/bin/lumic mcp serve`. The installer can create that restricted entry when `LUMIC_MCP_AUTHORIZED_KEY` contains the dedicated public key. Then register `ssh -T -o BatchMode=yes root@server`; the forced command prevents that key from opening a general shell. A normal unrestricted root key does not provide the same boundary.
 
-Tool descriptions identify read-only versus mutating behavior. Existing mutation tools use the `mutations` compatibility scope. Epic E operations are separated into `operations.signal`, `operations.configure`, `operations.automate` and `operations.run`; Epic F integration apply/rollback uses `application.integrate`, and external incident disclosure uses `incident.analyze`. `operations.*` grants that family and `*` grants all scopes. Apply operations use the same validated application, recipe, host-operator, apt, systemd, PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Fingerprints, key-only configuration inspection, dependency graphs, integration plans, incident context, timeline, delivery history and backup verification are read-only. Analysis is advisory and its proposed remediations must be executed separately through ordinary typed tools. Actor/interface/correlation data is written to `audit.jsonl`; Git/database/recipe/notification/dotenv secret values are neither accepted by ordinary reads nor returned.
+## Streamable HTTP
 
-Node enrollment, trust and signed deploy/rollback envelopes are implemented independently of transport. An agent connected to two local stdio MCP endpoints can carry an envelope from `remote_operation_sign` to `remote_operation_apply`; expiry, target, trust, signature and replay protection are revalidated by the receiving node. These scopes constrain the local process, not authenticated per-client identities. Remote HTTP transport, authentication, TLS, `lumic mcp setup`, per-identity grants, self-update and credential import tools are not implemented yet. Do not expose this stdio process remotely through an unauthenticated bridge. Import credentials locally with the CLI, then pass only their reference to MCP. Application process commands are accepted only as an executable/argument array; shell command strings are not a supported escape hatch.
+`lumicd` can additionally expose the same tools at `/mcp` using MCP Streamable HTTP. The listener is disabled unless `LUMIC_MCP_HTTP_BIND` is configured, requires a separate bearer token, and refuses non-loopback binds. Create the token once:
+
+```bash
+sudo lumic mcp token rotate
+sudo systemctl edit lumicd
+```
+
+Add the listener in the systemd override:
+
+```ini
+[Service]
+Environment=LUMIC_MCP_HTTP_BIND=127.0.0.1:10801
+```
+
+After restarting `lumicd`, either use a local tunnel or place an HTTPS reverse proxy in front of `127.0.0.1:10801`. For a tunnel:
+
+```bash
+ssh -N -L 10801:127.0.0.1:10801 root@server
+export LUMIC_MCP_TOKEN='the-token-shown-once'
+codex mcp add lumic-http --url http://127.0.0.1:10801/mcp \
+  --bearer-token-env-var LUMIC_MCP_TOKEN
+```
+
+Do not bind the daemon listener publicly or send the bearer token over plaintext HTTP. A public URL must terminate TLS before forwarding to the loopback listener. The current token authenticates one node-level MCP policy; OAuth and per-identity grants remain future work.
+
+Tool descriptions identify read-only versus mutating behavior. Existing mutation tools use the `mutations` compatibility scope. Epic E operations are separated into `operations.signal`, `operations.configure`, `operations.automate` and `operations.run`; Epic F integration apply/rollback uses `application.integrate`, and external incident disclosure uses `incident.analyze`. `operations.*` grants that family and `*` grants all scopes. Apply operations use the same validated application, recipe, host-operator, apt, systemd, MySQL/PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Fingerprints, key-only configuration inspection, dependency graphs, integration plans, incident context, timeline, delivery history and backup verification are read-only. Analysis is advisory and its proposed remediations must be executed separately through ordinary typed tools. Actor/interface/correlation data is written to `audit.jsonl`; Git/database/recipe/notification/dotenv secret values are neither accepted by ordinary reads nor returned.
+
+Node enrollment, trust and signed deploy/rollback envelopes are implemented independently of transport. An agent connected to two MCP endpoints can carry an envelope from `remote_operation_sign` to `remote_operation_apply`; expiry, target, trust, signature and replay protection are revalidated by the receiving node. Process scopes constrain the node-level server policy, not separate authenticated client identities. Import credentials locally with the CLI, then pass only their reference to MCP. Application process commands are accepted only as an executable/argument array; shell command strings are not a supported escape hatch.

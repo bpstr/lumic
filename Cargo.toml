@@ -24,6 +24,7 @@ schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+toml = "0.9"
 sha2 = "0.10"
 ed25519-dalek = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "time"] }

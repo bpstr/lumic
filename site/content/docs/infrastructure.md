@@ -25,6 +25,8 @@ Import requires a target application ID, one of `production`, `staging` or `deve
 
 Node initialization creates a stable private Ed25519 signing key. Enrollment exports only the public identity, roles, endpoint, verification key and fingerprint. Registration is explicit and reversible with `infrastructure revoke`.
 
+On a fresh installation, infrastructure status remains readable before identity initialization. The operator UI shows an initialization prompt and `/api/infrastructure` reports `local_node` as `null`. Initialize the identity with `lumic infrastructure init NODE_ID --name "Node name" --role app`; choose one or more roles appropriate to the node.
+
 The current remote allowlist is application deploy and rollback. Requests are signed, target-bound, expire in at most five minutes and are rejected on replay. The coding agent carries the JSON request between node MCP endpoints or CLI sessions; Lumic does not expose a generic remote command runner and does not require a central hub.
 
 ## Coordination and failure boundaries

@@ -1,0 +1,33 @@
+schema_version = 1
+definition_version = 1
+id = "php"
+name = "PHP"
+description = "Versioned PHP CLI and FPM runtime"
+driver = "php"
+instance_policy = "versioned"
+
+[[configuration]]
+key = "version"
+label = "PHP version"
+type = "version"
+required = true
+apply = "recreate"
+
+[[configuration]]
+key = "memory_limit"
+label = "Memory limit"
+type = "bytes"
+minimum = 16777216
+default = 134217728
+advanced = true
+apply = "reload"
+
+[[outputs]]
+key = "fpm"
+type = "unix_socket_endpoint"
+capability = "runtime.php_fpm"
+
+[[outputs]]
+key = "cli"
+type = "executable"
+capability = "runtime.php_cli"

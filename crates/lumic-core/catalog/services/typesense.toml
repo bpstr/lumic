@@ -1,0 +1,74 @@
+schema_version = 1
+definition_version = 1
+id = "typesense"
+name = "Typesense"
+category = "search"
+description = "Typo-tolerant search service"
+driver = "typesense"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "listen_address"
+label = "Listen address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "Port"
+type = "port"
+default = 8108
+apply = "restart"
+
+[[configuration]]
+key = "data_directory"
+label = "Data directory"
+type = "path"
+default = "/var/lib/typesense"
+apply = "recreate"
+
+[[configuration]]
+key = "api_key"
+label = "API key"
+type = "secret"
+required = true
+sensitive = true
+apply = "restart"
+
+[[configuration]]
+key = "cors"
+label = "Enable CORS"
+type = "boolean"
+default = false
+advanced = true
+apply = "restart"
+
+[[outputs]]
+key = "http"
+type = "http_endpoint"
+capability = "search.typesense"
+
+[[platforms]]
+distribution = "debian"
+package = "typesense-server"
+unit = "typesense-server.service"
+data_path = "/var/lib/typesense"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "typesense-server"
+unit = "typesense-server.service"
+data_path = "/var/lib/typesense"

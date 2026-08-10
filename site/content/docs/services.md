@@ -1,21 +1,30 @@
 +++
 title = "Managed services"
-description = "Install and operate PostgreSQL and Redis as first-class native resources."
+description = "Install and operate databases, caches, and search engines as first-class native resources."
 weight = 50
 [extra]
 kicker = "SERVICES"
-status = "PostgreSQL and Redis reference integrations implemented"
+status = "MySQL, PostgreSQL, Redis, Typesense, and Meilisearch integrations implemented"
 +++
 
-Managed services are long-lived native capabilities with identity, desired configuration, lifecycle, health, logs, data operations and recovery—not aliases for every apt package. The first implemented providers are PostgreSQL and Redis on Debian/Ubuntu.
+Managed services are long-lived native capabilities with identity, desired configuration, lifecycle, health, logs, data operations and recovery—not aliases for every apt package. MySQL, PostgreSQL, Redis, Typesense, and Meilisearch are implemented on Debian/Ubuntu. nginx is also independently owned as the singleton `nginx.main` service and provides validated, recoverable application web-host resources. CLI, UI, and MCP now expose the shared trusted catalog and configuration schemas rather than maintaining provider lists in each adapter.
+
+Internally, this surface runs through a versioned built-in service catalog and trusted Rust driver registry. Catalog definitions provide UI/MCP metadata and validation but cannot execute commands; compiled drivers own platform mapping, configuration, health, data-operation plans and supported child resources. Stable resource IDs, explicit external-versus-Lumic ownership, typed outputs/bindings, journaled pipelines and cross-process mutation locks form the shared contract. Other catalog entries are not presented as fully managed services until their drivers and recovery paths are complete.
+
+The private, schema-versioned `resources.json` store is authoritative. Existing installations with `managed-services.json` are migrated once after Lumic preserves the exact legacy file as `managed-services.v1.json`; new operations do not write the legacy path.
 
 ## Status, plan and apply
 
 Detection is read-only and does not adopt an existing package:
 
 ```bash
+lumic managed-service catalog
+lumic managed-service schema postgresql
 lumic managed-service detect postgresql
+lumic managed-service detect mysql
 lumic managed-service detect redis
+lumic managed-service detect typesense
+lumic managed-service detect meilisearch
 ```
 
 Installation keeps plan and mutation separate:
@@ -23,11 +32,16 @@ Installation keeps plan and mutation separate:
 ```bash
 lumic managed-service plan-install primary-db postgresql
 sudo lumic managed-service install primary-db postgresql
+sudo lumic managed-service install mysql mysql
 sudo lumic managed-service install cache redis
+sudo lumic managed-service install search typesense
+sudo lumic managed-service install alternate-search meilisearch
 lumic managed-service inspect primary-db
 ```
 
-Install uses Lumic's approved apt catalog, writes provider configuration atomically, enables/restarts the native systemd unit and requires a provider health probe (`pg_isready` or `redis-cli PING`) before persisting managed state. Repeating the operation reconciles the same resource. Both references bind to loopback by default; non-loopback exposure is rejected.
+Install uses Lumic's approved apt catalog, verifies that apt reports the package installed, writes provider configuration atomically, enables/restarts the systemd unit and requires a provider health probe before persisting managed state. Repeating the operation reconciles the same resource. All five services bind to loopback by default; non-loopback exposure is rejected.
+
+Typesense and Meilisearch require `typesense-server` or `meilisearch` to have a candidate in an apt source already configured and trusted by the operator. Lumic does not enroll a third-party repository or key. Each install generates a private 256-bit credential in Lumic's mode-0600 secret store. Typesense writes `/etc/typesense/typesense-server.ini`; Meilisearch writes a mode-0600 `/etc/meilisearch.env` and a hardened Lumic-owned systemd unit. Health checks call the loopback `/health` endpoint without putting the credential in process arguments. Search backup/restore and database/user commands are not supported by these drivers.
 
 ## Lifecycle, configuration and logs
 
@@ -39,7 +53,12 @@ sudo lumic managed-service update primary-db --dry-run
 sudo lumic managed-service remove primary-db --dry-run
 ```
 
-Only provider-specific allowlisted settings are accepted. A material configuration change is written atomically, restarted, health-checked and rolled back to the previous file—or removed if Lumic created it—when validation fails. Removal stops/disables the unit and removes the native package while deliberately retaining service data for recovery; data purge is not bundled into this command.
+The definition argument is a stable catalog ID, not a closed CLI enum. Adding a reviewed compiled
+driver and catalog definition therefore does not require a new CLI command shape. The existing
+provider-specific configure and data commands remain available where the selected definition
+declares those capabilities.
+
+Only provider-specific allowlisted settings are accepted. A material configuration change is written atomically, restarted, health-checked and rolled back to the previous file—or removed if Lumic created it—when validation fails. Removal is rejected while a database, credential, or search endpoint still has an application binding. Otherwise it stops/disables the unit and removes the native package while deliberately retaining service data and generated service credentials for recovery; data purge is not bundled into this command.
 
 Dependencies between managed resources are explicit metadata for status and later impact analysis:
 
@@ -48,7 +67,7 @@ lumic managed-service declare-dependency primary-db cache \
   --purpose "application cache"
 ```
 
-## PostgreSQL data primitives
+## Relational database primitives
 
 ```bash
 sudo lumic managed-service user-create primary-db app_user
@@ -59,17 +78,32 @@ sudo lumic managed-service backup-verify <backup-id>
 sudo lumic managed-service restore primary-db <backup-id>
 ```
 
-Database and role identifiers are strictly validated. Passwords are generated locally, passed to `psql` over stdin, stored in Lumic's private mode-0600 secret store and represented in output only by an opaque secret reference.
+Database and role identifiers are strictly validated. Passwords are generated locally, passed to the provider's native SQL client over stdin, stored in Lumic's private mode-0600 secret store and represented in output only by an opaque secret reference.
 
-Redis backup creates a local snapshot; restore stops Redis, replaces its data file with native ownership, restarts it and verifies health. PostgreSQL backup/restore uses local `pg_dump`/`pg_restore`. New backup records include SHA-256; `backup-verify` checks existence, recorded size, checksum (when present) and the native `REDIS`/`PGDMP` header before restore. Backup records stay in Lumic's private state and backup files live below `/var/backups/lumic`; this is a local reference implementation, not an off-node disaster-recovery claim.
+MySQL uses the same command surface, with database ownership expressed through an explicit grant rather than `--owner`:
+
+```bash
+sudo lumic managed-service database-create mysql app_primary
+sudo lumic managed-service user-create mysql app_primary_user
+sudo lumic managed-service grant mysql app_primary app_primary_user
+sudo lumic managed-service backup mysql --database app_primary
+```
+
+MySQL credentials are passed to the local socket client over stdin. Persisted credential outputs contain only a sensitive `secret://<reference>` value; plaintext is not stored in application or resource state.
+
+Redis backup creates a local snapshot; restore stops Redis, replaces its data file with native ownership, restarts it and verifies health. MySQL uses `mysqldump`/`mysql`; PostgreSQL uses `pg_dump`/`pg_restore`. New backup records include SHA-256; `backup-verify` checks existence, recorded size, checksum (when present) and the native SQL, `REDIS`, or `PGDMP` header before restore. Backup records stay in Lumic's private state and backup files live below `/var/backups/lumic`; this is a local reference implementation, not an off-node disaster-recovery claim.
 
 ## Application references
 
 ```bash
 lumic managed-service attach primary-db my-app \
   --role database --database app_db --user app_user
+
+lumic managed-service attach search my-app --role search
 ```
 
 Application metadata stores the service, role, database/user identity and secret reference, never the password. Unknown services, databases or users are rejected. Wiring those references into application environment files belongs to the later integration-intelligence mechanism.
 
-Every mutation emits a managed-service event and audit record with actor, interface and correlation data. The same behavior is exposed through CLI, UI and policy-gated MCP tools. Ecosystem breadth beyond PostgreSQL and Redis is deliberately tracked as nightly work.
+An attachment with both a database and user requires a recorded grant. Database and credential outputs are bound separately to role-scoped application inputs, so an application can attach multiple isolated databases without one role replacing another. A Typesense or Meilisearch attachment accepts no database/user flags and binds its reusable `http` endpoint plus sensitive `api_key` or `master_key` reference to `<role>_endpoint` and `<role>_credential`. Those bindings prevent removal of the search service until the application relationship is detached.
+
+Every mutation emits a managed-service event and audit record with actor, interface and correlation data. The same behavior is exposed through CLI, UI and policy-gated MCP tools. Further provider breadth is deliberately tracked as nightly work.

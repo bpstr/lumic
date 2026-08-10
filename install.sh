@@ -9,6 +9,7 @@ LOCAL_BINARY="${LUMIC_INSTALL_BINARY:-}"
 LOCAL_DAEMON_BINARY="${LUMIC_INSTALL_DAEMON_BINARY:-}"
 CONFIG_DIR="${LUMIC_CONFIG_DIR:-/etc/lumic}"
 STATE_DIR="${LUMIC_STATE_DIR:-/var/lib/lumic}"
+MCP_AUTHORIZED_KEY="${LUMIC_MCP_AUTHORIZED_KEY:-}"
 
 fail() { printf 'lumic: %s\n' "$*" >&2; exit 1; }
 info() { printf 'lumic: %s\n' "$*"; }
@@ -23,8 +24,14 @@ case "$INSTALL_DIR" in *[!A-Za-z0-9_./-]*) fail "LUMIC_INSTALL_DIR contains unsu
 case "$CONFIG_DIR" in *[!A-Za-z0-9_./-]*) fail "LUMIC_CONFIG_DIR contains unsupported characters" ;; esac
 case "$STATE_DIR" in *[!A-Za-z0-9_./-]*) fail "LUMIC_STATE_DIR contains unsupported characters" ;; esac
 case "$CHANNEL" in stable|nightly) ;; *) fail "unknown LUMIC_CHANNEL '$CHANNEL' (expected stable or nightly)" ;; esac
-if [ -n "$REQUESTED_VERSION" ] && ! printf '%s\n' "$REQUESTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-  fail "invalid LUMIC_VERSION '$REQUESTED_VERSION' (expected MAJOR.MINOR.PATCH without a v prefix)"
+if [ -n "$REQUESTED_VERSION" ] && ! printf '%s\n' "$REQUESTED_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'; then
+  fail "invalid LUMIC_VERSION '$REQUESTED_VERSION' (expected MAJOR.MINOR.PATCH with an optional prerelease suffix and no v prefix)"
+fi
+if [ -n "$MCP_AUTHORIZED_KEY" ]; then
+  case "$MCP_AUTHORIZED_KEY" in *"
+"*|*""*) fail "LUMIC_MCP_AUTHORIZED_KEY must be one line" ;; esac
+  printf '%s\n' "$MCP_AUTHORIZED_KEY" | grep -Eq '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,3}( [A-Za-z0-9_.@+-]+)?$' \
+    || fail "LUMIC_MCP_AUTHORIZED_KEY is not a supported OpenSSH public key"
 fi
 
 # shellcheck disable=SC1091
@@ -98,6 +105,7 @@ fi
 chmod 0755 "$TMP"
 INSTALLED_VERSION="$($TMP version 2>/dev/null)" || fail "downloaded binary failed 'lumic version' verification"
 case "$INSTALLED_VERSION" in "lumic "*) ;; *) fail "binary returned an unexpected version string" ;; esac
+"$TMP" mcp --help >/dev/null 2>&1 || fail "downloaded binary does not include the MCP adapter"
 if [ -n "$REQUESTED_VERSION" ] && [ "$INSTALLED_VERSION" != "lumic $REQUESTED_VERSION" ]; then
   fail "requested version $REQUESTED_VERSION but binary reports '$INSTALLED_VERSION'"
 fi
@@ -121,6 +129,23 @@ else
 fi
 
 info "prepared $CONFIG_DIR (configuration) and $STATE_DIR (private state)"
+UI_TOKEN_OUTPUT=""
+if [ ! -f "$STATE_DIR/ui-admin-token.sha256" ]; then
+  UI_TOKEN_OUTPUT="$(LUMIC_STATE_DIR="$STATE_DIR" "$DEST" ui token rotate)"
+fi
+
+if [ -n "$MCP_AUTHORIZED_KEY" ]; then
+  SSH_DIR="/root/.ssh"
+  AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
+  install -d -m 0700 "$SSH_DIR"
+  touch "$AUTHORIZED_KEYS"
+  chmod 0600 "$AUTHORIZED_KEYS"
+  FORCED_KEY="restrict,command=\"$DEST mcp serve\" $MCP_AUTHORIZED_KEY"
+  if ! grep -Fqx "$FORCED_KEY" "$AUTHORIZED_KEYS"; then
+    printf '%s\n' "$FORCED_KEY" >> "$AUTHORIZED_KEYS"
+    info "installed a root key restricted to the Lumic MCP adapter"
+  fi
+fi
 CHANNEL_TMP="$(mktemp "$CONFIG_DIR/.channel.XXXXXX")" || fail "cannot create channel file in $CONFIG_DIR"
 printf '%s\n' "$CHANNEL" > "$CHANNEL_TMP"
 chmod 0644 "$CHANNEL_TMP"
@@ -187,4 +212,23 @@ EOF
   fi
 else
   info "no local daemon artifact supplied; installed CLI without lumicd"
+fi
+
+SERVER_ADDRESS=""
+if [ -n "${SSH_CONNECTION:-}" ]; then
+  SERVER_ADDRESS="$(printf '%s\n' "$SSH_CONNECTION" | awk '{print $3}')"
+fi
+if [ -n "$UI_TOKEN_OUTPUT" ]; then
+  printf '\n%s\n' "$UI_TOKEN_OUTPUT"
+fi
+printf 'Lumic UI URL: http://127.0.0.1:8080 (through an SSH tunnel)\n'
+if [ -n "$SERVER_ADDRESS" ]; then
+  printf 'UI tunnel: ssh -N -L 8080:127.0.0.1:8080 root@%s\n' "$SERVER_ADDRESS"
+fi
+if [ -n "$MCP_AUTHORIZED_KEY" ] && [ -n "$SERVER_ADDRESS" ]; then
+  printf 'MCP setup (run locally with the matching private key):\n'
+  printf 'codex mcp add lumic-%s -- ssh -T -o BatchMode=yes root@%s\n' "$SERVER_ADDRESS" "$SERVER_ADDRESS"
+else
+  printf 'MCP stdio command: %s mcp serve\n' "$DEST"
+  info "for passwordless restricted remote MCP, reinstall with LUMIC_MCP_AUTHORIZED_KEY set to a dedicated public key"
 fi

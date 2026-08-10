@@ -2,7 +2,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use lumic_core::{
     Architecture, HostFacts, OperationContext, OperationInterface,
     application::{
-        ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, ApplicationServiceReference,
+        ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, ApplicationSchedule,
+        ApplicationServiceReference,
     },
     attention::NodePersonality,
     infrastructure::{
@@ -10,7 +11,6 @@ use lumic_core::{
         MembershipKind, NodeEnrollment, NodeRole, RemoteOperation, ResourceEndpoint,
         SignedRemoteRequest,
     },
-    managed_service::ManagedServiceKind,
     operations::{
         AutomationAction, AutomationRule, EventSubscription, SignalSeverity, TimelineQuery,
         WebhookDestination,
@@ -85,7 +85,7 @@ enum Command {
         #[command(subcommand)]
         command: ServiceCommand,
     },
-    /// Manage native PostgreSQL and Redis resources through stable Lumic contracts.
+    /// Manage native database, cache, and search resources through stable Lumic contracts.
     ManagedService {
         #[command(subcommand)]
         command: ManagedServiceCommand,
@@ -161,6 +161,28 @@ enum Command {
         #[command(subcommand)]
         command: UiCommand,
     },
+    /// Serve or configure Lumic's Model Context Protocol adapter.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpCommand {
+    /// Serve MCP over standard input/output for SSH and local agent clients.
+    Serve,
+    /// Rotate the bearer token accepted by lumicd's optional HTTP MCP listener.
+    Token {
+        #[command(subcommand)]
+        command: McpTokenCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpTokenCommand {
+    /// Generate a new token, store only its digest, and print it once.
+    Rotate,
 }
 
 #[derive(Subcommand)]
@@ -655,40 +677,28 @@ enum ServiceCommand {
     },
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum ManagedServiceKindArg {
-    Postgresql,
-    Redis,
-}
-
-impl From<ManagedServiceKindArg> for ManagedServiceKind {
-    fn from(value: ManagedServiceKindArg) -> Self {
-        match value {
-            ManagedServiceKindArg::Postgresql => Self::Postgresql,
-            ManagedServiceKindArg::Redis => Self::Redis,
-        }
-    }
-}
-
 #[derive(Subcommand)]
 enum ManagedServiceCommand {
+    /// List trusted catalog definitions and their shared configuration schemas.
+    Catalog,
+    /// Inspect one trusted service definition and its configuration schema.
+    Schema {
+        definition: String,
+    },
     List,
     Detect {
-        #[arg(value_enum)]
-        kind: ManagedServiceKindArg,
+        definition: String,
     },
     Inspect {
         service: String,
     },
     PlanInstall {
         service: String,
-        #[arg(value_enum)]
-        kind: ManagedServiceKindArg,
+        definition: String,
     },
     Install {
         service: String,
-        #[arg(value_enum)]
-        kind: ManagedServiceKindArg,
+        definition: String,
         #[arg(long)]
         dry_run: bool,
     },
@@ -705,12 +715,18 @@ enum ManagedServiceCommand {
     },
     Start {
         service: String,
+        #[arg(long)]
+        dry_run: bool,
     },
     Stop {
         service: String,
+        #[arg(long)]
+        dry_run: bool,
     },
     Restart {
         service: String,
+        #[arg(long)]
+        dry_run: bool,
     },
     Update {
         service: String,
@@ -1006,6 +1022,9 @@ enum AppCommand {
     /// Install the runtime and configure nginx for an application.
     Provision {
         app: String,
+        /// Required PHP runtime version (supported: 8.1, 8.2, 8.3, 8.4).
+        #[arg(long)]
+        runtime_version: Option<String>,
         #[arg(long = "component")]
         components: Vec<String>,
         #[arg(long)]
@@ -1234,6 +1253,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let token =
                     lumic_ui::UiCredentialStore::at_state_dir(state_directory()).rotate()?;
                 println!("Lumic UI admin token (shown once): {token}");
+            }
+        },
+        Command::Mcp { command } => match command {
+            McpCommand::Serve => lumic_mcp::serve_stdio().await?,
+            McpCommand::Token {
+                command: McpTokenCommand::Rotate,
+            } => {
+                let token =
+                    lumic_mcp::McpHttpCredentialStore::at_state_dir(state_directory()).rotate()?;
+                println!("Lumic MCP HTTP bearer token (shown once): {token}");
             }
         },
     }
@@ -2002,16 +2031,22 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
         },
         AppCommand::Provision {
             app,
+            runtime_version,
             components,
             json,
         } => {
             let result = service
-                .provision(&app, &components, &operation_context(false))
+                .provision_versioned(
+                    &app,
+                    runtime_version.as_deref(),
+                    &components,
+                    &operation_context(false),
+                )
                 .await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!("Provisioned runtime and nginx for {app}.");
+                println!("Provisioned the selected runtime and owned nginx web host for {app}.");
             }
         }
         AppCommand::Health { app, path, port } => {
@@ -2041,7 +2076,7 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
                         name,
                         kind: ApplicationProcessKind::Schedule,
                         command,
-                        schedule: Some(on_calendar),
+                        schedule: Some(ApplicationSchedule::calendar(on_calendar)),
                         enabled: true,
                     },
                 ),
@@ -2157,23 +2192,28 @@ async fn run_managed_service(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let manager = ManagedServiceManager::at_state_dir(state_directory());
     let value = match command {
+        ManagedServiceCommand::Catalog => serde_json::to_value(manager.catalog()?)?,
+        ManagedServiceCommand::Schema { definition } => {
+            serde_json::to_value(manager.schema(&definition)?)?
+        }
         ManagedServiceCommand::List => serde_json::to_value(manager.list()?)?,
-        ManagedServiceCommand::Detect { kind } => {
-            serde_json::to_value(manager.detect(kind.into()).await?)?
+        ManagedServiceCommand::Detect { definition } => {
+            serde_json::to_value(manager.detect_catalog(&definition).await?)?
         }
         ManagedServiceCommand::Inspect { service } => {
             serde_json::to_value(manager.inspect(&service).await?)?
         }
-        ManagedServiceCommand::PlanInstall { service, kind } => {
-            serde_json::to_value(manager.plan_install(&service, kind.into())?)?
-        }
+        ManagedServiceCommand::PlanInstall {
+            service,
+            definition,
+        } => serde_json::to_value(manager.plan_catalog_install(&service, &definition)?)?,
         ManagedServiceCommand::Install {
             service,
-            kind,
+            definition,
             dry_run,
         } => serde_json::to_value(
             manager
-                .install(&service, kind.into(), &operation_context(dry_run))
+                .install_catalog(&service, &definition, &operation_context(dry_run))
                 .await?,
         )?,
         ManagedServiceCommand::Configure {
@@ -2197,19 +2237,23 @@ async fn run_managed_service(
                     .await?,
             )?
         }
-        ManagedServiceCommand::Start { service } => serde_json::to_value(
+        ManagedServiceCommand::Start { service, dry_run } => serde_json::to_value(
             manager
-                .lifecycle(&service, ServiceAction::Start, &operation_context(false))
+                .lifecycle(&service, ServiceAction::Start, &operation_context(dry_run))
                 .await?,
         )?,
-        ManagedServiceCommand::Stop { service } => serde_json::to_value(
+        ManagedServiceCommand::Stop { service, dry_run } => serde_json::to_value(
             manager
-                .lifecycle(&service, ServiceAction::Stop, &operation_context(false))
+                .lifecycle(&service, ServiceAction::Stop, &operation_context(dry_run))
                 .await?,
         )?,
-        ManagedServiceCommand::Restart { service } => serde_json::to_value(
+        ManagedServiceCommand::Restart { service, dry_run } => serde_json::to_value(
             manager
-                .lifecycle(&service, ServiceAction::Restart, &operation_context(false))
+                .lifecycle(
+                    &service,
+                    ServiceAction::Restart,
+                    &operation_context(dry_run),
+                )
                 .await?,
         )?,
         ManagedServiceCommand::Update { service, dry_run } => serde_json::to_value(

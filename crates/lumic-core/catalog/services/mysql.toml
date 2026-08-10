@@ -1,0 +1,54 @@
+schema_version = 1
+definition_version = 1
+id = "mysql"
+name = "MySQL"
+category = "database"
+description = "MySQL-compatible relational database server"
+driver = "mysql"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+backup = true
+restore = true
+remove = true
+resources = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "Port"
+type = "port"
+default = 3306
+apply = "restart"
+
+[[outputs]]
+key = "connection"
+type = "tcp_endpoint"
+capability = "database.mysql_compatible"
+
+[[platforms]]
+distribution = "debian"
+package = "default-mysql-server"
+unit = "mysql.service"
+data_path = "/var/lib/mysql"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "mysql-server"
+unit = "mysql.service"
+data_path = "/var/lib/mysql"

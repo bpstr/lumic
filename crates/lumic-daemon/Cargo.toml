@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
+lumic-mcp = { path = "../lumic-mcp" }
 lumic-platform = { path = "../lumic-platform" }
 lumic-ui = { path = "../lumic-ui" }
 tokio.workspace = true

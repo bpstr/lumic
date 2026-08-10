@@ -30,14 +30,46 @@ async fn main() -> anyhow::Result<()> {
     let bind: std::net::SocketAddr = std::env::var("LUMIC_UI_BIND")
         .unwrap_or_else(|_| "127.0.0.1:8080".into())
         .parse()?;
+    if !bind.ip().is_loopback() {
+        anyhow::bail!(
+            "LUMIC_UI_BIND must use a loopback address; expose it through an authenticated HTTPS reverse proxy"
+        );
+    }
     tracing::info!(address = %bind, "operator UI listening");
 
     tokio::select! {
         result = lumic_ui::serve(lumic_ui::UiState::new(&state_dir, apps_root.clone()), bind) => result?,
+        result = serve_mcp_http(state_dir.clone()) => result?,
         _ = operations_loop(state_dir.clone(), apps_root) => {},
         result = shutdown_signal() => result?,
     }
     tracing::info!(node = %facts.hostname, "lumic daemon stopped gracefully");
+    Ok(())
+}
+
+async fn serve_mcp_http(state_dir: std::path::PathBuf) -> anyhow::Result<()> {
+    let Some(value) = std::env::var_os("LUMIC_MCP_HTTP_BIND") else {
+        std::future::pending::<()>().await;
+        return Ok(());
+    };
+    let bind: std::net::SocketAddr = value.to_string_lossy().parse()?;
+    if !bind.ip().is_loopback() {
+        anyhow::bail!(
+            "LUMIC_MCP_HTTP_BIND must use a loopback address; expose it through an authenticated HTTPS reverse proxy"
+        );
+    }
+    let credentials = lumic_mcp::McpHttpCredentialStore::at_state_dir(&state_dir);
+    if !credentials.configured() {
+        anyhow::bail!("MCP HTTP is enabled but no token exists; run 'lumic mcp token rotate'");
+    }
+    let allowed_hosts = vec!["localhost".into(), "127.0.0.1".into(), "::1".into()];
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    tracing::info!(address = %bind, endpoint = "/mcp", "authenticated MCP HTTP listening");
+    axum::serve(
+        listener,
+        lumic_mcp::streamable_http_router(state_dir, allowed_hosts),
+    )
+    .await?;
     Ok(())
 }
 

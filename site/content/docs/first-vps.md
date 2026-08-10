@@ -18,12 +18,11 @@ ssh root@server 'curl -fsSL https://lumic.cc/install | sh'
 ssh root@server 'lumic version && lumic status && lumic how-are-you'
 ```
 
-The installer verifies published SHA-256 files, installs `lumic` and `lumicd` atomically, creates private state, and starts `lumicd` when systemd is available. Re-running the same artifact is a no-op. See [Installation](@/docs/installation.md) for channel and local-CI inputs.
+The installer verifies published SHA-256 files, installs `lumic` and `lumicd` atomically, verifies that `lumic mcp serve` is present, creates private state, and starts `lumicd` when systemd is available. On first install it creates and prints the UI token once. Re-running the same artifact is a no-op. See [Installation](@/docs/installation.md) for channel, restricted MCP key and local-CI inputs.
 
 ## Open the operator UI
 
 ```bash
-ssh root@server 'lumic ui token rotate'
 ssh -L 8080:127.0.0.1:8080 root@server
 ```
 
@@ -42,7 +41,7 @@ Use STATUS → SUGGEST → PLAN → APPLY. `how-are-you` is status only. Package
 
 ## Continue
 
-- [MCP](@/docs/mcp.md) documents the implemented local stdio development connection and its remote-transport limitation.
+- [MCP](@/docs/mcp.md) documents installed stdio, restricted SSH and optional Streamable HTTP connections.
 - [Deployments](@/docs/deployments.md) walks through Git releases, health gates and rollback.
 - [Infrastructure](@/docs/infrastructure.md) contains the two-node environment workflow and acceptance script.
 - [Server intelligence](@/docs/server-intelligence.md) covers the Laravel + Redis and controlled-incident demonstrations.

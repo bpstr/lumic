@@ -298,7 +298,7 @@ pub struct SignedRemoteRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InfrastructureReadModel {
-    pub local_node: NodeIdentity,
+    pub local_node: Option<NodeIdentity>,
     pub repositories: Vec<HostedRepository>,
     pub mirrors: Vec<RepositoryMirror>,
     pub triggers: Vec<PushDeployTrigger>,

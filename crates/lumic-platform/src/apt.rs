@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use crate::event_store::EventStore;
 
+const APT_LOCK_TIMEOUT_SECONDS: u64 = 60;
+
 #[derive(Debug, Clone)]
 pub struct AptPackageManager {
     runner: ProcessRunner,
@@ -74,9 +76,17 @@ impl AptPackageManager {
     }
 
     pub async fn update_index(&self, context: &OperationContext) -> Result<PackageMutation> {
-        let mut spec = ProcessSpec::new("apt-get").args(["update"]);
-        spec.timeout = Duration::from_secs(300);
         let apt = PackageName::parse("apt")?;
+        if context.dry_run {
+            return Ok(PackageMutation {
+                package: apt,
+                action: "update_index".into(),
+                changed: false,
+                output: "dry run: apt package metadata would be refreshed".into(),
+            });
+        }
+        let mut spec = apt_get(["update"]);
+        spec.timeout = Duration::from_secs(300);
         let output = self
             .run_mutation(spec, &apt, "update_index", context, None)
             .await?;
@@ -96,7 +106,8 @@ impl AptPackageManager {
         context: &OperationContext,
     ) -> Result<PackageMutation> {
         self.policy.authorize(package)?;
-        let installed = self.installed_version(package).await?;
+        let record = self.inspect(package).await?;
+        let installed = record.installed_version;
         if installed.is_some() {
             return Ok(PackageMutation {
                 package: package.clone(),
@@ -105,6 +116,7 @@ impl AptPackageManager {
                 output: "already installed".into(),
             });
         }
+        require_candidate(&record.name, record.candidate_version.as_deref())?;
         if context.dry_run {
             return Ok(PackageMutation {
                 package: package.clone(),
@@ -113,7 +125,7 @@ impl AptPackageManager {
                 output: "dry run: package is trusted and would be installed".into(),
             });
         }
-        let mut spec = ProcessSpec::new("apt-get").args([
+        let mut spec = apt_get([
             "install",
             "--yes",
             "--no-install-recommends",
@@ -157,8 +169,7 @@ impl AptPackageManager {
                 output: "dry run: package would be removed".into(),
             });
         }
-        let mut spec =
-            ProcessSpec::new("apt-get").args(["remove", "--yes", "--", package.as_str()]);
+        let mut spec = apt_get(["remove", "--yes", "--", package.as_str()]);
         spec.timeout = Duration::from_secs(600);
         let output = self
             .run_mutation(spec, package, "remove", context, installed)
@@ -187,6 +198,7 @@ impl AptPackageManager {
             });
         }
         let record = self.inspect(package).await?;
+        require_candidate(&record.name, record.candidate_version.as_deref())?;
         if record.candidate_version == installed {
             return Ok(PackageMutation {
                 package: package.clone(),
@@ -203,7 +215,7 @@ impl AptPackageManager {
                 output: "dry run: package would be upgraded".into(),
             });
         }
-        let mut spec = ProcessSpec::new("apt-get").args([
+        let mut spec = apt_get([
             "install",
             "--only-upgrade",
             "--yes",
@@ -314,6 +326,37 @@ impl AptPackageManager {
     }
 }
 
+fn apt_get(args: impl IntoIterator<Item = impl Into<String>>) -> ProcessSpec {
+    let mut spec = ProcessSpec::new("apt-get").args([
+        "-o".into(),
+        format!("Dpkg::Lock::Timeout={APT_LOCK_TIMEOUT_SECONDS}"),
+        "-o".into(),
+        "Dpkg::Options::=--force-confdef".into(),
+        "-o".into(),
+        "Dpkg::Options::=--force-confold".into(),
+    ]);
+    spec.args.extend(args.into_iter().map(Into::into));
+    spec.environment
+        .insert("APT_LISTCHANGES_FRONTEND".into(), "none".into());
+    spec.environment
+        .insert("DEBIAN_FRONTEND".into(), "noninteractive".into());
+    spec.environment
+        .insert("NEEDRESTART_MODE".into(), "l".into());
+    spec
+}
+
+fn require_candidate(package: &PackageName, candidate: Option<&str>) -> Result<()> {
+    if candidate.is_some() {
+        return Ok(());
+    }
+    Err(LumicError::InvalidInput {
+        field: "apt_sources".into(),
+        message: format!(
+            "no install candidate for {package}; configure a trusted apt source before setup"
+        ),
+    })
+}
+
 fn clean_output(output: &ProcessOutput) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -327,5 +370,70 @@ fn clean_output(output: &ProcessOutput) -> String {
         format!("process exited with {:?}", output.exit_code)
     } else {
         text.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumic_core::{ErrorCode, OperationInterface};
+
+    #[tokio::test]
+    async fn dry_run_does_not_refresh_apt_metadata() {
+        let state_dir = std::env::temp_dir().join(format!(
+            "lumic-apt-update-dry-run-test-{}",
+            std::process::id()
+        ));
+        let manager = AptPackageManager::system(EventStore::at_state_dir(state_dir));
+        let context = OperationContext {
+            actor: "test".into(),
+            interface: OperationInterface::Internal,
+            correlation_id: "apt-update-dry-run-test".into(),
+            dry_run: true,
+            approved: true,
+        };
+
+        let mutation = manager.update_index(&context).await.unwrap();
+
+        assert!(!mutation.changed);
+        assert_eq!(mutation.action, "update_index");
+        assert!(mutation.output.contains("would be refreshed"));
+    }
+
+    #[test]
+    fn require_candidate_rejects_a_package_missing_from_configured_sources() {
+        let package = PackageName::parse("example").unwrap();
+
+        let error = require_candidate(&package, None).unwrap_err();
+
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn require_candidate_accepts_an_available_package() {
+        let package = PackageName::parse("example").unwrap();
+
+        assert!(require_candidate(&package, Some("1.0")).is_ok());
+    }
+
+    #[test]
+    fn apt_get_disables_interactive_package_prompts() {
+        let spec = apt_get(["update"]);
+
+        assert_eq!(
+            spec.environment.get("DEBIAN_FRONTEND").map(String::as_str),
+            Some("noninteractive")
+        );
+    }
+
+    #[test]
+    fn apt_get_bounds_package_lock_waits() {
+        let spec = apt_get(["update"]);
+
+        assert!(
+            spec.args
+                .iter()
+                .any(|argument| argument == "Dpkg::Lock::Timeout=60")
+        );
     }
 }

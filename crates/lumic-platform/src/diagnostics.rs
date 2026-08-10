@@ -1,6 +1,7 @@
 use crate::{ProcessRunner, ProcessSpec, inspect_host, server::HostOperator};
 use lumic_core::{
     DiagnosticFinding, DiagnosticReport, LoadFacts, LumicError, ProcessFacts, Result,
+    server::MountStatus,
 };
 use std::{cmp::Reverse, fs};
 
@@ -54,18 +55,8 @@ pub async fn diagnose_host() -> Result<DiagnosticReport> {
         });
     }
     for mount in &mounts {
-        if mount.total_bytes > 0
-            && mount.available_bytes.saturating_mul(100) / mount.total_bytes < 10
-        {
-            findings.push(DiagnosticFinding {
-                severity: "warning".into(),
-                summary: format!("filesystem {} is nearly full", mount.mount_point),
-                evidence: format!(
-                    "{} of {} bytes remain available",
-                    mount.available_bytes, mount.total_bytes
-                ),
-                recommendation: "inspect application releases, backups, and journal usage before applying a bounded cleanup".into(),
-            });
+        if let Some(finding) = filesystem_pressure_finding(mount) {
+            findings.push(finding);
         }
     }
     let security_updates = updates.iter().filter(|update| update.security).count();
@@ -88,6 +79,55 @@ pub async fn diagnose_host() -> Result<DiagnosticReport> {
         updates,
         findings,
     })
+}
+
+fn filesystem_pressure_finding(mount: &MountStatus) -> Option<DiagnosticFinding> {
+    if !capacity_is_actionable(mount)
+        || mount.total_bytes == 0
+        || mount.available_bytes.saturating_mul(100) / mount.total_bytes >= 10
+    {
+        return None;
+    }
+    Some(DiagnosticFinding {
+        severity: "warning".into(),
+        summary: format!("filesystem {} is nearly full", mount.mount_point),
+        evidence: format!(
+            "{} of {} bytes remain available",
+            mount.available_bytes, mount.total_bytes
+        ),
+        recommendation: "inspect application releases, backups, and journal usage before applying a bounded cleanup".into(),
+    })
+}
+
+fn capacity_is_actionable(mount: &MountStatus) -> bool {
+    const VIRTUAL_OR_IMMUTABLE: &[&str] = &[
+        "autofs",
+        "binfmt_misc",
+        "bpf",
+        "cgroup",
+        "cgroup2",
+        "configfs",
+        "debugfs",
+        "devpts",
+        "devtmpfs",
+        "efivarfs",
+        "fusectl",
+        "hugetlbfs",
+        "iso9660",
+        "mqueue",
+        "nsfs",
+        "proc",
+        "pstore",
+        "ramfs",
+        "rpc_pipefs",
+        "securityfs",
+        "squashfs",
+        "sysfs",
+        "tmpfs",
+        "tracefs",
+    ];
+    !mount.options.iter().any(|option| option == "ro")
+        && !VIRTUAL_OR_IMMUTABLE.contains(&mount.filesystem.as_str())
 }
 
 fn parse_load(loadavg: &str, uptime: &str) -> Result<LoadFacts> {
@@ -198,6 +238,29 @@ fn inspection(fact: &str, error: impl std::fmt::Display) -> LumicError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mount(filesystem: &str, options: &[&str]) -> MountStatus {
+        MountStatus {
+            source: "/dev/test".into(),
+            mount_point: "/test".into(),
+            filesystem: filesystem.into(),
+            options: options.iter().map(|value| (*value).into()).collect(),
+            total_bytes: 100,
+            available_bytes: 1,
+        }
+    }
+
+    #[test]
+    fn ignores_full_immutable_and_virtual_mounts() {
+        assert!(filesystem_pressure_finding(&mount("squashfs", &["ro"])).is_none());
+        assert!(filesystem_pressure_finding(&mount("tmpfs", &["rw"])).is_none());
+    }
+
+    #[test]
+    fn reports_pressure_on_writable_persistent_mounts() {
+        let finding = filesystem_pressure_finding(&mount("ext4", &["rw"])).unwrap();
+        assert_eq!(finding.summary, "filesystem /test is nearly full");
+    }
 
     #[test]
     fn parses_proc_load_and_uptime() {

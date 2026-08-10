@@ -1,0 +1,79 @@
+schema_version = 1
+definition_version = 1
+id = "redis"
+name = "Redis"
+category = "cache"
+description = "In-memory data store and cache"
+driver = "redis"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+backup = true
+restore = true
+remove = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "Port"
+type = "port"
+default = 6379
+apply = "restart"
+
+[[configuration]]
+key = "maxmemory"
+label = "Memory limit"
+type = "bytes"
+minimum = 0
+default = 0
+apply = "reload"
+
+[[configuration]]
+key = "maxmemory_policy"
+label = "Eviction policy"
+type = "enum"
+values = ["noeviction", "allkeys-lru", "allkeys-lfu", "volatile-lru"]
+default = "noeviction"
+apply = "reload"
+
+[[configuration]]
+key = "timeout"
+label = "Idle timeout"
+type = "integer"
+minimum = 0
+maximum = 86400
+default = 0
+advanced = true
+apply = "reload"
+
+[[outputs]]
+key = "connection"
+type = "tcp_endpoint"
+capability = "cache.redis"
+
+[[platforms]]
+distribution = "debian"
+package = "redis-server"
+unit = "redis-server.service"
+data_path = "/var/lib/redis"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "redis-server"
+unit = "redis-server.service"
+data_path = "/var/lib/redis"

@@ -5,7 +5,7 @@ use crate::{
 use lumic_core::{
     LumicError, OperationContext, Result,
     application::{
-        Application, ApplicationProcess, ApplicationProcessKind, validate_command, validate_slug,
+        Application, ApplicationProcess, ApplicationProcessKind, MissedRunPolicy, ScheduleTiming,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ impl ApplicationProcessManager {
         process: &ApplicationProcess,
         context: &OperationContext,
     ) -> Result<ProcessConfigurationResult> {
-        validate_process(process)?;
+        process.validate()?;
         let prefix = format!("lumic-app-{}-{}", application.id, process.name);
         let service_name = format!("{prefix}.service");
         let service = render_service(application, process)?;
@@ -62,13 +62,30 @@ impl ApplicationProcessManager {
         }
         let systemd = SystemdServiceManager::at_state_dir(&self.state_dir);
         systemd.daemon_reload().await?;
+        let activation_unit = match process.kind {
+            ApplicationProcessKind::Worker => service_name.as_str(),
+            ApplicationProcessKind::Schedule => {
+                units
+                    .get(1)
+                    .map(String::as_str)
+                    .ok_or_else(|| LumicError::Internal {
+                        message: "scheduled process did not produce a timer unit".into(),
+                    })?
+            }
+        };
         if process.enabled {
-            let activation_unit = units.last().expect("at least one unit");
             systemd
                 .apply(activation_unit, ServiceAction::Enable, context)
                 .await?;
             systemd
                 .apply(activation_unit, ServiceAction::Start, context)
+                .await?;
+        } else {
+            systemd
+                .apply(activation_unit, ServiceAction::Stop, context)
+                .await?;
+            systemd
+                .apply(activation_unit, ServiceAction::Disable, context)
                 .await?;
         }
         Ok(ProcessConfigurationResult {
@@ -76,36 +93,6 @@ impl ApplicationProcessManager {
             units,
             changed,
         })
-    }
-}
-
-fn validate_process(process: &ApplicationProcess) -> Result<()> {
-    validate_slug("process", &process.name)?;
-    validate_command(&process.command)?;
-    match process.kind {
-        ApplicationProcessKind::Worker if process.schedule.is_some() => {
-            Err(LumicError::InvalidInput {
-                field: "schedule".into(),
-                message: "worker processes cannot have a timer schedule".into(),
-            })
-        }
-        ApplicationProcessKind::Schedule => {
-            let valid = process.schedule.as_deref().is_some_and(|schedule| {
-                !schedule.is_empty()
-                    && schedule.len() <= 128
-                    && !schedule.contains(['\n', '\r', '\0'])
-            });
-            if valid {
-                Ok(())
-            } else {
-                Err(LumicError::InvalidInput {
-                    field: "schedule".into(),
-                    message: "scheduled processes require a safe systemd OnCalendar expression"
-                        .into(),
-                })
-            }
-        }
-        ApplicationProcessKind::Worker => Ok(()),
     }
 }
 
@@ -140,14 +127,25 @@ fn render_service(application: &Application, process: &ApplicationProcess) -> Re
 fn render_timer(process: &ApplicationProcess, service_name: &str) -> Result<String> {
     let schedule = process
         .schedule
-        .as_deref()
+        .as_ref()
         .ok_or_else(|| LumicError::InvalidInput {
             field: "schedule".into(),
             message: "timer schedule is required".into(),
         })?;
+    schedule.validate()?;
+    let timing = match &schedule.timing {
+        ScheduleTiming::Calendar { expression } => format!("OnCalendar={expression}"),
+        ScheduleTiming::Interval { seconds } => format!("OnUnitActiveSec={seconds}s"),
+    };
+    let persistent = schedule.missed_run_policy == MissedRunPolicy::RunImmediately;
+    let jitter = if schedule.jitter_seconds > 0 {
+        format!("RandomizedDelaySec={}s\n", schedule.jitter_seconds)
+    } else {
+        String::new()
+    };
     Ok(format!(
-        "# Managed by Lumic\n[Unit]\nDescription=Lumic schedule {}\n\n[Timer]\nOnCalendar={}\nPersistent=true\nUnit={}\n\n[Install]\nWantedBy=timers.target\n",
-        process.name, schedule, service_name
+        "# Managed by Lumic\n[Unit]\nDescription=Lumic schedule {}\n\n[Timer]\n{}\nPersistent={}\n{}Unit={}\n\n[Install]\nWantedBy=timers.target\n",
+        process.name, timing, persistent, jitter, service_name
     ))
 }
 
@@ -164,7 +162,7 @@ fn systemd_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lumic_core::application::{ApplicationRuntime, HealthCheck, TlsState};
+    use lumic_core::application::{ApplicationRuntime, ApplicationSchedule, HealthCheck, TlsState};
     use std::collections::BTreeMap;
 
     fn app() -> Application {
@@ -209,9 +207,27 @@ mod tests {
             name: "queue".into(),
             kind: ApplicationProcessKind::Worker,
             command: vec!["php\n".into()],
-            schedule: Some("daily".into()),
+            schedule: Some(ApplicationSchedule::calendar("daily")),
             enabled: true,
         };
-        assert!(validate_process(&process).is_err());
+        assert!(process.validate().is_err());
+    }
+
+    #[test]
+    fn renders_backend_neutral_interval_schedule_as_a_systemd_timer() {
+        let mut schedule = ApplicationSchedule::interval(300);
+        schedule.missed_run_policy = MissedRunPolicy::Skip;
+        schedule.jitter_seconds = 15;
+        let process = ApplicationProcess {
+            name: "cleanup".into(),
+            kind: ApplicationProcessKind::Schedule,
+            command: vec!["php".into(), "cleanup.php".into()],
+            schedule: Some(schedule),
+            enabled: true,
+        };
+        let unit = render_timer(&process, "lumic-app-demo-cleanup.service").unwrap();
+        assert!(unit.contains("OnUnitActiveSec=300s"));
+        assert!(unit.contains("Persistent=false"));
+        assert!(unit.contains("RandomizedDelaySec=15s"));
     }
 }

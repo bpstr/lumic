@@ -1,0 +1,66 @@
+schema_version = 1
+definition_version = 1
+id = "meilisearch"
+name = "Meilisearch"
+category = "search"
+description = "Fast HTTP search service"
+driver = "meilisearch"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "listen_address"
+label = "Listen address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "Port"
+type = "port"
+default = 7700
+apply = "restart"
+
+[[configuration]]
+key = "data_directory"
+label = "Data directory"
+type = "path"
+default = "/var/lib/meilisearch"
+apply = "recreate"
+
+[[configuration]]
+key = "master_key"
+label = "Master key"
+type = "secret"
+required = true
+sensitive = true
+apply = "restart"
+
+[[outputs]]
+key = "http"
+type = "http_endpoint"
+capability = "search.meilisearch"
+
+[[platforms]]
+distribution = "debian"
+package = "meilisearch"
+unit = "meilisearch.service"
+data_path = "/var/lib/meilisearch"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "meilisearch"
+unit = "meilisearch.service"
+data_path = "/var/lib/meilisearch"

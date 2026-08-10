@@ -1,0 +1,67 @@
+schema_version = 1
+definition_version = 1
+id = "wordpress"
+name = "WordPress"
+description = "WordPress content management application"
+driver = "wordpress"
+
+[[configuration]]
+key = "application_id"
+label = "Application ID"
+type = "string"
+required = true
+
+[[configuration]]
+key = "domain"
+label = "Domain"
+type = "string"
+required = true
+
+[[configuration]]
+key = "site_title"
+label = "Site title"
+type = "string"
+required = true
+
+[[configuration]]
+key = "admin_username"
+label = "Administrator username"
+type = "string"
+required = true
+
+[[configuration]]
+key = "admin_email"
+label = "Administrator email"
+type = "string"
+required = true
+
+[[configuration]]
+key = "admin_password"
+label = "Administrator password"
+type = "secret"
+required = true
+sensitive = true
+
+[[configuration]]
+key = "php_version"
+label = "PHP version"
+type = "version"
+default = "8.3"
+
+[[configuration]]
+key = "tls"
+label = "Enable TLS"
+type = "boolean"
+default = false
+
+[[requirements]]
+capability = "web.http"
+role = "web"
+
+[[requirements]]
+capability = "runtime.php_fpm"
+role = "runtime"
+
+[[requirements]]
+capability = "database.mysql_compatible"
+role = "database"

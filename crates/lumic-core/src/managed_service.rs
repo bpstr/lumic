@@ -5,15 +5,21 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ManagedServiceKind {
+    Mysql,
     Postgresql,
     Redis,
+    Typesense,
+    Meilisearch,
 }
 
 impl ManagedServiceKind {
     pub const fn id(self) -> &'static str {
         match self {
+            Self::Mysql => "mysql",
             Self::Postgresql => "postgresql",
             Self::Redis => "redis",
+            Self::Typesense => "typesense",
+            Self::Meilisearch => "meilisearch",
         }
     }
 }
@@ -49,17 +55,6 @@ pub struct ServiceConfiguration {
 }
 
 impl ServiceConfiguration {
-    pub fn defaults(kind: ManagedServiceKind) -> Self {
-        Self {
-            bind_address: "127.0.0.1".into(),
-            port: match kind {
-                ManagedServiceKind::Postgresql => 5432,
-                ManagedServiceKind::Redis => 6379,
-            },
-            settings: BTreeMap::new(),
-        }
-    }
-
     pub fn validate(&self) -> Result<()> {
         if self.port == 0 {
             return Err(invalid("port", "must be between 1 and 65535"));
@@ -289,14 +284,22 @@ mod tests {
 
     #[test]
     fn reference_configurations_are_loopback_only_and_identifiers_are_safe() {
-        for kind in [ManagedServiceKind::Postgresql, ManagedServiceKind::Redis] {
-            assert!(ServiceConfiguration::defaults(kind).validate().is_ok());
+        for port in [5432, 6379] {
+            assert!(configuration(port).validate().is_ok());
         }
-        let mut exposed = ServiceConfiguration::defaults(ManagedServiceKind::Redis);
+        let mut exposed = configuration(6379);
         exposed.bind_address = "0.0.0.0".into();
         assert!(exposed.validate().is_err());
         assert!(validate_database_identifier("database", "app_prod").is_ok());
         assert!(validate_database_identifier("database", "app;drop").is_err());
+    }
+
+    fn configuration(port: u16) -> ServiceConfiguration {
+        ServiceConfiguration {
+            bind_address: "127.0.0.1".into(),
+            port,
+            settings: BTreeMap::new(),
+        }
     }
 
     #[test]

@@ -14,7 +14,7 @@ A manual epic builds the **mechanism**. Nightly expands the **catalog**.
 Examples:
 
 - Manual epic: build the application recipe engine and one reference recipe.
-- Nightly: add Drupal, WordPress, Symfony and other recipes.
+- Nightly: add Drupal, Symfony and other recipes after the WordPress lifecycle proof.
 - Manual epic: build managed-service lifecycle and one or two reference services.
 - Nightly: add more services using the same contract.
 - Manual epic: build framework-aware environment integration.
@@ -85,7 +85,7 @@ Epic A release mechanism implemented: external Git mirror/fetch, isolated releas
 
 ## Phase 4 — Managed services and data
 
-Epic B mechanism implemented: managed identity/configuration/secrets/dependencies, read-only native detection, plan/install/update/remove/lifecycle, health/log hooks, events/audits, PostgreSQL database/user/grant primitives, PostgreSQL/Redis local backup/restore and typed application references. PostgreSQL and Redis are the deliberately minimal reference set.
+Epic B mechanism implemented and extended by the resource-framework work: managed identity/configuration/secrets/dependencies, read-only native detection, plan/install/update/remove/lifecycle, health/log hooks, events/audits, MySQL/PostgreSQL database/user/grant primitives, MySQL/PostgreSQL/Redis local backup/restore, typed application references, and role-scoped database/credential bindings. MySQL, PostgreSQL and Redis are the deliberately small reference set.
 
 - managed service lifecycle contract.
 - service configuration/state/secrets.
@@ -119,7 +119,7 @@ The UI remains an adapter over the same application services used by CLI/MCP.
 
 ## Phase 6 — Application recipes
 
-Implemented: a compiled-in, versioned declarative schema composes runtimes/components, managed services, domain/TLS, declared environment inputs, private generated secrets and fixed setup operations. Catalog/list/inspect/plan/install/update/uninstall are shared by CLI/MCP, the UI shows catalog/installations, and `static-git@1.0.0` is the intentionally narrow reference. Remote signed catalog distribution and ecosystem breadth remain nightly work.
+Implemented: a compiled-in, versioned declarative schema composes runtimes/components, managed services, domain/TLS, declared environment inputs, private generated secrets and fixed setup operations. Catalog/list/inspect/plan/install/update/uninstall are shared by CLI/MCP, the UI shows catalog/installations, and `static-git@1.0.0` proves the generic mechanism. `wordpress@1.0.0` proves a complete checksum-pinned, idempotent PHP/MySQL/nginx application lifecycle with durable progress, rollback, secrets, health, and safe removal. Remote signed catalog distribution and further ecosystem breadth remain nightly work.
 
 Build the Installatron-like application provisioning substrate.
 
@@ -130,7 +130,7 @@ Build the Installatron-like application provisioning substrate.
 - versioned/signed recipe distribution design.
 - one simple reference recipe proving the mechanism.
 
-Nightly owns breadth: Laravel, Symfony, Drupal, WordPress, Forgejo/Gitea, Ghost, Matomo, etc.
+Nightly owns further breadth: Laravel, Symfony, Drupal, Forgejo/Gitea, Ghost, Matomo, etc.
 
 **Exit:** new application installers can usually be added as data/recipe work rather than core Rust changes.
 

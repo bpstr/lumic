@@ -10,6 +10,9 @@ export LUMIC_INSTALL_DIR="/usr/local/bin"
 
 /install.sh
 lumic version
+lumic mcp --help >/dev/null
+test -f /var/lib/lumic/ui-admin-token.sha256
+UI_TOKEN_DIGEST="$(cat /var/lib/lumic/ui-admin-token.sha256)"
 if [ -n "${LUMIC_TEST_DAEMON_BINARY:-}" ]; then
   lumicd --version
   test -f /etc/systemd/system/lumicd.service
@@ -24,9 +27,13 @@ printf '%s\n' "$STATUS_JSON" | grep -q '"cpu_count"'
 printf '%s\n' "$STATUS_JSON" | grep -q '"memory"'
 printf '%s\n' "$STATUS_JSON" | grep -q '"disks"'
 
-# Installer should be idempotent for the same binary.
+# Installer should accept the binary's exact stable or prerelease version and be
+# idempotent for the same binary.
+LUMIC_VERSION="$(lumic version | awk '{print $2}')"
+export LUMIC_VERSION
 /install.sh
 lumic version
+test "$(cat /var/lib/lumic/ui-admin-token.sha256)" = "$UI_TOKEN_DIGEST"
 if [ -n "${LUMIC_TEST_DAEMON_BINARY:-}" ]; then
   lumicd --version
 fi

@@ -1,3 +1,4 @@
+pub use crate::artifact::ArtifactDefinition as RecipeArtifact;
 use crate::{
     Capability, Change, LumicError, Plan, Result, Risk, RiskLevel,
     application::{ApplicationProcess, ApplicationRuntime, validate_domain, validate_slug},
@@ -40,9 +41,18 @@ pub struct RecipeEnvironmentValue {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum RecipeSetupStep {
-    HealthCheck { path: String, port: u16 },
-    Process { process: ApplicationProcess },
+    HealthCheck {
+        path: String,
+        port: u16,
+    },
+    Process {
+        process: ApplicationProcess,
+    },
     Deploy,
+    WordPress {
+        source: RecipeArtifact,
+        wp_cli: RecipeArtifact,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +96,15 @@ pub enum RecipeInstallationStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RecipeOperationProgress {
+    pub execution_id: String,
+    #[serde(default)]
+    pub completed_steps: Vec<String>,
+    pub current_step: Option<String>,
+    pub failure: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecipeInstallation {
     pub recipe_id: String,
@@ -100,6 +119,14 @@ pub struct RecipeInstallation {
     pub tls_email: Option<String>,
     pub secret_references: BTreeMap<String, String>,
     pub service_ids: Vec<String>,
+    #[serde(default)]
+    pub owned_resources: Vec<String>,
+    #[serde(default)]
+    pub binding_ids: Vec<String>,
+    #[serde(default)]
+    pub artifacts: BTreeMap<String, String>,
+    #[serde(default)]
+    pub operation: Option<RecipeOperationProgress>,
     pub status: RecipeInstallationStatus,
     pub installed_at_unix_ms: u128,
     pub updated_at_unix_ms: u128,
@@ -153,6 +180,10 @@ impl RecipeDefinition {
                     crate::application::validate_command(&process.command)?;
                 }
                 RecipeSetupStep::Deploy => {}
+                RecipeSetupStep::WordPress { source, wp_cli } => {
+                    source.validate()?;
+                    wp_cli.validate()?;
+                }
             }
         }
         Ok(())
@@ -204,6 +235,9 @@ impl RecipeDefinition {
                     format!("{name} is not declared as a recipe input"),
                 ));
             }
+        }
+        if self.metadata.id == "wordpress" {
+            validate_wordpress_inputs(request, already_installed)?;
         }
         let verb = if already_installed {
             "reconcile"
@@ -273,7 +307,105 @@ pub fn reference_recipes() -> Vec<RecipeDefinition> {
             },
             RecipeSetupStep::Deploy,
         ],
-    }]
+    }, wordpress_recipe()]
+}
+
+pub fn wordpress_recipe() -> RecipeDefinition {
+    RecipeDefinition {
+        metadata: RecipeMetadata {
+            id: "wordpress".into(),
+            version: "1.0.0".into(),
+            name: "WordPress".into(),
+            description: "A checksum-verified WordPress application with PHP-FPM, nginx and MySQL.".into(),
+        },
+        runtime: ApplicationRuntime::Php,
+        repository_required: false,
+        components: ["curl", "mbstring", "mysql", "xml", "zip"]
+            .map(str::to_owned)
+            .to_vec(),
+        services: vec![RecipeServiceRequirement {
+            id_suffix: "mysql".into(),
+            kind: ManagedServiceKind::Mysql,
+            role: "database".into(),
+            required: true,
+        }],
+        environment: vec![
+            input("WORDPRESS_SITE_TITLE"),
+            input("WORDPRESS_ADMIN_USER"),
+            input("WORDPRESS_ADMIN_EMAIL"),
+            RecipeEnvironmentValue {
+                name: "WORDPRESS_ADMIN_PASSWORD".into(),
+                source: RecipeEnvironmentSource::GeneratedSecret,
+            },
+        ],
+        setup: vec![
+            RecipeSetupStep::WordPress {
+                source: RecipeArtifact {
+                    id: "wordpress".into(),
+                    version: "6.8.2".into(),
+                    url: "https://wordpress.org/wordpress-6.8.2.tar.gz".into(),
+                    sha256: "d85a72e392bfe866816b3c2ebc6a44699072aa50cc3a620f1c4ed2f13b645e2b".into(),
+                },
+                wp_cli: RecipeArtifact {
+                    id: "wp-cli".into(),
+                    version: "2.12.0".into(),
+                    url: "https://github.com/wp-cli/wp-cli/releases/download/v2.12.0/wp-cli-2.12.0.phar".into(),
+                    sha256: "ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c".into(),
+                },
+            },
+            RecipeSetupStep::HealthCheck { path: "/wp-login.php".into(), port: 80 },
+        ],
+    }
+}
+
+fn input(name: &str) -> RecipeEnvironmentValue {
+    RecipeEnvironmentValue {
+        name: name.into(),
+        source: RecipeEnvironmentSource::Input { required: true },
+    }
+}
+
+fn validate_wordpress_inputs(
+    request: &RecipeInstallRequest,
+    already_installed: bool,
+) -> Result<()> {
+    let value = |name: &str| request.environment.get(name).map(String::as_str);
+    if already_installed && request.environment.is_empty() {
+        return Ok(());
+    }
+    let title = value("WORDPRESS_SITE_TITLE").unwrap_or_default();
+    if title.trim().is_empty() || title.len() > 200 || title.contains(['\n', '\r']) {
+        return Err(invalid(
+            "WORDPRESS_SITE_TITLE",
+            "must be 1 to 200 characters on one line",
+        ));
+    }
+    let user = value("WORDPRESS_ADMIN_USER").unwrap_or_default();
+    if user.len() < 3
+        || user.len() > 60
+        || !user
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'@'))
+    {
+        return Err(invalid(
+            "WORDPRESS_ADMIN_USER",
+            "must be 3 to 60 safe username characters",
+        ));
+    }
+    let email = value("WORDPRESS_ADMIN_EMAIL").unwrap_or_default();
+    let mut parts = email.split('@');
+    if email.len() > 254
+        || parts.next().is_none_or(str::is_empty)
+        || parts.next().is_none_or(|domain| !domain.contains('.'))
+        || parts.next().is_some()
+        || email.contains(['\n', '\r'])
+    {
+        return Err(invalid(
+            "WORDPRESS_ADMIN_EMAIL",
+            "must be a valid email address",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_version(value: &str) -> Result<()> {
@@ -382,5 +514,30 @@ mod tests {
         };
         assert!(recipe.plan(&request, false).is_err());
         assert!(recipe.plan(&request, true).is_ok());
+    }
+
+    #[test]
+    fn wordpress_definition_pins_valid_artifacts_and_validates_inputs() {
+        let recipe = wordpress_recipe();
+        recipe.validate().unwrap();
+        let request = RecipeInstallRequest {
+            recipe_id: "wordpress".into(),
+            application_id: "blog".into(),
+            domain: "blog.example.com".into(),
+            repository_url: None,
+            branch: "main".into(),
+            tls_email: None,
+            environment: BTreeMap::from([
+                ("WORDPRESS_SITE_TITLE".into(), "Example blog".into()),
+                ("WORDPRESS_ADMIN_USER".into(), "admin_user".into()),
+                ("WORDPRESS_ADMIN_EMAIL".into(), "admin@example.com".into()),
+            ]),
+        };
+        assert!(recipe.plan(&request, false).is_ok());
+        let mut invalid = request;
+        invalid
+            .environment
+            .insert("WORDPRESS_ADMIN_EMAIL".into(), "invalid".into());
+        assert!(recipe.plan(&invalid, false).is_err());
     }
 }

@@ -3,10 +3,13 @@ use crate::{
     app_process::{ApplicationProcessManager, ProcessConfigurationResult},
     atomic_file::write_atomic,
     audit_store::AuditStore,
+    certificate::{CertbotProvider, CertificateManager, NginxCertificateAttacher},
     event_store::EventStore,
+    framework_state::FrameworkStateStore,
+    resource_lock::ResourceLock,
     runtime::{RuntimeInstallResult, RuntimeManager},
     secret_store::SecretStore,
-    web::{NginxManager, TlsManager, WebConfigurationResult},
+    web::{NginxManager, WebConfigurationResult},
 };
 use lumic_core::{
     Capability, Change, LumicError, OperationContext, Plan, Result, Risk, RiskLevel,
@@ -16,14 +19,22 @@ use lumic_core::{
         TlsState, unix_time_ms, validate_branch, validate_command, validate_domain,
         validate_repository_url, validate_slug,
     },
+    application_lifecycle::{
+        ApplicationLifecycleOperation, ApplicationLifecyclePlan, GenericPhpApplicationSpec,
+    },
+    binding::Binding,
+    certificate::CertificateRequest,
     events::{AuditRecord, Event},
     infrastructure::PortableApplication,
+    pipeline::{PipelineExecution, PipelineStatus},
+    resource::{ResourceKind, ResourceOutput, ResourceOutputs, ResourceRecord, ResourceRef},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, symlink};
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -129,6 +140,83 @@ impl ApplicationService {
             .ok_or_else(|| not_found(id))
     }
 
+    /// Builds an explicit desired-state plan without changing host or framework state.
+    pub fn plan_generic_php(
+        &self,
+        spec: &GenericPhpApplicationSpec,
+        operation: ApplicationLifecycleOperation,
+    ) -> Result<ApplicationLifecyclePlan> {
+        spec.validate()?;
+        let expected_root = self.apps_root.join(&spec.id);
+        if Path::new(&spec.root) != expected_root {
+            return Err(LumicError::InvalidInput {
+                field: "root".into(),
+                message: format!(
+                    "generic applications must use the managed root {}",
+                    expected_root.display()
+                ),
+            });
+        }
+        let existing = self
+            .store
+            .load()?
+            .applications
+            .into_iter()
+            .find(|application| application.id == spec.id);
+        match (operation, existing.as_ref()) {
+            (ApplicationLifecycleOperation::Install, Some(_)) => {
+                return Err(LumicError::InvalidInput {
+                    field: "application".into(),
+                    message: "install requires the application to be absent; use reconcile".into(),
+                });
+            }
+            (ApplicationLifecycleOperation::Reconcile, None)
+            | (ApplicationLifecycleOperation::Update, None)
+            | (ApplicationLifecycleOperation::Remove, None) => return Err(not_found(&spec.id)),
+            _ => {}
+        }
+        if let Some(application) = existing
+            && (application.runtime != ApplicationRuntime::Php
+                || application.domain != spec.domain
+                || application.www_alias != spec.www_alias
+                || application.root != spec.root)
+        {
+            return Err(LumicError::InvalidInput {
+                field: "application".into(),
+                message: "desired identity, domain, root, and PHP runtime must match the managed application"
+                    .into(),
+            });
+        }
+        spec.lifecycle_plan(operation)
+    }
+
+    /// Persists the planned/running execution journal at the application apply boundary.
+    pub fn begin_generic_php_lifecycle(
+        &self,
+        lifecycle: &ApplicationLifecyclePlan,
+        execution_id: &str,
+    ) -> Result<PipelineExecution> {
+        let _lock = ResourceLock::try_acquire(&self.state_dir, &lifecycle.pipeline.target)?;
+        let now = framework_time();
+        let mut execution = PipelineExecution::planned(execution_id, &lifecycle.pipeline, now)?;
+        execution.transition(PipelineStatus::Running, now)?;
+        let store = FrameworkStateStore::at_state_dir(&self.state_dir);
+        let mut state = store.load_or_migrate(now)?;
+        if state
+            .pipeline_executions
+            .iter()
+            .any(|existing| existing.id == execution.id)
+        {
+            return Err(LumicError::InvalidInput {
+                field: "execution.id".into(),
+                message: "lifecycle execution id already exists".into(),
+            });
+        }
+        state.pipeline_executions.push(execution.clone());
+        store.save(&state)?;
+        Ok(execution)
+    }
+
     pub fn create(
         &self,
         name: &str,
@@ -151,6 +239,7 @@ impl ApplicationService {
             });
         }
         let root = self.apps_root.join(name);
+        let root_preexisted = root.exists();
         for directory in ["releases", "shared", "repository"] {
             fs::create_dir_all(root.join(directory)).map_err(state_io_error)?;
         }
@@ -174,8 +263,16 @@ impl ApplicationService {
             created_at_unix_ms: now,
             updated_at_unix_ms: now,
         };
+        let previous_state = state.clone();
         state.applications.push(application.clone());
         self.store.save(&state)?;
+        if let Err(error) = persist_application_resource(&self.state_dir, &application) {
+            let _ = self.store.save(&previous_state);
+            if !root_preexisted {
+                let _ = fs::remove_dir_all(&root);
+            }
+            return Err(error);
+        }
         self.emit(
             "application.created",
             &application.id,
@@ -336,9 +433,33 @@ impl ApplicationService {
         components: &[String],
         context: &OperationContext,
     ) -> Result<ProvisionResult> {
+        self.provision_versioned(id, None, components, context)
+            .await
+    }
+
+    pub async fn provision_versioned(
+        &self,
+        id: &str,
+        runtime_version: Option<&str>,
+        components: &[String],
+        context: &OperationContext,
+    ) -> Result<ProvisionResult> {
         let application = self.inspect(id)?;
-        let runtime = RuntimeManager::at_state_dir(&self.state_dir)
-            .install(application.runtime, components, context)
+        let runtime_manager = RuntimeManager::at_state_dir(&self.state_dir);
+        runtime_manager.validate_request(application.runtime, runtime_version, components)?;
+        let nginx = NginxManager::system(&self.state_dir);
+        nginx.ensure_service(context).await.inspect_err(|error| {
+            let _ = self.audit_failure(
+                context,
+                "application.provision",
+                "provision",
+                id,
+                json!({"service": "nginx"}),
+                error,
+            );
+        })?;
+        let runtime = runtime_manager
+            .install_versioned(application.runtime, runtime_version, components, context)
             .await
             .inspect_err(|error| {
                 let _ = self.audit_failure(
@@ -350,8 +471,13 @@ impl ApplicationService {
                     error,
                 );
             })?;
-        let web = NginxManager::system(&self.state_dir)
-            .configure(&application, context)
+        let web = nginx
+            .configure(
+                &application,
+                runtime.fpm_socket.as_deref().map(Path::new),
+                runtime.runtime_resource_id.as_deref(),
+                context,
+            )
             .await
             .inspect_err(|error| {
                 let _ = self.audit_failure(
@@ -370,17 +496,25 @@ impl ApplicationService {
             "provision",
             "application",
             id,
-            json!({"runtime": application.runtime, "components": components}),
+            json!({
+                "runtime": application.runtime,
+                "runtime_version": runtime.runtime_version.as_deref(),
+                "components": components,
+            }),
             Some(json!({"web_configured": application.web_configured})),
             Some(json!({"web_configured": true})),
             true,
-            "runtime and nginx configured",
+            "runtime and owned nginx web host configured",
         ))?;
         self.emit(
             "application.provisioned",
             id,
             context,
-            json!({"runtime": application.runtime}),
+            json!({
+                "runtime": application.runtime,
+                "runtime_version": runtime.runtime_version.as_deref(),
+                "runtime_resource_id": runtime.runtime_resource_id.as_deref(),
+            }),
         )?;
         Ok(ProvisionResult { runtime, web })
     }
@@ -399,18 +533,45 @@ impl ApplicationService {
                 .install(&lumic_core::package::PackageName::parse(name)?, context)
                 .await?;
         }
-        TlsManager::enable(&application, email)
-            .await
-            .inspect_err(|error| {
-                let _ = self.audit_failure(
-                    context,
-                    "application.tls.enable",
-                    "enable_tls",
-                    id,
-                    json!({"email": "redacted"}),
-                    error,
-                );
-            })?;
+        let domains = if application.www_alias {
+            vec![
+                application.domain.clone(),
+                format!("www.{}", application.domain),
+            ]
+        } else {
+            vec![application.domain.clone()]
+        };
+        let request = CertificateRequest {
+            resource: ResourceRef::new(
+                ResourceKind::Certificate,
+                format!("certificate.{}", application.id),
+            )?,
+            consumer: ResourceRef::new(
+                ResourceKind::ServiceResource,
+                format!("nginx.web-host.{}", application.id),
+            )?,
+            provider: "certbot-letsencrypt".into(),
+            certificate_name: application.domain.clone(),
+            domains,
+            contact_email: email.into(),
+        };
+        CertificateManager::new(
+            &self.state_dir,
+            CertbotProvider::default(),
+            NginxCertificateAttacher::new(&self.state_dir),
+        )
+        .issue(&request, context)
+        .await
+        .inspect_err(|error| {
+            let _ = self.audit_failure(
+                context,
+                "application.tls.enable",
+                "enable_tls",
+                id,
+                json!({"email": "redacted"}),
+                error,
+            );
+        })?;
         let application = self.update_application(id, |app| {
             app.tls.enabled = true;
             app.tls.certificate_name = Some(app.domain.clone());
@@ -458,6 +619,7 @@ impl ApplicationService {
                     error,
                 );
             })?;
+        persist_application_process(&self.state_dir, &application, &process, &result)?;
         self.update_application(id, |application| {
             if let Some(existing) = application
                 .processes
@@ -1177,29 +1339,7 @@ impl ApplicationService {
             }
         }
         for process in &configuration.processes {
-            validate_slug("process", &process.name)?;
-            validate_command(&process.command)?;
-            if process.kind == lumic_core::application::ApplicationProcessKind::Schedule
-                && !process.schedule.as_deref().is_some_and(|schedule| {
-                    !schedule.is_empty()
-                        && schedule.len() <= 128
-                        && !schedule.contains(['\n', '\r', '\0'])
-                })
-            {
-                return Err(LumicError::InvalidInput {
-                    field: "schedule".into(),
-                    message: "scheduled processes require a safe systemd OnCalendar expression"
-                        .into(),
-                });
-            }
-            if process.kind == lumic_core::application::ApplicationProcessKind::Worker
-                && process.schedule.is_some()
-            {
-                return Err(LumicError::InvalidInput {
-                    field: "schedule".into(),
-                    message: "worker processes cannot have a schedule".into(),
-                });
-            }
+            process.validate()?;
         }
         if configuration.health_check.enabled
             && (!configuration.health_check.path.starts_with('/')
@@ -1476,6 +1616,125 @@ fn current_release(application: &Application) -> Result<Option<String>> {
     }
 }
 
+fn persist_application_resource(state_dir: &Path, application: &Application) -> Result<()> {
+    let now = framework_time();
+    let store = FrameworkStateStore::at_state_dir(state_dir);
+    let mut state = store.load_or_migrate(now)?;
+    upsert_application_record(&mut state.resources, application, now)?;
+    store.save(&state)
+}
+
+fn persist_application_process(
+    state_dir: &Path,
+    application: &Application,
+    process: &ApplicationProcess,
+    result: &ProcessConfigurationResult,
+) -> Result<()> {
+    let now = framework_time();
+    let store = FrameworkStateStore::at_state_dir(state_dir);
+    let mut state = store.load_or_migrate(now)?;
+    let application_ref = upsert_application_record(&mut state.resources, application, now)?;
+    let process_id = format!("application.{}.{}", application.id, process.name);
+    state.resources.retain(|record| {
+        !(record.resource.id == process_id
+            && matches!(
+                record.resource.kind,
+                ResourceKind::Process | ResourceKind::Schedule
+            ))
+    });
+    state.bindings.0.retain(|binding| {
+        !(binding.producer.id == process_id
+            && matches!(
+                binding.producer.kind,
+                ResourceKind::Process | ResourceKind::Schedule
+            ))
+    });
+    let kind = match process.kind {
+        lumic_core::application::ApplicationProcessKind::Worker => ResourceKind::Process,
+        lumic_core::application::ApplicationProcessKind::Schedule => ResourceKind::Schedule,
+    };
+    let process_ref = ResourceRef::new(kind, process_id)?;
+    state.resources.push(ResourceRecord {
+        resource: process_ref.clone(),
+        attributes: BTreeMap::from([
+            ("application_id".into(), json!(application.id)),
+            ("name".into(), json!(process.name)),
+            ("kind".into(), json!(process.kind)),
+            ("command".into(), json!(process.command)),
+            ("schedule".into(), json!(process.schedule)),
+            ("enabled".into(), json!(process.enabled)),
+            ("ownership".into(), json!("lumic")),
+        ]),
+        outputs: ResourceOutputs::from([(
+            "units".into(),
+            ResourceOutput {
+                value: json!(result.units),
+                sensitive: false,
+                updated_at_unix_ms: now,
+            },
+        )]),
+        created_at_unix_ms: now,
+        updated_at_unix_ms: now,
+    });
+    state.bindings.0.push(Binding {
+        id: format!("{}-{}-to-application", application.id, process.name),
+        producer: process_ref,
+        output: "units".into(),
+        consumer: application_ref,
+        input: format!("process_{}", process.name),
+        created_at_unix_ms: now,
+    });
+    store.save(&state)
+}
+
+fn upsert_application_record(
+    resources: &mut Vec<ResourceRecord>,
+    application: &Application,
+    now: u64,
+) -> Result<ResourceRef> {
+    let application_ref = ResourceRef::new(ResourceKind::Application, &application.id)?;
+    let created_at = resources
+        .iter()
+        .find(|record| record.resource == application_ref)
+        .map_or(now, |record| record.created_at_unix_ms);
+    resources.retain(|record| record.resource != application_ref);
+    resources.push(ResourceRecord {
+        resource: application_ref.clone(),
+        attributes: BTreeMap::from([
+            ("domain".into(), json!(application.domain)),
+            ("www_alias".into(), json!(application.www_alias)),
+            ("root".into(), json!(application.root)),
+            ("runtime".into(), json!(application.runtime)),
+            ("resource_type".into(), json!("application")),
+        ]),
+        outputs: ResourceOutputs::from([
+            (
+                "domain".into(),
+                ResourceOutput {
+                    value: json!(application.domain),
+                    sensitive: false,
+                    updated_at_unix_ms: now,
+                },
+            ),
+            (
+                "root".into(),
+                ResourceOutput {
+                    value: json!(application.root),
+                    sensitive: false,
+                    updated_at_unix_ms: now,
+                },
+            ),
+        ]),
+        created_at_unix_ms: created_at,
+        updated_at_unix_ms: now,
+    });
+    Ok(application_ref)
+}
+
+fn framework_time() -> u64 {
+    u64::try_from(unix_time_ms()).unwrap_or(u64::MAX)
+}
+
 #[cfg(unix)]
 fn activate(application: &Application, release: &Path, suffix: &str) -> Result<()> {
     let root = PathBuf::from(&application.root);
@@ -1517,7 +1776,11 @@ fn not_found(id: &str) -> LumicError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lumic_core::{OperationContext, OperationInterface};
+    use lumic_core::{
+        OperationContext, OperationInterface,
+        application::{ApplicationProcessKind, ApplicationSchedule, HealthCheck},
+        pipeline::PipelineStatus,
+    };
     use std::process::Command;
     use tokio::net::TcpListener;
 
@@ -1529,6 +1792,150 @@ mod tests {
             dry_run: false,
             approved: true,
         }
+    }
+
+    fn generic_php_spec(root: &Path) -> GenericPhpApplicationSpec {
+        GenericPhpApplicationSpec {
+            id: "php-app".into(),
+            domain: "php-app.example.com".into(),
+            www_alias: false,
+            root: root.join("php-app").to_string_lossy().into_owned(),
+            php_version: "8.3".into(),
+            repository: Some(RepositoryConfig {
+                url: "https://example.com/php-app.git".into(),
+                branch: "main".into(),
+                credential_reference: None,
+            }),
+            components: vec!["curl".into(), "mbstring".into()],
+            databases: Vec::new(),
+            packages: vec!["git".into(), "composer".into()],
+            tls: true,
+            processes: vec![ApplicationProcess {
+                name: "queue".into(),
+                kind: ApplicationProcessKind::Worker,
+                command: vec!["php".into(), "worker.php".into()],
+                schedule: None,
+                enabled: true,
+            }],
+            health: HealthCheck {
+                enabled: true,
+                path: "/health".into(),
+                ..HealthCheck::default()
+            },
+        }
+    }
+
+    #[test]
+    fn generic_php_lifecycle_is_planned_journaled_and_resource_backed() {
+        let base = std::env::temp_dir().join(format!(
+            "lumic-generic-php-lifecycle-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let state_dir = base.join("state");
+        let apps_root = base.join("apps");
+        let service = ApplicationService::new(&state_dir, &apps_root);
+        let spec = generic_php_spec(&apps_root);
+
+        let install = service
+            .plan_generic_php(&spec, ApplicationLifecycleOperation::Install)
+            .unwrap();
+        assert!(
+            install
+                .pipeline
+                .steps
+                .iter()
+                .any(|step| step.id == "component-mbstring")
+        );
+        service
+            .create(
+                &spec.id,
+                &spec.domain,
+                ApplicationRuntime::Php,
+                spec.www_alias,
+                &context(),
+            )
+            .unwrap();
+        assert!(
+            service
+                .plan_generic_php(&spec, ApplicationLifecycleOperation::Install)
+                .is_err()
+        );
+        let reconcile = service
+            .plan_generic_php(&spec, ApplicationLifecycleOperation::Reconcile)
+            .unwrap();
+        let execution = service
+            .begin_generic_php_lifecycle(&reconcile, "php-app-reconcile-1")
+            .unwrap();
+        assert_eq!(execution.status, PipelineStatus::Running);
+
+        let framework = FrameworkStateStore::at_state_dir(&state_dir)
+            .load()
+            .unwrap();
+        assert!(framework.resources.iter().any(|record| {
+            record.resource.kind == ResourceKind::Application
+                && record.resource.id == "php-app"
+                && record.outputs.contains_key("root")
+        }));
+        assert_eq!(framework.pipeline_executions, vec![execution]);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn process_and_schedule_definitions_are_owned_resources_bound_to_the_application() {
+        let base = std::env::temp_dir().join(format!(
+            "lumic-app-process-resource-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let state_dir = base.join("state");
+        let apps_root = base.join("apps");
+        let service = ApplicationService::new(&state_dir, &apps_root);
+        let application = service
+            .create(
+                "scheduled-app",
+                "scheduled.example.com",
+                ApplicationRuntime::Php,
+                false,
+                &context(),
+            )
+            .unwrap();
+        let process = ApplicationProcess {
+            name: "cron".into(),
+            kind: ApplicationProcessKind::Schedule,
+            command: vec!["php".into(), "cron.php".into()],
+            schedule: Some(ApplicationSchedule::calendar("hourly")),
+            enabled: true,
+        };
+        persist_application_process(
+            &state_dir,
+            &application,
+            &process,
+            &ProcessConfigurationResult {
+                process: "cron".into(),
+                units: vec![
+                    "lumic-app-scheduled-app-cron.service".into(),
+                    "lumic-app-scheduled-app-cron.timer".into(),
+                ],
+                changed: true,
+            },
+        )
+        .unwrap();
+
+        let framework = FrameworkStateStore::at_state_dir(&state_dir)
+            .load()
+            .unwrap();
+        let schedule = framework
+            .resources
+            .iter()
+            .find(|record| record.resource.kind == ResourceKind::Schedule)
+            .unwrap();
+        assert_eq!(schedule.resource.id, "application.scheduled-app.cron");
+        assert!(framework.bindings.0.iter().any(|binding| {
+            binding.producer == schedule.resource
+                && binding.consumer.kind == ResourceKind::Application
+        }));
+        fs::remove_dir_all(base).unwrap();
     }
 
     fn git(repository: &Path, args: &[&str]) {

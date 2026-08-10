@@ -41,8 +41,10 @@ cp "$LUMIC_STATE_DIR/resources.json" "$TEST_ROOT/resources-first.json"
 "$LUMIC_BIN" recipe install wordpress blog blog.lumic.test > "$TEST_ROOT/second.json"
 grep -q '"changed": false' "$TEST_ROOT/second.json"
 cmp "$TEST_ROOT/resources-first.json" "$LUMIC_STATE_DIR/resources.json"
-test "$(grep -c '"id": "wordpress.6.8.2"' "$LUMIC_STATE_DIR/resources.json")" -eq 1
-test "$(grep -c '"id": "wp-cli.2.12.0"' "$LUMIC_STATE_DIR/resources.json")" -eq 1
+jq -e '[.resources[] | select(.id == "wordpress.6.8.2")] | length == 1' \
+  "$LUMIC_STATE_DIR/resources.json" >/dev/null
+jq -e '[.resources[] | select(.id == "wp-cli.2.12.0")] | length == 1' \
+  "$LUMIC_STATE_DIR/resources.json" >/dev/null
 
 "$LUMIC_BIN" recipe uninstall blog > "$TEST_ROOT/uninstall.json"
 grep -q 'moved to Lumic trash' "$TEST_ROOT/uninstall.json"

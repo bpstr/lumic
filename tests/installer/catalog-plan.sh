@@ -24,10 +24,15 @@ while IFS= read -r definition; do
   service="plan-$definition"
   plan="$INSTALLER_TEST_ROOT/$definition-plan.json"
   dry_run="$INSTALLER_TEST_ROOT/$definition-dry-run.json"
+  dry_run_error="$INSTALLER_TEST_ROOT/$definition-dry-run.error"
   "$LUMIC_BIN" managed-service plan-install "$service" "$definition" >"$plan"
   assert_json '.changes | any(.capability == "managed_service.install")' "$plan"
-  "$LUMIC_BIN" managed-service install "$service" "$definition" --dry-run >"$dry_run"
-  assert_json '.changed == false and (.message | contains("dry run"))' "$dry_run"
+  if "$LUMIC_BIN" managed-service install "$service" "$definition" --dry-run >"$dry_run" 2>"$dry_run_error"; then
+    assert_json '.changed == false and (.message | contains("dry run"))' "$dry_run"
+  else
+    assert_file_contains "$dry_run_error" 'no install candidate for'
+    assert_file_contains "$dry_run_error" 'configure a trusted apt source before setup'
+  fi
 done < <(jq -r '.[].id' "$catalog")
 
 write_installer_result catalog plan passed

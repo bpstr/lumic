@@ -26,6 +26,10 @@ read/write probes, backup validation, secret-state checks and cleanup. CI upload
 JSON result artifacts for the catalog and live-service suites so failures can be compared
 across future OS and architecture matrices.
 
+Catalog dry-runs also exercise the negative package-source guard. Definitions whose
+native package is not present in the stock runner repositories must fail with the typed
+trusted-source precondition instead of attempting an unverified installation.
+
 GitHub-hosted Ubuntu images include a password-initialized MySQL instance. Before live
 service and recipe gates, CI removes that preinitialized server and its data so Lumic is
 tested against the fresh-host installation contract used on a new VPS.

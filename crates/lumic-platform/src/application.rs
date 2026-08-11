@@ -1687,7 +1687,11 @@ impl ApplicationService {
             ));
         }
         let environment = self.resolve_environment(application)?;
-        let environment_file = self.materialize_environment(application, &environment)?;
+        let environment_file = if repository.deployment.node_handoff.is_some() {
+            self.materialize_environment(application, &environment)?
+        } else {
+            None
+        };
 
         self.run_workflow_commands(
             "pre_deploy",

@@ -57,7 +57,7 @@ A node never silently changes channels.
 Stable installation resolves GitHub's latest stable release. Pin an exact immutable stable or prerelease when required:
 
 ```bash
-curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_VERSION=2.0.0-alpha.5 sh
+curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_VERSION=2.0.0-alpha.6 sh
 ```
 
 Exact prerelease versions are opt-in and do not change the node's recorded stable/nightly channel. GitHub marks prerelease tags separately, so they never replace the latest stable release.

@@ -78,6 +78,13 @@ EOF
 
 printf '%s\n' 'setInterval(() => {}, 1000);' > "$SOURCE/worker.js"
 printf '%s\n' 'process.exit(0);' > "$SOURCE/worker-health.js"
+cat > "$SOURCE/package.json" <<EOF
+{
+  "name": "$APP",
+  "version": "1.0.0",
+  "private": true
+}
+EOF
 write_server 200 release-one
 write_manifest '[]'
 git -C "$SOURCE" add .

@@ -20,6 +20,18 @@ installer_report_error() {
     find "$INSTALLER_TEST_ROOT" -maxdepth 1 -type f \
       \( -name '*.json' -o -name '*.error' \) \
       -exec cp {} "$INSTALLER_RESULTS_DIR/diagnostics/" \;
+    if command -v systemctl >/dev/null 2>&1; then
+      local unit
+      for unit in postgresql.service mysql.service redis-server.service; do
+        systemctl status --no-pager --full "$unit" \
+          >"$INSTALLER_RESULTS_DIR/diagnostics/${unit}.status.txt" 2>&1 || true
+        journalctl --no-pager --unit "$unit" --lines 100 \
+          >"$INSTALLER_RESULTS_DIR/diagnostics/${unit}.journal.txt" 2>&1 || true
+      done
+    fi
+    if [[ -f /etc/redis/lumic.conf ]]; then
+      cp /etc/redis/lumic.conf "$INSTALLER_RESULTS_DIR/diagnostics/redis-lumic.conf"
+    fi
   fi
   return "$status"
 }

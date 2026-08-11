@@ -489,7 +489,10 @@ impl ApplicationService {
             .configure(
                 &application,
                 runtime.fpm_socket.as_deref().map(Path::new),
-                runtime.runtime_resource_id.as_deref(),
+                nginx_runtime_resource_id(
+                    application.runtime,
+                    runtime.runtime_resource_id.as_deref(),
+                ),
                 context,
             )
             .await
@@ -2647,6 +2650,16 @@ impl ApplicationService {
     }
 }
 
+fn nginx_runtime_resource_id(
+    runtime: ApplicationRuntime,
+    runtime_resource_id: Option<&str>,
+) -> Option<&str> {
+    match runtime {
+        ApplicationRuntime::Php => runtime_resource_id,
+        ApplicationRuntime::Node | ApplicationRuntime::Static => None,
+    }
+}
+
 fn application_environment_reference(id: &str, name: &str) -> Result<String> {
     validate_slug("application", id)?;
     lumic_core::recipe::validate_environment_name(name)?;
@@ -3347,6 +3360,22 @@ health:
         .unwrap();
         assert!(npm.args.iter().any(|arg| arg == "--ignore-scripts"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn nginx_runtime_binding_is_only_exposed_for_php() {
+        assert_eq!(
+            nginx_runtime_resource_id(ApplicationRuntime::Php, Some("runtime.php.8.4")),
+            Some("runtime.php.8.4")
+        );
+        assert_eq!(
+            nginx_runtime_resource_id(ApplicationRuntime::Node, Some("runtime.node.22")),
+            None
+        );
+        assert_eq!(
+            nginx_runtime_resource_id(ApplicationRuntime::Static, None),
+            None
+        );
     }
 
     #[test]

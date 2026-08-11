@@ -25,6 +25,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub(crate) const NGINX_BINARY: &str = "/usr/sbin/nginx";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebConfigurationResult {
     pub application_id: String,
@@ -374,13 +376,13 @@ impl NginxManager {
     async fn validate(&self) -> Result<()> {
         let output = self
             .runner
-            .run(&ProcessSpec::new("nginx").args(["-t"]))
+            .run(&ProcessSpec::new(NGINX_BINARY).args(["-t"]))
             .await?;
         if output.success() {
             Ok(())
         } else {
             Err(LumicError::Process {
-                executable: "nginx".into(),
+                executable: NGINX_BINARY.into(),
                 message: String::from_utf8_lossy(&output.stderr).trim().into(),
             })
         }
@@ -671,5 +673,11 @@ mod tests {
         }));
         assert_eq!(state.bindings.0.len(), 2);
         fs::remove_dir_all(state_dir).unwrap();
+    }
+
+    #[test]
+    fn nginx_validation_does_not_depend_on_the_callers_path() {
+        assert_eq!(NGINX_BINARY, "/usr/sbin/nginx");
+        assert!(Path::new(NGINX_BINARY).is_absolute());
     }
 }

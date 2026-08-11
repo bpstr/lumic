@@ -6,12 +6,10 @@ template = "changelog.html"
 
 The changelog tracks shipped behavior, not every commit. Nightly entries are dated, concise, and linked to the documentation that defines the current contract.
 
-## 2026-08-12 · 2.0.0-alpha.8
+## 2026-08-12 · 2.0.0-alpha.9
 
 - Kept ordinary application deployments independent of the root-only runtime environment directory; protected environment files are now materialized only for persistent processes and blue/green Node handoffs that consume them.
-
-## 2026-08-12 · 2.0.0-alpha.4
-
+- Made nginx validation independent of an interactive root `PATH`, including application provisioning and certificate attachment.
 - Enforced the exact [`lumic.yaml`](@/docs/lumic-yaml.md) Node/PHP version, PHP extension, package-manager, and typed managed-service intent during apply and deployment; added persistent shared release paths and richer supervised worker configuration.
 - Expanded the built-in application catalog with Laravel, Drupal, Symfony, Forgejo, Ghost, Matomo, and framework/service combinations, and completed recipe lifecycle actions in the operator UI alongside CLI and MCP.
 - Added SSH private-key authentication to managed repository import/fetch/push with operation-scoped decrypted identity files and isolated OpenSSH configuration.

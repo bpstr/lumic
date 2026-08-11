@@ -6,6 +6,7 @@ use crate::{
     framework_state::{FrameworkState, FrameworkStateStore},
     resource_lock::ResourceLock,
     systemd::{ServiceAction, SystemdServiceManager},
+    web::NGINX_BINARY,
 };
 use lumic_core::{
     LumicError, OperationContext, Result,
@@ -79,7 +80,9 @@ impl CertificateProvider for CertbotProvider {
         let certbot = self
             .run(ProcessSpec::new("certbot").args(["--version"]))
             .await?;
-        let nginx = self.run(ProcessSpec::new("nginx").args(["-t"])).await?;
+        let nginx = self
+            .run(ProcessSpec::new(NGINX_BINARY).args(["-t"]))
+            .await?;
         Ok(CertificatePreflight {
             provider_available: certbot.success(),
             web_server_valid: nginx.success(),
@@ -211,11 +214,11 @@ impl NginxCertificateAttacher {
     async fn validate_and_reload(&self, context: &OperationContext) -> Result<()> {
         let validation = self
             .runner
-            .run(&ProcessSpec::new("nginx").args(["-t"]))
+            .run(&ProcessSpec::new(NGINX_BINARY).args(["-t"]))
             .await?;
         if !validation.success() {
             return Err(LumicError::Process {
-                executable: "nginx".into(),
+                executable: NGINX_BINARY.into(),
                 message: String::from_utf8_lossy(&validation.stderr).trim().into(),
             });
         }

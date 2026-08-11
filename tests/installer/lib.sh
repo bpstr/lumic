@@ -44,6 +44,14 @@ assert_file_mode() {
   test "$(stat -c '%a' "$file")" = "$expected"
 }
 
+assert_secret_reference() {
+  local output="$1"
+  local reference
+  reference="$(jq -er '.secret_reference | select(test("^[a-z0-9._-]+$"))' "$output")"
+  test -f "$LUMIC_STATE_DIR/secrets/$reference"
+  assert_file_mode "$LUMIC_STATE_DIR/secrets/$reference" 600
+}
+
 assert_service_active() {
   systemctl is-active --quiet "$1"
 }

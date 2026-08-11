@@ -16,7 +16,7 @@ for database in app_primary app_audit; do
   user="${database}_user"
   "$LUMIC_BIN" managed-service database-create mysql "$database" >"$INSTALLER_TEST_ROOT/$database.json"
   "$LUMIC_BIN" managed-service user-create mysql "$user" >"$INSTALLER_TEST_ROOT/$user.json"
-  assert_json '.secret_reference | startswith("secret://")' "$INSTALLER_TEST_ROOT/$user.json"
+  assert_secret_reference "$INSTALLER_TEST_ROOT/$user.json"
   "$LUMIC_BIN" managed-service grant mysql "$database" "$user" >/dev/null
 done
 mysql --protocol=socket --batch --skip-column-names app_primary <<'SQL'

@@ -13,7 +13,7 @@ assert_service_active postgresql.service
 assert_port_listening 5432
 
 "$LUMIC_BIN" managed-service user-create primary-db demo_user >"$INSTALLER_TEST_ROOT/postgresql-user.json"
-assert_json '.secret_reference | startswith("secret://")' "$INSTALLER_TEST_ROOT/postgresql-user.json"
+assert_secret_reference "$INSTALLER_TEST_ROOT/postgresql-user.json"
 "$LUMIC_BIN" managed-service database-create primary-db demo_db --owner demo_user >"$INSTALLER_TEST_ROOT/postgresql-database.json"
 "$LUMIC_BIN" managed-service grant primary-db demo_db demo_user >/dev/null
 runuser -u postgres -- psql --no-psqlrc --set ON_ERROR_STOP=1 --dbname demo_db <<'SQL'

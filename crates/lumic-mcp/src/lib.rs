@@ -41,6 +41,7 @@ use lumic_platform::{
     managed_service::ManagedServiceManager,
     operations::OperationsService,
     recipe::RecipeManager,
+    repository::RepositoryService,
     resource_framework::ResourceFramework,
     server::HostOperator,
     software::SoftwareManager,
@@ -168,6 +169,103 @@ struct CreateHostedRepository {
     #[serde(default = "default_branch")]
     branch: String,
     approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryIdRequest {
+    repository: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApprovedRepositoryIdRequest {
+    repository: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryCreateRequest {
+    name: String,
+    namespace: Option<String>,
+    branch: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryImportRequest {
+    name: String,
+    namespace: Option<String>,
+    url: String,
+    credential_reference: Option<String>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryDiscoveryRequest {
+    root: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryRegisterRequest {
+    name: String,
+    namespace: Option<String>,
+    path: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryRemoteRequest {
+    repository: String,
+    remote: String,
+    #[serde(default)]
+    mirror: bool,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryRemoteAddRequest {
+    repository: String,
+    name: String,
+    url: String,
+    credential_reference: Option<String>,
+    #[serde(default = "default_true")]
+    fetch_enabled: bool,
+    #[serde(default = "default_true")]
+    push_enabled: bool,
+    #[serde(default)]
+    mirror: bool,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryRemoteRemoveRequest {
+    repository: String,
+    name: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct RepositoryDeploymentRequest {
+    repository: String,
+    application: String,
+    branch: String,
+    destination: String,
+    /// `atomic` (zero-downtime-capable) or `in_place`.
+    strategy: String,
+    #[serde(default)]
+    deploy_on_push: bool,
+    #[serde(default = "default_release_retention")]
+    keep_releases: usize,
+    install_command: Option<Vec<String>>,
+    build_command: Option<Vec<String>>,
+    migrate_command: Option<Vec<String>>,
+    health_url: Option<String>,
+    #[serde(default)]
+    dry_run: bool,
+    approved: bool,
+}
+
+const fn default_release_retention() -> usize {
+    5
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -1354,6 +1452,335 @@ impl LumicMcpServer {
                     &request.repository,
                     &request.branch,
                     &operation_context("git_repository_host"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_list",
+        description = "List registered managed and external Git repositories. Read-only."
+    )]
+    fn repository_list(&self) -> Result<String, String> {
+        to_json(&repository_service()?.list().map_err(string_error)?)
+    }
+
+    #[tool(
+        name = "repository_get",
+        description = "Get one registered repository including storage and remote metadata. Read-only."
+    )]
+    fn repository_get(
+        &self,
+        Parameters(request): Parameters<RepositoryIdRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &repository_service()?
+                .get(&request.repository)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_plan_deployment",
+        description = "Plan optional repository deployment configuration. Commands are argv arrays, never shell strings. Read-only."
+    )]
+    fn repository_plan_deployment(
+        &self,
+        Parameters(request): Parameters<RepositoryDeploymentRequest>,
+    ) -> Result<String, String> {
+        let configuration = repository_deployment_configuration(&request)?;
+        to_json(
+            &repository_service()?
+                .plan_deployment_configuration(&request.repository, &configuration)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_configure_deployment",
+        description = "Persist validated deployment intent for a repository. Atomic is zero-downtime-capable, not a universal zero-downtime guarantee. Mutating; requires approved=true."
+    )]
+    fn repository_configure_deployment(
+        &self,
+        Parameters(request): Parameters<RepositoryDeploymentRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let configuration = repository_deployment_configuration(&request)?;
+        let mut context = operation_context("repository_configure_deployment");
+        context.dry_run = request.dry_run;
+        to_json(
+            &repository_service()?
+                .configure_deployment(&request.repository, configuration, &context)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_plan_create",
+        description = "Plan creation of a namespaced managed bare repository. Read-only; returns exact path, risk, validation and recovery."
+    )]
+    fn repository_plan_create(
+        &self,
+        Parameters(request): Parameters<RepositoryCreateRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &repository_service()?
+                .plan_create(
+                    request.namespace.as_deref(),
+                    &request.name,
+                    request.branch.as_deref(),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_create",
+        description = "Create an idempotent namespaced managed bare repository. Mutating; requires approved=true."
+    )]
+    async fn repository_create(
+        &self,
+        Parameters(request): Parameters<RepositoryCreateRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .create(
+                    request.namespace.as_deref(),
+                    &request.name,
+                    request.branch.as_deref(),
+                    &operation_context("repository_create"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_import",
+        description = "Import a remote as a managed bare repository without placing credentials in its URL. Mutating; requires approved=true."
+    )]
+    async fn repository_import(
+        &self,
+        Parameters(request): Parameters<RepositoryImportRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .import(
+                    request.namespace.as_deref(),
+                    &request.name,
+                    &request.url,
+                    request.credential_reference,
+                    &operation_context("repository_import"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_discover",
+        description = "Discover .git and bare *.git directories beneath an explicitly configured discovery root. Read-only and bounded."
+    )]
+    fn repository_discover(
+        &self,
+        Parameters(request): Parameters<RepositoryDiscoveryRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &repository_service()?
+                .discover(std::path::Path::new(&request.root))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_register_external",
+        description = "Register an existing repository from an approved discovery root without mutating it. Mutating metadata; requires approved=true."
+    )]
+    fn repository_register_external(
+        &self,
+        Parameters(request): Parameters<RepositoryRegisterRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .register_external(
+                    request.namespace.as_deref(),
+                    &request.name,
+                    std::path::Path::new(&request.path),
+                    &operation_context("repository_register_external"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_adopt",
+        description = "Atomically move a registered bare external repository into Lumic managed storage. Mutating; requires approved=true."
+    )]
+    async fn repository_adopt(
+        &self,
+        Parameters(request): Parameters<ApprovedRepositoryIdRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .adopt(&request.repository, &operation_context("repository_adopt"))
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_delete",
+        description = "Unregister a repository and move managed storage into recoverable trash; external contents remain unchanged. Mutating; requires approved=true."
+    )]
+    fn repository_delete(
+        &self,
+        Parameters(request): Parameters<ApprovedRepositoryIdRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .delete(&request.repository, &operation_context("repository_delete"))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_status",
+        description = "Inspect repository existence, bare state, HEAD and object count. Read-only."
+    )]
+    async fn repository_status(
+        &self,
+        Parameters(request): Parameters<RepositoryIdRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &repository_service()?
+                .status(&request.repository)
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_branch_list",
+        description = "List branch names and object IDs. Read-only."
+    )]
+    async fn repository_branch_list(
+        &self,
+        Parameters(request): Parameters<RepositoryIdRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &repository_service()?
+                .branches(&request.repository)
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_tag_list",
+        description = "List tag names and object IDs. Read-only."
+    )]
+    async fn repository_tag_list(
+        &self,
+        Parameters(request): Parameters<RepositoryIdRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &repository_service()?
+                .tags(&request.repository)
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_remote_add",
+        description = "Add a validated provider-neutral remote with optional credential reference and fetch/push policy. Mutating; requires approved=true."
+    )]
+    fn repository_remote_add(
+        &self,
+        Parameters(request): Parameters<RepositoryRemoteAddRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .add_remote(
+                    &request.repository,
+                    lumic_core::repository::RepositoryRemoteInput {
+                        name: request.name,
+                        url: request.url,
+                        credential_reference: request.credential_reference,
+                        fetch_enabled: request.fetch_enabled,
+                        push_enabled: request.push_enabled,
+                        mirror: request.mirror,
+                    },
+                    &operation_context("repository_remote_add"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_remote_remove",
+        description = "Remove remote metadata without deleting repository objects. Mutating; requires approved=true."
+    )]
+    fn repository_remote_remove(
+        &self,
+        Parameters(request): Parameters<RepositoryRemoteRemoveRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .remove_remote(
+                    &request.repository,
+                    &request.name,
+                    &operation_context("repository_remote_remove"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_fetch",
+        description = "Explicitly fetch a registered and fetch-enabled remote. Mutating; requires approved=true."
+    )]
+    async fn repository_fetch(
+        &self,
+        Parameters(request): Parameters<RepositoryRemoteRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .fetch(
+                    &request.repository,
+                    &request.remote,
+                    &operation_context("repository_fetch"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "repository_push",
+        description = "Explicitly push to a registered remote; mirror mode requires remote mirror approval. Mutating; requires approved=true."
+    )]
+    async fn repository_push(
+        &self,
+        Parameters(request): Parameters<RepositoryRemoteRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &repository_service()?
+                .push(
+                    &request.repository,
+                    &request.remote,
+                    request.mirror,
+                    &operation_context("repository_push"),
                 )
                 .await
                 .map_err(string_error)?,
@@ -2926,6 +3353,50 @@ fn infrastructure_service() -> InfrastructureService {
     InfrastructureService::new(state, apps)
 }
 
+fn repository_service() -> Result<RepositoryService, String> {
+    RepositoryService::new(state_directory()).map_err(string_error)
+}
+
+fn repository_deployment_configuration(
+    request: &RepositoryDeploymentRequest,
+) -> Result<lumic_core::repository::RepositoryDeploymentConfiguration, String> {
+    use lumic_core::repository::{
+        DeploymentHealthConfiguration, DeploymentStrategy, RepositoryDeploymentConfiguration,
+    };
+    let strategy = match request.strategy.as_str() {
+        "atomic" => DeploymentStrategy::Atomic,
+        "in_place" => DeploymentStrategy::InPlace,
+        _ => return Err("strategy must be `atomic` or `in_place`".into()),
+    };
+    let health =
+        request
+            .health_url
+            .as_ref()
+            .map_or_else(DeploymentHealthConfiguration::default, |url| {
+                DeploymentHealthConfiguration {
+                    enabled: true,
+                    url: url.clone(),
+                    ..DeploymentHealthConfiguration::default()
+                }
+            });
+    Ok(RepositoryDeploymentConfiguration {
+        enabled: true,
+        application_id: request.application.clone(),
+        branch: request.branch.clone(),
+        destination: std::path::PathBuf::from(&request.destination),
+        strategy,
+        deploy_on_push: request.deploy_on_push,
+        keep_releases: request.keep_releases,
+        install_command: request.install_command.clone(),
+        build_command: request.build_command.clone(),
+        migrate_command: request.migrate_command.clone(),
+        hooks: Vec::new(),
+        shared_directories: Vec::new(),
+        shared_files: Vec::new(),
+        health,
+    })
+}
+
 fn parse_member_status(value: &str) -> Result<DeploymentMemberStatus, String> {
     match value {
         "pending" => Ok(DeploymentMemberStatus::Pending),
@@ -3078,7 +3549,9 @@ fn parse_managed_kind(kind: &str) -> Result<ManagedServiceKind, String> {
         "prometheus" => Ok(ManagedServiceKind::Prometheus),
         "grafana" => Ok(ManagedServiceKind::Grafana),
         "loki" => Ok(ManagedServiceKind::Loki),
-        _ => Err("kind must be one of: mysql, postgresql, redis, typesense, meilisearch, valkey, rabbitmq, minio, opensearch, memcached, mongodb, clickhouse, prometheus, grafana, loki".into()),
+        "gitea" => Ok(ManagedServiceKind::Gitea),
+        "gogs" => Ok(ManagedServiceKind::Gogs),
+        _ => Err("kind must be one of: mysql, postgresql, redis, typesense, meilisearch, valkey, rabbitmq, minio, opensearch, memcached, mongodb, clickhouse, prometheus, grafana, loki, gitea, gogs".into()),
     }
 }
 
@@ -3330,6 +3803,8 @@ mod tests {
             ("prometheus", ManagedServiceKind::Prometheus),
             ("grafana", ManagedServiceKind::Grafana),
             ("loki", ManagedServiceKind::Loki),
+            ("gitea", ManagedServiceKind::Gitea),
+            ("gogs", ManagedServiceKind::Gogs),
         ] {
             assert_eq!(parse_managed_kind(value), Ok(expected));
         }

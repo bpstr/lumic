@@ -20,6 +20,8 @@ pub enum ManagedServiceKind {
     Prometheus,
     Grafana,
     Loki,
+    Gitea,
+    Gogs,
 }
 
 impl ManagedServiceKind {
@@ -40,6 +42,8 @@ impl ManagedServiceKind {
             Self::Prometheus => "prometheus",
             Self::Grafana => "grafana",
             Self::Loki => "loki",
+            Self::Gitea => "gitea",
+            Self::Gogs => "gogs",
         }
     }
 }
@@ -253,18 +257,24 @@ pub fn validate_database_identifier(field: &str, value: &str) -> Result<()> {
 }
 
 pub fn install_plan(id: &str, kind: ManagedServiceKind, already_managed: bool) -> Plan {
+    let artifact_backed = matches!(kind, ManagedServiceKind::Gitea | ManagedServiceKind::Gogs);
     Plan {
         id: format!("service-install-{id}"),
         summary: format!("Install and manage {kind} service '{id}'"),
         changes: vec![Change {
             capability: Capability::new("managed_service.install"),
             summary: format!(
-                "{} native package, systemd lifecycle, and Lumic resource state",
+                "{} {}, systemd lifecycle, and Lumic resource state",
                 if already_managed {
                     "Reconcile"
                 } else {
                     "Install"
-                }
+                },
+                if artifact_backed {
+                    "verified upstream artifact"
+                } else {
+                    "native package"
+                },
             ),
             before: Some(if already_managed { "managed" } else { "absent" }.into()),
             after: Some("installed, enabled, healthy, and managed".into()),
@@ -277,8 +287,16 @@ pub fn install_plan(id: &str, kind: ManagedServiceKind, already_managed: bool) -
                 "Native package state and service events are audited; uninstall is explicit".into(),
             ),
         }],
-        preconditions: vec!["Debian or Ubuntu host with apt and systemd".into()],
-        validation: vec!["Package detection, systemd state, and provider health probe".into()],
+        preconditions: vec![if artifact_backed {
+            "Debian or Ubuntu host with systemd, curl, and a supported CPU architecture".into()
+        } else {
+            "Debian or Ubuntu host with apt and systemd".into()
+        }],
+        validation: vec![if artifact_backed {
+            "Pinned artifact digest, binary version, systemd state, and HTTP health probe".into()
+        } else {
+            "Package detection, systemd state, and provider health probe".into()
+        }],
         recovery: vec!["Stop/disable the unit or run managed service removal".into()],
     }
 }

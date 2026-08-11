@@ -48,7 +48,9 @@ Mutating operations should carry actor/interface/correlation metadata into Lumic
 
 ## Current implementation
 
-The installed `lumic` binary contains the MCP adapter. Serve it over stdio:
+The installed `lumic` binary contains the MCP adapter. There is no `lumic mcp setup` command: `lumic mcp serve` starts the server transport, while the MCP client is configured on the computer where the coding agent runs.
+
+To serve it over stdio directly, run this on the same machine as the coding agent:
 
 ```bash
 lumic mcp serve
@@ -94,6 +96,15 @@ infrastructure_status           node_initialize
 node_enrollment                 node_register
 node_revoke                     node_health
 git_repository_host             git_mirror_sync
+repository_list                 repository_get
+repository_plan_create          repository_create
+repository_import               repository_delete
+repository_discover             repository_register_external
+repository_adopt                repository_status
+repository_branch_list          repository_tag_list
+repository_remote_add           repository_remote_remove
+repository_fetch                repository_push
+repository_plan_deployment      repository_configure_deployment
 git_push_deploy_configure       environment_secret_generate
 application_environment_reference_set
 environment_export              environment_import
@@ -146,14 +157,22 @@ LUMIC_MCP_SCOPES=mutations,operations.signal,operations.configure,operations.aut
 LUMIC_MCP_ACTOR=codex lumic mcp serve
 ```
 
-Register a local stdio server in Codex:
+If Codex and Lumic run on the same machine, register the local stdio server from that machine's terminal:
 
 ```bash
 codex mcp add lumic -- /usr/local/bin/lumic mcp serve
 codex mcp list
 ```
 
-For a remote node, prefer a dedicated SSH key whose server-side `authorized_keys` entry is forced to `/usr/local/bin/lumic mcp serve`. The installer can create that restricted entry when `LUMIC_MCP_AUTHORIZED_KEY` contains the dedicated public key. Then register `ssh -T -o BatchMode=yes root@server`; the forced command prevents that key from opening a general shell. A normal unrestricted root key does not provide the same boundary.
+For a remote VPS, run the client-registration command on your local computer, where Codex runs—not in an SSH shell on the VPS. Prefer a dedicated SSH key whose server-side `authorized_keys` entry is forced to `/usr/local/bin/lumic mcp serve`. The installer can create that restricted entry when `LUMIC_MCP_AUTHORIZED_KEY` contains the dedicated public key. Then register the endpoint locally:
+
+```bash
+codex mcp add lumic-server -- ssh -T -o BatchMode=yes \
+  -i "$HOME/.ssh/lumic-server" root@server
+codex mcp list
+```
+
+The forced command starts `lumic mcp serve` on the VPS and prevents that key from opening a general shell. A normal unrestricted root key does not provide the same boundary. See [Installation](@/docs/installation.md) for provisioning the matching public key during installation.
 
 ## Streamable HTTP
 

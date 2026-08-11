@@ -17,6 +17,7 @@ pub mod operations;
 pub mod package;
 pub mod pipeline;
 pub mod recipe;
+pub mod repository;
 pub mod resource;
 pub mod server;
 pub mod service;
@@ -226,6 +227,7 @@ pub enum ErrorCode {
     ProcessFailed,
     Timeout,
     PolicyDenied,
+    Committed,
     Internal,
 }
 
@@ -243,6 +245,8 @@ pub enum LumicError {
     Timeout { executable: String, timeout_ms: u64 },
     #[error("policy denied capability '{capability}'")]
     PolicyDenied { capability: Capability },
+    #[error("operation '{operation}' committed, but post-commit recording failed: {message}")]
+    Committed { operation: String, message: String },
     #[error("internal error: {message}")]
     Internal { message: String },
 }
@@ -256,6 +260,7 @@ impl LumicError {
             Self::Process { .. } => ErrorCode::ProcessFailed,
             Self::Timeout { .. } => ErrorCode::Timeout,
             Self::PolicyDenied { .. } => ErrorCode::PolicyDenied,
+            Self::Committed { .. } => ErrorCode::Committed,
             Self::Internal { .. } => ErrorCode::Internal,
         }
     }
@@ -277,6 +282,9 @@ impl LumicError {
             }
             Self::PolicyDenied { capability } => {
                 details.insert("capability".into(), capability.0.clone());
+            }
+            Self::Committed { operation, .. } => {
+                details.insert("operation".into(), operation.clone());
             }
             Self::Internal { .. } => {}
         }

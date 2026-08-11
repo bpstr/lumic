@@ -15,6 +15,10 @@ Do not postpone documentation to a later cleanup task. If implementation intenti
 
 Each capability page should clearly label whether behavior is implemented, foundation-only, experimental/nightly, or planned.
 
+## Changelog
+
+`site/content/changelog.md` records operator-visible behavior shipped through stable releases and gated nightly builds. Every public capability or behavior change must add or update a concise entry under the release date. Group related commits into useful outcomes, keep newest entries first, and link to the detailed contract instead of repeating it. Internal refactors, test-only work and documentation-only corrections do not need entries unless they change what an operator can observe.
+
 ## Docs CI
 
 The public site is built by Zola from `site/` and deployed independently to GitHub Pages. The website is intentionally outside the Cargo workspace and has no effect on the Lumic runtime/binary.

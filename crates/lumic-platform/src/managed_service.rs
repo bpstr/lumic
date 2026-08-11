@@ -5,6 +5,8 @@ use crate::{
     audit_store::AuditStore,
     event_store::EventStore,
     framework_state::FrameworkStateStore,
+    git_forge::GitForgeInstaller,
+    repository::RepositoryService,
     secret_store::SecretStore,
     service_driver::{DriverRestoreReplacement, ServiceDriverRegistry},
     systemd::{ServiceAction, SystemdServiceManager},
@@ -171,7 +173,13 @@ impl ManagedServiceManager {
 
     pub async fn detect(&self, kind: ManagedServiceKind) -> Result<ManagedServiceStatus> {
         let (package, systemd_unit) = service_definition(kind)?;
-        let configuration = default_service_configuration(kind)?;
+        let mut configuration = default_service_configuration(kind)?;
+        if matches!(kind, ManagedServiceKind::Gitea | ManagedServiceKind::Gogs) {
+            configuration.settings.insert(
+                "repository_root".into(),
+                self.repository_root()?.display().to_string(),
+            );
+        }
         let now = unix_time_ms();
         self.inspect_service(ManagedService {
             id: kind.id().into(),
@@ -194,10 +202,18 @@ impl ManagedServiceManager {
     }
 
     async fn inspect_service(&self, service: ManagedService) -> Result<ManagedServiceStatus> {
-        let package = self
-            .packages
-            .inspect(&PackageName::parse(&service.package)?)
-            .await?;
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
+        let version = if let Some(specification) = driver.git_forge_spec() {
+            GitForgeInstaller::at_state_dir(&self.state_dir)
+                .inspect_version(specification)
+                .await?
+        } else {
+            self.packages
+                .inspect(&PackageName::parse(&service.package)?)
+                .await?
+                .installed_version
+        };
         let systemd = self.systemd.inspect(&service.systemd_unit).await?;
         let (health, health_message) = if systemd.active_state == "active" {
             self.health(&service).await
@@ -209,8 +225,8 @@ impl ManagedServiceManager {
         };
         Ok(ManagedServiceStatus {
             service: service.clone(),
-            detected: package.installed_version.is_some(),
-            version: package.installed_version,
+            detected: version.is_some(),
+            version,
             active_state: systemd.active_state,
             sub_state: systemd.sub_state,
             enabled: systemd.enabled,
@@ -228,9 +244,21 @@ impl ManagedServiceManager {
     ) -> Result<ManagedServiceMutation> {
         validate_resource_id("service", id)?;
         let (package, systemd_unit) = service_definition(kind)?;
-        let existing = self
-            .store
-            .load()?
+        let managed_state = self.store.load()?;
+        if matches!(kind, ManagedServiceKind::Gitea | ManagedServiceKind::Gogs)
+            && managed_state.services.iter().any(|service| {
+                matches!(
+                    service.kind,
+                    ManagedServiceKind::Gitea | ManagedServiceKind::Gogs
+                ) && service.id != id
+            })
+        {
+            return Err(LumicError::InvalidInput {
+                field: "kind".into(),
+                message: "only one Git forge may own the configured Lumic repository root".into(),
+            });
+        }
+        let existing = managed_state
             .services
             .into_iter()
             .find(|item| item.id == id);
@@ -243,7 +271,13 @@ impl ManagedServiceManager {
             });
         }
         let now = unix_time_ms();
-        let configuration = default_service_configuration(kind)?;
+        let mut configuration = default_service_configuration(kind)?;
+        if matches!(kind, ManagedServiceKind::Gitea | ManagedServiceKind::Gogs) {
+            configuration.settings.insert(
+                "repository_root".into(),
+                self.repository_root()?.display().to_string(),
+            );
+        }
         let mut service = existing.clone().unwrap_or_else(|| ManagedService {
             id: id.into(),
             name: id.into(),
@@ -257,6 +291,12 @@ impl ManagedServiceManager {
             created_at_unix_ms: now,
             updated_at_unix_ms: now,
         });
+        if matches!(kind, ManagedServiceKind::Gitea | ManagedServiceKind::Gogs) {
+            service.configuration.settings.insert(
+                "repository_root".into(),
+                self.repository_root()?.display().to_string(),
+            );
+        }
         let registry = ServiceDriverRegistry::built_in()?;
         let driver = registry.legacy_driver(kind)?;
         for secret_name in driver.secret_names() {
@@ -266,32 +306,45 @@ impl ManagedServiceManager {
             }
         }
         service.configuration.validate()?;
-        let package = PackageName::parse(&package)?;
-        let package_mutation = self
-            .packages
-            .install_with_environment(&package, context, driver.package_install_environment())
-            .await?;
+        let (installation_changed, package_name) =
+            if let Some(specification) = driver.git_forge_spec() {
+                let result = GitForgeInstaller::at_state_dir(&self.state_dir)
+                    .install(specification, &self.repository_root()?, context)
+                    .await?;
+                (result.changed, None)
+            } else {
+                let package_name = PackageName::parse(&package)?;
+                let mutation = self
+                    .packages
+                    .install_with_environment(
+                        &package_name,
+                        context,
+                        driver.package_install_environment(),
+                    )
+                    .await?;
+                (mutation.changed, Some(package_name))
+            };
         if context.dry_run {
             return Ok(ManagedServiceMutation {
                 service,
                 action: "install".into(),
                 changed: false,
-                message: "dry run: package, configuration, enable, start, and health validation"
-                    .into(),
+                message: "dry run: installation, repository-root configuration, enable, start, and health validation".into(),
             });
         }
-        if self
-            .packages
-            .inspect(&package)
-            .await?
-            .installed_version
-            .is_none()
+        if let Some(package_name) = package_name
+            && self
+                .packages
+                .inspect(&package_name)
+                .await?
+                .installed_version
+                .is_none()
         {
             return Err(LumicError::Process {
                 executable: "apt-get".into(),
                 message: format!(
                     "package '{}' was not installed after apt completed",
-                    package
+                    package_name
                 ),
             });
         }
@@ -349,7 +402,7 @@ impl ManagedServiceManager {
         }
         self.upsert_service(service.clone())?;
         let changed = existing.is_none()
-            || package_mutation.changed
+            || installation_changed
             || configured.iter().any(|item| item.changed);
         self.record(
             "managed_service.installed",
@@ -489,11 +542,24 @@ impl ManagedServiceManager {
         context: &OperationContext,
     ) -> Result<ManagedServiceMutation> {
         let service = self.find_service(id)?;
-        let mutation = self
-            .packages
-            .upgrade(&PackageName::parse(&service.package)?, context)
-            .await?;
-        if mutation.changed && !context.dry_run {
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
+        let (changed, output) = if let Some(specification) = driver.git_forge_spec() {
+            let result = GitForgeInstaller::at_state_dir(&self.state_dir)
+                .install(specification, &self.repository_root()?, context)
+                .await?;
+            (
+                result.changed,
+                format!("verified {} {}", specification.id, result.version),
+            )
+        } else {
+            let mutation = self
+                .packages
+                .upgrade(&PackageName::parse(&service.package)?, context)
+                .await?;
+            (mutation.changed, mutation.output)
+        };
+        if changed && !context.dry_run {
             self.systemd
                 .apply(&service.systemd_unit, ServiceAction::Restart, context)
                 .await?;
@@ -503,14 +569,14 @@ impl ManagedServiceManager {
             "update",
             &service,
             context,
-            mutation.changed,
+            changed,
             json!({}),
         )?;
         Ok(ManagedServiceMutation {
             service,
             action: "update".into(),
-            changed: mutation.changed,
-            message: mutation.output,
+            changed,
+            message: output,
         })
     }
 
@@ -549,10 +615,17 @@ impl ManagedServiceManager {
                 .apply(&service.systemd_unit, ServiceAction::Disable, context)
                 .await?;
         }
-        let mutation = self
-            .packages
-            .remove(&PackageName::parse(&service.package)?, context)
-            .await?;
+        let registry = ServiceDriverRegistry::built_in()?;
+        let driver = registry.legacy_driver(service.kind)?;
+        let changed = if let Some(specification) = driver.git_forge_spec() {
+            GitForgeInstaller::at_state_dir(&self.state_dir)
+                .remove_binary(specification, context)?
+        } else {
+            self.packages
+                .remove(&PackageName::parse(&service.package)?, context)
+                .await?
+                .changed
+        };
         if !context.dry_run {
             let mut state = self.store.load()?;
             state.services.retain(|item| item.id != id);
@@ -565,13 +638,13 @@ impl ManagedServiceManager {
             "remove",
             &service,
             context,
-            mutation.changed,
+            changed,
             json!({"data_retained": true}),
         )?;
         Ok(ManagedServiceMutation {
             service,
             action: "remove".into(),
-            changed: mutation.changed,
+            changed,
             message: "native data retained for explicit recovery or removal".into(),
         })
     }
@@ -582,8 +655,16 @@ impl ManagedServiceManager {
         configuration: ServiceConfiguration,
         context: &OperationContext,
     ) -> Result<ManagedServiceMutation> {
+        let mut configuration = configuration;
+        let kind = self.find_service(id)?.kind;
+        if matches!(kind, ManagedServiceKind::Gitea | ManagedServiceKind::Gogs) {
+            configuration.settings.insert(
+                "repository_root".into(),
+                self.repository_root()?.display().to_string(),
+            );
+        }
         configuration.validate()?;
-        self.validate_settings(self.find_service(id)?.kind, &configuration)?;
+        self.validate_settings(kind, &configuration)?;
         let mut service = self.find_service(id)?;
         if service.configuration == configuration {
             return Ok(ManagedServiceMutation {
@@ -1231,6 +1312,13 @@ impl ManagedServiceManager {
         Ok(changes)
     }
 
+    fn repository_root(&self) -> Result<PathBuf> {
+        Ok(RepositoryService::new(&self.state_dir)?
+            .configuration()
+            .repository_root
+            .clone())
+    }
+
     fn create_missing_service_secrets(
         &self,
         service: &ManagedService,
@@ -1492,6 +1580,8 @@ fn managed_kind_for_definition(definition_id: &str) -> Result<ManagedServiceKind
         "prometheus" => Ok(ManagedServiceKind::Prometheus),
         "grafana" => Ok(ManagedServiceKind::Grafana),
         "loki" => Ok(ManagedServiceKind::Loki),
+        "gitea" => Ok(ManagedServiceKind::Gitea),
+        "gogs" => Ok(ManagedServiceKind::Gogs),
         _ => Err(LumicError::InvalidInput {
             field: "definition".into(),
             message: format!(

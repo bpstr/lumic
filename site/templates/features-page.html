@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} · Lumic{% endblock title %}
+{% block description %}{{ page.description | default(value=config.description) }}{% endblock description %}
+{% block body %}
+<div class="docs-layout shell">
+  <aside class="sidebar">
+    <div class="eyebrow">FEATURES</div>
+    <a class="sidebar-home" href="{{ get_url(path='@/features/_index.md') }}">Overview</a>
+    {% set features = get_section(path="features/_index.md") %}
+    {% for p in features.pages %}<a class="{% if p.permalink == page.permalink %}active{% endif %}" href="{{ p.permalink }}">{{ p.title }}</a>{% endfor %}
+  </aside>
+  <main class="docs-content">
+    <div class="doc-head"><span class="status-pill">{{ page.extra.status | default(value=config.extra.version) }}</span><h1>{{ page.title }}</h1>{% if page.description %}<p>{{ page.description }}</p>{% endif %}</div>
+    <article class="prose">{{ page.content | safe }}</article>
+    <div class="doc-footer"><span>Feature status follows the implementation.</span><a href="{{ config.extra.github }}/edit/main/site/content/{{ page.relative_path }}">Edit this page →</a></div>
+  </main>
+</div>
+{% endblock body %}

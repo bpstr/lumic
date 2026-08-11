@@ -1,6 +1,6 @@
 +++
 title = "Security model"
-description = "Root-level infrastructure management requires explicit policy, safe native execution and auditable mutations."
+description = "Policy, safe native execution, and auditable host mutations."
 weight = 90
 [extra]
 kicker = "SECURITY"

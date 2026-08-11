@@ -15,8 +15,8 @@ use lumic_core::{
     operations::{
         AutomationAction, AutomationRule, AutomationRun, AutomationState, DeliveryStatus,
         EventSubscription, IncidentReport, OperationalSignal, SignalKind, SignalSeverity,
-        TimelineQuery, WebhookDelivery, WebhookDestination, automation_plan, validate_id,
-        validate_rule, validate_webhook,
+        TimelineQuery, WebhookDelivery, WebhookDestination, automation_plan,
+        public_webhook_address, validate_id, validate_rule, validate_webhook,
     },
 };
 use serde_json::{Value, json};
@@ -806,33 +806,49 @@ impl OperationsService {
             SecretStore::at_state_dir(&self.state_dir).read(&destination.secret_reference)?;
         let signature = hmac_sha256_hex(&secret, &body);
         let timeout_seconds = destination.timeout_ms.div_ceil(1_000).to_string();
+        let pinned_target = match resolve_webhook_target(&destination.url).await {
+            Ok(target) => target,
+            Err(error) => {
+                return self.record_delivery_result(
+                    delivery_id,
+                    false,
+                    None,
+                    Some(error.to_string()),
+                );
+            }
+        };
+        let args = vec![
+            "--silent".into(),
+            "--show-error".into(),
+            "--output".into(),
+            "/dev/null".into(),
+            "--write-out".into(),
+            "%{http_code}".into(),
+            "--max-time".into(),
+            timeout_seconds,
+            "--proto".into(),
+            "=https".into(),
+            "--proto-redir".into(),
+            "=https".into(),
+            "--noproxy".into(),
+            "*".into(),
+            "--resolve".into(),
+            pinned_target,
+            "--request".into(),
+            "POST".into(),
+            "--header".into(),
+            "Content-Type: application/json".into(),
+            "--header".into(),
+            format!("X-Lumic-Signature: sha256={signature}"),
+            "--header".into(),
+            format!("X-Lumic-Delivery: {delivery_id}"),
+            "--data-binary".into(),
+            "@-".into(),
+            "--".into(),
+            destination.url.clone(),
+        ];
         let output = ProcessRunner
-            .run(
-                &ProcessSpec::new("curl")
-                    .args([
-                        "--silent",
-                        "--show-error",
-                        "--output",
-                        "/dev/null",
-                        "--write-out",
-                        "%{http_code}",
-                        "--max-time",
-                        &timeout_seconds,
-                        "--request",
-                        "POST",
-                        "--header",
-                        "Content-Type: application/json",
-                        "--header",
-                        &format!("X-Lumic-Signature: sha256={signature}"),
-                        "--header",
-                        &format!("X-Lumic-Delivery: {delivery_id}"),
-                        "--data-binary",
-                        "@-",
-                        "--",
-                        &destination.url,
-                    ])
-                    .stdin(body),
-            )
+            .run(&ProcessSpec::new("curl").args(args).stdin(body))
             .await;
         let (success, status, error) = match output {
             Ok(output) => {
@@ -1007,6 +1023,37 @@ impl OperationsService {
             "operations timeline",
         )
     }
+}
+
+async fn resolve_webhook_target(destination: &str) -> Result<String> {
+    let url = url::Url::parse(destination).map_err(|_| invalid("url", "is invalid"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| invalid("url", "must include a host"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| invalid("url", "must include a valid port"))?;
+    let addresses = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|error| invalid("url", &format!("host resolution failed: {error}")))?
+        .map(|address| address.ip())
+        .collect::<BTreeSet<_>>();
+    if addresses.is_empty()
+        || addresses
+            .iter()
+            .any(|address| !public_webhook_address(*address))
+    {
+        return Err(invalid(
+            "url",
+            "host resolves to a private, local, or non-routable address",
+        ));
+    }
+    let address = addresses.into_iter().next().expect("set is not empty");
+    let address = match address {
+        std::net::IpAddr::V4(address) => address.to_string(),
+        std::net::IpAddr::V6(address) => format!("[{address}]"),
+    };
+    Ok(format!("{host}:{port}:{address}"))
 }
 
 fn configuration_value(state: &AutomationState) -> Value {
@@ -1261,7 +1308,7 @@ mod tests {
             .apply_destination(
                 WebhookDestination {
                     id: "local".into(),
-                    url: "http://127.0.0.1:9321/hook".into(),
+                    url: "https://hooks.example.com/hook".into(),
                     secret_reference: "webhook-key".into(),
                     timeout_ms: 1_000,
                     max_attempts: 3,

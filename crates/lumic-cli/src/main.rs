@@ -34,6 +34,7 @@ use lumic_platform::{
     managed_service::ManagedServiceManager,
     operations::OperationsService,
     recipe::RecipeManager,
+    repository::RepositoryService,
     self_update::SelfUpdateManager,
     server::HostOperator,
     systemd::{ServiceAction, SystemdServiceManager},
@@ -135,6 +136,11 @@ enum Command {
     Git {
         #[command(subcommand)]
         command: GitCommand,
+    },
+    /// Manage provider-neutral local and remote Git repositories.
+    Repo {
+        #[command(subcommand)]
+        command: GitRepositoryCommand,
     },
     /// Export, transform, import, and diff portable application environments.
     Environment {
@@ -290,6 +296,135 @@ enum GitCommand {
     },
     #[command(hide = true)]
     Receive { repository: String },
+}
+
+#[derive(Subcommand)]
+enum GitRepositoryCommand {
+    List,
+    Get {
+        repository: String,
+    },
+    PlanCreate {
+        name: String,
+        #[arg(long)]
+        namespace: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+    },
+    Create {
+        name: String,
+        #[arg(long)]
+        namespace: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Import {
+        name: String,
+        url: String,
+        #[arg(long)]
+        namespace: Option<String>,
+        #[arg(long)]
+        credential_reference: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Register {
+        name: String,
+        path: PathBuf,
+        #[arg(long)]
+        namespace: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Adopt {
+        repository: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Delete {
+        repository: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Discover {
+        root: PathBuf,
+    },
+    Status {
+        repository: String,
+    },
+    Branches {
+        repository: String,
+    },
+    Tags {
+        repository: String,
+    },
+    RemoteAdd {
+        repository: String,
+        name: String,
+        url: String,
+        #[arg(long)]
+        credential_reference: Option<String>,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        fetch: bool,
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        push: bool,
+        #[arg(long)]
+        mirror: bool,
+    },
+    RemoteRemove {
+        repository: String,
+        name: String,
+    },
+    Fetch {
+        repository: String,
+        #[arg(default_value = "origin")]
+        remote: String,
+    },
+    Push {
+        repository: String,
+        #[arg(default_value = "origin")]
+        remote: String,
+        #[arg(long)]
+        mirror: bool,
+    },
+    CloneUrl {
+        repository: String,
+        origin: String,
+    },
+    PlanDeployment {
+        repository: String,
+        application: String,
+        destination: PathBuf,
+        #[arg(long, default_value = "main")]
+        branch: String,
+        #[arg(long, default_value = "atomic")]
+        strategy: String,
+        #[arg(long)]
+        deploy_on_push: bool,
+        #[arg(long, default_value_t = 5)]
+        keep_releases: usize,
+        #[arg(long)]
+        health_url: Option<String>,
+    },
+    ConfigureDeployment {
+        repository: String,
+        application: String,
+        destination: PathBuf,
+        #[arg(long, default_value = "main")]
+        branch: String,
+        #[arg(long, default_value = "atomic")]
+        strategy: String,
+        #[arg(long)]
+        deploy_on_push: bool,
+        #[arg(long, default_value_t = 5)]
+        keep_releases: usize,
+        #[arg(long)]
+        health_url: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1242,6 +1377,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::App { command } => run_app(command).await?,
         Command::Git { command } => run_git(command).await?,
+        Command::Repo { command } => run_repository(command).await?,
         Command::Environment { command } => run_environment(command)?,
         Command::Infrastructure { command } => run_infrastructure(command).await?,
         Command::Recipe { command } => run_recipe(command).await?,
@@ -1562,6 +1698,223 @@ async fn run_git(command: GitCommand) -> Result<(), Box<dyn std::error::Error>> 
     };
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
+}
+
+async fn run_repository(command: GitRepositoryCommand) -> Result<(), Box<dyn std::error::Error>> {
+    let service = RepositoryService::new(state_directory())?;
+    let value = match command {
+        GitRepositoryCommand::List => serde_json::to_value(service.list()?)?,
+        GitRepositoryCommand::Get { repository } => {
+            serde_json::to_value(service.get(&repository)?)?
+        }
+        GitRepositoryCommand::PlanCreate {
+            name,
+            namespace,
+            branch,
+        } => serde_json::to_value(service.plan_create(
+            namespace.as_deref(),
+            &name,
+            branch.as_deref(),
+        )?)?,
+        GitRepositoryCommand::Create {
+            name,
+            namespace,
+            branch,
+            dry_run,
+        } => serde_json::to_value(
+            service
+                .create(
+                    namespace.as_deref(),
+                    &name,
+                    branch.as_deref(),
+                    &operation_context(dry_run),
+                )
+                .await?,
+        )?,
+        GitRepositoryCommand::Import {
+            name,
+            url,
+            namespace,
+            credential_reference,
+            dry_run,
+        } => serde_json::to_value(
+            service
+                .import(
+                    namespace.as_deref(),
+                    &name,
+                    &url,
+                    credential_reference,
+                    &operation_context(dry_run),
+                )
+                .await?,
+        )?,
+        GitRepositoryCommand::Register {
+            name,
+            path,
+            namespace,
+            dry_run,
+        } => serde_json::to_value(service.register_external(
+            namespace.as_deref(),
+            &name,
+            &path,
+            &operation_context(dry_run),
+        )?)?,
+        GitRepositoryCommand::Adopt {
+            repository,
+            dry_run,
+        } => serde_json::to_value(
+            service
+                .adopt(&repository, &operation_context(dry_run))
+                .await?,
+        )?,
+        GitRepositoryCommand::Delete {
+            repository,
+            dry_run,
+        } => serde_json::to_value(service.delete(&repository, &operation_context(dry_run))?)?,
+        GitRepositoryCommand::Discover { root } => serde_json::to_value(service.discover(&root)?)?,
+        GitRepositoryCommand::Status { repository } => {
+            serde_json::to_value(service.status(&repository).await?)?
+        }
+        GitRepositoryCommand::Branches { repository } => {
+            serde_json::to_value(service.branches(&repository).await?)?
+        }
+        GitRepositoryCommand::Tags { repository } => {
+            serde_json::to_value(service.tags(&repository).await?)?
+        }
+        GitRepositoryCommand::RemoteAdd {
+            repository,
+            name,
+            url,
+            credential_reference,
+            fetch,
+            push,
+            mirror,
+        } => serde_json::to_value(service.add_remote(
+            &repository,
+            lumic_core::repository::RepositoryRemoteInput {
+                name,
+                url,
+                credential_reference,
+                fetch_enabled: fetch,
+                push_enabled: push,
+                mirror,
+            },
+            &operation_context(false),
+        )?)?,
+        GitRepositoryCommand::RemoteRemove { repository, name } => serde_json::to_value(
+            service.remove_remote(&repository, &name, &operation_context(false))?,
+        )?,
+        GitRepositoryCommand::Fetch { repository, remote } => serde_json::to_value(
+            service
+                .fetch(&repository, &remote, &operation_context(false))
+                .await?,
+        )?,
+        GitRepositoryCommand::Push {
+            repository,
+            remote,
+            mirror,
+        } => serde_json::to_value(
+            service
+                .push(&repository, &remote, mirror, &operation_context(false))
+                .await?,
+        )?,
+        GitRepositoryCommand::CloneUrl { repository, origin } => serde_json::json!({
+            "url": service.clone_url(&repository, &origin)?
+        }),
+        GitRepositoryCommand::PlanDeployment {
+            repository,
+            application,
+            destination,
+            branch,
+            strategy,
+            deploy_on_push,
+            keep_releases,
+            health_url,
+        } => {
+            let configuration = repository_deployment_configuration(
+                application,
+                branch,
+                destination,
+                &strategy,
+                deploy_on_push,
+                keep_releases,
+                health_url,
+            )?;
+            serde_json::to_value(
+                service.plan_deployment_configuration(&repository, &configuration)?,
+            )?
+        }
+        GitRepositoryCommand::ConfigureDeployment {
+            repository,
+            application,
+            destination,
+            branch,
+            strategy,
+            deploy_on_push,
+            keep_releases,
+            health_url,
+            dry_run,
+        } => {
+            let configuration = repository_deployment_configuration(
+                application,
+                branch,
+                destination,
+                &strategy,
+                deploy_on_push,
+                keep_releases,
+                health_url,
+            )?;
+            serde_json::to_value(service.configure_deployment(
+                &repository,
+                configuration,
+                &operation_context(dry_run),
+            )?)?
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn repository_deployment_configuration(
+    application_id: String,
+    branch: String,
+    destination: PathBuf,
+    strategy: &str,
+    deploy_on_push: bool,
+    keep_releases: usize,
+    health_url: Option<String>,
+) -> Result<lumic_core::repository::RepositoryDeploymentConfiguration, Box<dyn std::error::Error>> {
+    use lumic_core::repository::{
+        DeploymentHealthConfiguration, DeploymentStrategy, RepositoryDeploymentConfiguration,
+    };
+    let strategy = match strategy {
+        "atomic" => DeploymentStrategy::Atomic,
+        "in_place" => DeploymentStrategy::InPlace,
+        _ => return Err("strategy must be `atomic` or `in_place`".into()),
+    };
+    let health = health_url.map_or_else(DeploymentHealthConfiguration::default, |url| {
+        DeploymentHealthConfiguration {
+            enabled: true,
+            url,
+            ..DeploymentHealthConfiguration::default()
+        }
+    });
+    Ok(RepositoryDeploymentConfiguration {
+        enabled: true,
+        application_id,
+        branch,
+        destination,
+        strategy,
+        deploy_on_push,
+        keep_releases,
+        install_command: None,
+        build_command: None,
+        migrate_command: None,
+        hooks: Vec::new(),
+        shared_directories: Vec::new(),
+        shared_files: Vec::new(),
+        health,
+    })
 }
 
 fn run_environment(command: EnvironmentCommand) -> Result<(), Box<dyn std::error::Error>> {

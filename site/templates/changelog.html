@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} · Lumic{% endblock title %}
+{% block description %}{{ page.description | default(value=config.description) }}{% endblock description %}
+{% block body %}
+<main class="shell changelog-content">
+  <div class="doc-head"><span class="status-pill">RELEASES</span><h1>{{ page.title }}</h1>{% if page.description %}<p>{{ page.description }}</p>{% endif %}</div>
+  <article class="prose">{{ page.content | safe }}</article>
+</main>
+{% endblock body %}

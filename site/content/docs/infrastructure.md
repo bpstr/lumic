@@ -11,9 +11,9 @@ Lumic treats a small group of VPSs as explicit infrastructure without turning th
 
 ## Native Git
 
-`lumic git host` creates a native bare repository in private Lumic state. `lumic git mirror` creates or refreshes a native mirror and can resolve an imported credential reference. `lumic git trigger` installs a fixed post-receive hook for one validated branch/application mapping; it cannot execute a caller-supplied command.
+The first-class [repository contract](@/docs/repositories.md) creates namespaced managed bare repositories, imports remotes, registers explicitly discovered external storage, exposes authenticated Smart HTTP and keeps fetch/push operations explicit. `lumic git host`, `lumic git mirror` and `lumic git trigger` remain compatibility commands for the original infrastructure workflow; the trigger cannot execute a caller-supplied command.
 
-Transport exposure and authorized-key policy are host concerns in the current reference. The repository path is returned so an operator can expose it through an approved SSH or HTTP Git transport. Push-to-deploy invokes the installed `/usr/local/bin/lumic` and then uses the ordinary application deploy/health/rollback contract.
+Smart HTTP is served only for managed repositories and requires the administrator bearer token. SSH repository transport and per-repository identities remain follow-up work. Push-to-deploy invokes the installed `/usr/local/bin/lumic` and then uses the ordinary application deploy/health/rollback contract.
 
 ## Portable environments
 

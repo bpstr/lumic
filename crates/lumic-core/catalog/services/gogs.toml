@@ -1,0 +1,56 @@
+schema_version = 1
+definition_version = 1
+id = "gogs"
+name = "Gogs"
+category = "other"
+description = "Self-hosted Git forge backed by Lumic's managed repository root"
+driver = "gogs"
+instance_policy = "singleton"
+
+[capabilities]
+configure = true
+start = true
+stop = true
+restart = true
+enable = true
+disable = true
+health = true
+logs = true
+upgrade = true
+remove = true
+
+[[configuration]]
+key = "bind"
+label = "Bind address"
+type = "address"
+default = "127.0.0.1"
+apply = "restart"
+
+[[configuration]]
+key = "port"
+label = "HTTP port"
+type = "port"
+default = 3001
+apply = "restart"
+
+[[outputs]]
+key = "http"
+type = "http_endpoint"
+capability = "git_forge.http"
+
+[[outputs]]
+key = "repository_root"
+type = "filesystem_path"
+capability = "git_forge.shared_repository_root"
+
+[[platforms]]
+distribution = "debian"
+package = "gogs"
+unit = "gogs.service"
+data_path = "/var/lib/gogs"
+
+[[platforms]]
+distribution = "ubuntu"
+package = "gogs"
+unit = "gogs.service"
+data_path = "/var/lib/gogs"

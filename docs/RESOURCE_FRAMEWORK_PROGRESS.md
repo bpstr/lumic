@@ -82,6 +82,7 @@ This document tracks implementation of the service, resource, binding, and lifec
 ## Phase 9 — Reusable application resources
 
 - [x] Implement the verified artifact manager.
+- [x] Implement pinned Gitea and Gogs managed-service installers over the shared repository root.
 - [x] Implement systemd-backed application processes.
 - [x] Implement application schedules with a backend-neutral domain model.
 - [x] Integrate reviewed package requirements and policy-derived trust.

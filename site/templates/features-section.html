@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ section.title }} · Lumic{% endblock title %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock description %}
+{% block body %}
+<div class="docs-layout shell">
+  <aside class="sidebar">
+    <div class="eyebrow">FEATURES</div>
+    <a class="sidebar-home active" href="{{ get_url(path='@/features/_index.md') }}">Overview</a>
+    {% for p in section.pages %}<a href="{{ p.permalink }}">{{ p.title }}</a>{% endfor %}
+  </aside>
+  <main class="docs-content">
+    <div class="doc-head"><span class="status-pill">{{ config.extra.version }}</span><h1>{{ section.title }}</h1>{% if section.description %}<p>{{ section.description }}</p>{% endif %}</div>
+    <div class="prose">{{ section.content | safe }}</div>
+    <div class="doc-cards">{% for p in section.pages %}<a href="{{ p.permalink }}"><small>{{ p.extra.kicker | default(value="CATALOG") }}</small><strong>{{ p.title }}</strong><span>{{ p.description | default(value="") }}</span></a>{% endfor %}</div>
+  </main>
+</div>
+{% endblock body %}

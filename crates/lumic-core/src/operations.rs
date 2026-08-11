@@ -192,19 +192,26 @@ pub fn validate_id(field: &str, value: &str) -> Result<(), LumicError> {
 
 pub fn validate_webhook(destination: &WebhookDestination) -> Result<(), LumicError> {
     validate_id("destination_id", &destination.id)?;
-    if destination.url.contains('@') || destination.url.contains(['\n', '\r']) {
-        return Err(invalid(
-            "url",
-            "credentials and control characters are forbidden",
-        ));
+    let url = url::Url::parse(&destination.url)
+        .map_err(|_| invalid("url", "must be an absolute HTTPS URL"))?;
+    if url.scheme() != "https" {
+        return Err(invalid("url", "must use HTTPS"));
     }
-    let loopback_http = destination.url.starts_with("http://127.0.0.1:")
-        || destination.url.starts_with("http://localhost:")
-        || destination.url.starts_with("http://[::1]:");
-    if !destination.url.starts_with("https://") && !loopback_http {
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(invalid("url", "embedded credentials are forbidden"));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| invalid("url", "must include a host"))?;
+    if host.eq_ignore_ascii_case("localhost")
+        || host.to_ascii_lowercase().ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| !public_webhook_address(address))
+    {
         return Err(invalid(
             "url",
-            "must use HTTPS, except explicit loopback HTTP for local testing",
+            "private and local destinations are forbidden",
         ));
     }
     if !(100..=30_000).contains(&destination.timeout_ms) {
@@ -214,6 +221,34 @@ pub fn validate_webhook(destination: &WebhookDestination) -> Result<(), LumicErr
         return Err(invalid("max_attempts", "must be between 1 and 8"));
     }
     validate_id("secret_reference", &destination.secret_reference)
+}
+
+pub fn public_webhook_address(address: std::net::IpAddr) -> bool {
+    match address {
+        std::net::IpAddr::V4(address) => {
+            let [a, b, c, _] = address.octets();
+            !(a == 0
+                || a == 10
+                || a == 127
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 169 && b == 254)
+                || (a == 172 && (16..=31).contains(&b))
+                || (a == 192 && b == 0 && c == 0)
+                || (a == 192 && b == 0 && c == 2)
+                || (a == 192 && b == 168)
+                || (a == 198 && (b == 18 || b == 19))
+                || (a == 198 && b == 51 && c == 100)
+                || (a == 203 && b == 0 && c == 113)
+                || a >= 224)
+        }
+        std::net::IpAddr::V6(address) => {
+            let segments = address.segments();
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                return public_webhook_address(mapped.into());
+            }
+            (segments[0] & 0xe000) == 0x2000 && !(segments[0] == 0x2001 && segments[1] == 0x0db8)
+        }
+    }
 }
 
 pub fn validate_rule(rule: &AutomationRule) -> Result<(), LumicError> {
@@ -303,6 +338,18 @@ mod tests {
         assert!(validate_webhook(&destination).is_ok());
         destination.url = "http://remote.example.test/hook".into();
         assert!(validate_webhook(&destination).is_err());
+        destination.url = "https://127.0.0.1:8443/hook".into();
+        assert!(validate_webhook(&destination).is_err());
+        destination.url = "https://metadata.localhost.example/hook".into();
+        assert!(validate_webhook(&destination).is_ok());
+        destination.url = "https://metadata.localhost/hook".into();
+        assert!(validate_webhook(&destination).is_err());
+        destination.url = "https://user@example.test/hook".into();
+        assert!(validate_webhook(&destination).is_err());
+
+        assert!(public_webhook_address("8.8.8.8".parse().unwrap()));
+        assert!(!public_webhook_address("169.254.169.254".parse().unwrap()));
+        assert!(!public_webhook_address("fc00::1".parse().unwrap()));
 
         let mut rule = AutomationRule {
             id: "restart-demo".into(),

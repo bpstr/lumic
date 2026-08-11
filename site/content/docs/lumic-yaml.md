@@ -1,6 +1,6 @@
 +++
 title = "lumic.yaml"
-description = "Describe an application's runtime, services and deployment needs once so Lumic and coding agents can prepare the server without rediscovering the stack every time."
+description = "Record application runtime, service, and deployment intent once."
 weight = 45
 [extra]
 kicker = "APPLICATIONS"

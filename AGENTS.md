@@ -141,6 +141,8 @@ Public docs live in `site/content/docs/`; internal architecture/specification ma
 
 Every change that affects public behavior MUST update the relevant documentation in the same PR/commit. This includes commands, capabilities, MCP tools, configuration, OS support, events, installation, deployment behavior and security/policy.
 
+For every operator-visible stable or nightly change, update `site/content/changelog.md` in the same PR/commit. Follow `docs/DOCUMENTATION.md`: write compact dated outcomes, group related commits, keep newest entries first and link to the detailed capability docs.
+
 For a new capability document, where relevant:
 
 - user intent/use case;

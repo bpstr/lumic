@@ -4,7 +4,7 @@
   <section class="hero shell">
     <div class="eyebrow">LUMIC CONTROL CENTER · {{ config.extra.version | upper }}</div>
     <h1>Your MCP server<br>for hosting.</h1>
-    <p class="lead">Lumic provides a UI and MCP server for your hosting infrastructure. Install it on plain Linux and interact with your infrastructure through Codex and Claude.</p>
+    <p class="lead">Install Lumic on plain Linux, then manage the host through its UI, CLI, or structured MCP capabilities.</p>
     <div class="command"><span>$</span><code>ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'</code></div>
     <div class="actions"><a class="button primary" href="{{ get_url(path='@/docs/installation.md') }}">Install Lumic</a><a class="button" href="{{ get_url(path='@/docs/_index.md') }}">Read the docs</a></div>
   </section>
@@ -22,16 +22,16 @@
   </section>
 
   <section class="shell grid">
-    <article><span class="index">01</span><h2>Install</h2><p>Turn a fresh Linux VPS into a Lumic node with one command. Lumic detects the host and establishes the daemon, CLI and management foundation.</p><div class="command compact"><span>$</span><code>ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'</code></div></article>
-    <article><span class="index">02</span><h2>Connect MCP</h2><p>Expose structured server capabilities to Codex, Claude or another MCP client instead of making unrestricted SSH the normal agent interface.</p><div class="command compact"><span>$</span><code>lumic mcp setup</code></div></article>
-    <article><span class="index">03</span><h2>Open the UI</h2><p>Use the clean Rust management interface when you want direct visibility and control over the same state and operations available through MCP and CLI.</p><div class="command compact"><span>$</span><code>lumic ui</code></div></article>
+    <article><span class="index">01</span><h2>Install</h2><p>Turn a fresh VPS into an autonomous Lumic node with one command.</p><div class="command compact"><span>$</span><code>ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'</code></div></article>
+    <article><span class="index">02</span><h2>Connect MCP</h2><p>On your local computer, register the VPS with your coding agent. When you provision a dedicated MCP key, the installer prints the exact command to run locally.</p><div class="command compact"><span>$</span><code>codex mcp add lumic-server -- ssh -T -i ~/.ssh/lumic-server root@server</code></div><a href="{{ get_url(path='@/docs/mcp.md') }}">Read the MCP setup guide →</a></article>
+    <article><span class="index">03</span><h2>Open the UI</h2><p>The UI already runs on the VPS. On your local computer, open an SSH tunnel and keep it running, then visit <code>http://127.0.0.1:8080</code> in your browser.</p><div class="command compact"><span>$</span><code>ssh -N -L 8080:127.0.0.1:8080 root@server</code></div><a href="{{ get_url(path='@/docs/operator-ui.md') }}">Read the operator UI guide →</a></article>
   </section>
 
   <section class="shell mcp-block">
     <div class="eyebrow">THE BEST PART</div>
     <h2>Give Codex a VPS task, not an SSH session.</h2>
-    <div class="prompt"><span>&gt;</span><p>Inspect this Lumic node and the current repository. Prepare the VPS as a production environment for this application. Detect the required runtime, system packages, extensions and backing services. Install only what is needed, configure the web server, database, cache, TLS, firewall, workers and scheduled jobs where applicable, and create a zero-downtime Git deployment from the repository. Use Lumic plans before material changes, keep the host secure, verify the deployment with health checks, and report exactly what was configured. Do not use unrestricted shell access when a Lumic capability exists.</p></div>
-    <p>Codex or Claude supplies the reasoning. Lumic supplies trustworthy host status, policy, plans, structured operations and auditability.</p>
+    <div class="prompt"><span>&gt;</span><p>Inspect this Lumic node and repository. Plan the required runtime, services, web routing, TLS, workers, and Git deployment. Apply the approved plan, verify health, and report what changed.</p></div>
+    <p>The agent supplies the reasoning. Lumic supplies host evidence, plans, policy, safe operations, and an audit trail.</p>
     <a href="{{ get_url(path='@/docs/mcp.md') }}">MCP documentation →</a>
   </section>
 
@@ -42,15 +42,15 @@
   </section>
 
   <section class="shell grid">
-    <article><span class="index">LARAVEL</span><h2>Production PHP infrastructure</h2><p>PHP and required extensions, Composer, Nginx, PostgreSQL or MariaDB, Redis when needed, TLS, environment configuration, workers/Horizon, scheduler, Git deployment and zero-downtime releases.</p></article>
-    <article><span class="index">REACT / NODE</span><h2>Your VPS as an application platform</h2><p>Inspect the repository, install its Node/build requirements, handle static or server-rendered output, configure environment variables, Nginx, TLS, health checks and automatic Git deployments — a Render/Vercel-like workflow on infrastructure you own.</p></article>
-    <article><span class="index">SERVER</span><h2>Linux without the busywork</h2><p>Packages, runtimes, extensions, users, processes, networking, firewall, storage, logs and diagnostics become structured Lumic operations rather than recurring SSH archaeology.</p></article>
-    <article><span class="index">MORE</span><h2>Capabilities are the surprise</h2><p>Git hosting, database management, Redis, certificates, backups, webhooks, notifications, event history, load tracing, managed services and multi-node infrastructure should increasingly feel like: “oh, Lumic supports that too.”</p></article>
+    <article><span class="index">APPLICATIONS</span><h2>Deployable software</h2><p>Manage static and PHP releases, WordPress, repository intent, health checks, workers, schedules, TLS, and rollback.</p></article>
+    <article><span class="index">SERVICES</span><h2>Native managed services</h2><p>Install and operate databases, caches, queues, search, storage, observability, web, and Git-forge services.</p></article>
+    <article><span class="index">HOST</span><h2>Linux operations</h2><p>Use typed operations for packages, systemd, users, firewall, storage, processes, logs, diagnostics, and backups.</p></article>
+    <article><span class="index">EXPLORE</span><h2>See what Lumic supports</h2><p>Browse implemented applications, services, infrastructure, automation, deployment, and agent capabilities.</p><a href="{{ get_url(path='@/features/_index.md') }}">Explore features →</a></article>
   </section>
 
   <section class="shell nightly-block">
     <div><div class="eyebrow">LUMIC NIGHTLY</div><h2>Gets better every night.</h2></div>
-    <p>Early Lumic development ships a rolling nightly channel after CI gates pass. New capabilities, fixes and integration coverage arrive continuously while the stable channel remains conservative.</p>
+    <p>Gated nightly builds deliver new capabilities and fixes continuously. Follow each operator-visible update in the <a href="{{ get_url(path='@/changelog.md') }}">changelog</a>.</p>
   </section>
 </main>
 {% endblock body %}

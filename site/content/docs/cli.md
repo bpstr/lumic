@@ -147,6 +147,8 @@ lumic status --json
 
 `lumic diagnose` adds live load, uptime, high-memory processes, failed systemd units, listeners, mounts, timers and pending updates. Findings flag memory/load pressure, nearly-full filesystems, failed services and security updates with evidence. Service lifecycle commands accept validated unit names and map to direct `systemctl` arguments.
 
+`lumic repo` is the provider-neutral Git repository surface. It includes `list`, `get`, `plan-create`, `create`, `import`, `register`, `discover`, `adopt`, `delete`, `status`, `branches`, `tags`, `remote-add`, `remote-remove`, `fetch`, `push`, `clone-url`, `plan-deployment`, and `configure-deployment`. Mutations use the shared repository locks, audit trail and dry-run context. See [Git repositories](@/docs/repositories.md) for storage, deployment configuration, authentication and recovery details.
+
 `lumic how-are-you` builds the canonical attention report from live diagnosis, managed application/service state, latest backups and recent durable events. `--period-hours` controls only the change-history window; it does not turn old failures into current incidents. Personality changes deterministic prose only. `--json` returns both the rendered text and authoritative factual fields. Personality state is private, atomic, audited and defaults to `professional`.
 
 Package search is discovery only and never grants trust. Installation and removal require exact built-in policy entries, use direct argv invocation, are idempotent, and record events and audits. `LUMIC_STATE_DIR` and `LUMIC_APPS_ROOT` can relocate state for testing; production defaults are `/var/lib/lumic` and `/var/lib/lumic/apps`.

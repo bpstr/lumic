@@ -13,6 +13,7 @@ use std::{
 };
 
 use crate::ProcessSpec;
+use crate::git_forge::{GITEA_SPEC, GOGS_SPEC, GitForgeSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriverConfigurationFile {
@@ -51,6 +52,9 @@ pub trait ServiceDriver: Send + Sync {
     }
     fn secret_names(&self) -> &'static [&'static str] {
         &[]
+    }
+    fn git_forge_spec(&self) -> Option<&'static GitForgeSpec> {
+        None
     }
     fn default_configuration(&self) -> ServiceConfiguration;
     fn validate_configuration(&self, configuration: &ServiceConfiguration) -> Result<()>;
@@ -102,6 +106,12 @@ impl ServiceDriverRegistry {
         registry.register(Box::new(RedisDriver))?;
         registry.register(Box::new(TypesenseDriver))?;
         registry.register(Box::new(MeilisearchDriver))?;
+        registry.register(Box::new(GitForgeServiceDriver {
+            specification: &GITEA_SPEC,
+        }))?;
+        registry.register(Box::new(GitForgeServiceDriver {
+            specification: &GOGS_SPEC,
+        }))?;
         for specification in NATIVE_SERVICE_SPECS {
             registry.register(Box::new(NativeServiceDriver { specification }))?;
         }
@@ -159,6 +169,169 @@ impl ServiceDriverRegistry {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct GitForgeServiceDriver {
+    specification: &'static GitForgeSpec,
+}
+
+impl ServiceDriver for GitForgeServiceDriver {
+    fn id(&self) -> &'static str {
+        self.specification.id
+    }
+
+    fn secret_names(&self) -> &'static [&'static str] {
+        if self.id() == "gitea" {
+            &["secret_key", "internal_token"]
+        } else {
+            &["secret_key"]
+        }
+    }
+
+    fn git_forge_spec(&self) -> Option<&'static GitForgeSpec> {
+        Some(self.specification)
+    }
+
+    fn default_configuration(&self) -> ServiceConfiguration {
+        ServiceConfiguration {
+            bind_address: "127.0.0.1".into(),
+            port: if self.id() == "gitea" { 3000 } else { 3001 },
+            settings: BTreeMap::from([(
+                "repository_root".into(),
+                "/var/lib/lumic/repositories".into(),
+            )]),
+        }
+    }
+
+    fn validate_configuration(&self, configuration: &ServiceConfiguration) -> Result<()> {
+        validate_settings(self.id(), configuration, &["repository_root"])?;
+        let root_value = setting_raw(configuration, "repository_root")
+            .ok_or_else(|| invalid("settings", "missing required setting 'repository_root'"))?;
+        if root_value.chars().any(char::is_whitespace) {
+            return Err(invalid(
+                "settings.repository_root",
+                "must not contain whitespace",
+            ));
+        }
+        let root = Path::new(root_value);
+        lumic_core::repository::validate_absolute_path("repository_root", root)
+    }
+
+    fn paths(&self, service: &ManagedService, _discovered_config: Option<PathBuf>) -> ServicePaths {
+        ServicePaths {
+            systemd_unit: service.systemd_unit.clone(),
+            configuration_paths: vec![
+                format!("/etc/{}/app.ini", self.id()),
+                format!("/etc/systemd/system/{}.service", self.id()),
+            ],
+            data_path: self.specification.data_path.into(),
+            log_source: format!("journalctl --unit {}", service.systemd_unit),
+        }
+    }
+
+    fn health_probe(&self, service: &ManagedService) -> ProcessSpec {
+        let path = if self.id() == "gitea" {
+            "/api/healthz"
+        } else {
+            "/"
+        };
+        ProcessSpec::new("curl").args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            &format!(
+                "http://{}:{}{path}",
+                service.configuration.bind_address, service.configuration.port
+            ),
+        ])
+    }
+
+    fn configuration_files(
+        &self,
+        service: &ManagedService,
+        _discovered_config: Option<PathBuf>,
+        secrets: &BTreeMap<String, String>,
+    ) -> Result<Vec<DriverConfigurationFile>> {
+        let repository_root = setting(service, "repository_root")?;
+        let secret_key = required_secret(secrets, "secret_key")?;
+        let content = if self.id() == "gitea" {
+            let internal_token = required_secret(secrets, "internal_token")?;
+            format!(
+                "# Managed by Lumic\nAPP_NAME = Gitea on Lumic\nRUN_MODE = prod\nRUN_USER = gitea\nWORK_PATH = /var/lib/gitea\n\n[repository]\nROOT = {repository_root}\n\n[server]\nPROTOCOL = http\nHTTP_ADDR = {}\nHTTP_PORT = {}\nROOT_URL = http://{}:{}/\nDISABLE_SSH = true\nSTART_SSH_SERVER = false\nOFFLINE_MODE = true\n\n[database]\nDB_TYPE = sqlite3\nPATH = /var/lib/gitea/data/gitea.db\n\n[security]\nINSTALL_LOCK = true\nSECRET_KEY = {secret_key}\nINTERNAL_TOKEN = {internal_token}\n",
+                service.configuration.bind_address,
+                service.configuration.port,
+                service.configuration.bind_address,
+                service.configuration.port,
+            )
+        } else {
+            format!(
+                "# Managed by Lumic\nRUN_MODE = prod\nRUN_USER = gogs\n\n[repository]\nROOT = {repository_root}\n\n[server]\nPROTOCOL = http\nHTTP_ADDR = {}\nHTTP_PORT = {}\nEXTERNAL_URL = http://{}:{}/\nDISABLE_SSH = true\nSTART_SSH_SERVER = false\nOFFLINE_MODE = true\n\n[database]\nTYPE = sqlite3\nPATH = /var/lib/gogs/gogs.db\n\n[security]\nINSTALL_LOCK = true\nSECRET_KEY = {secret_key}\n",
+                service.configuration.bind_address,
+                service.configuration.port,
+                service.configuration.bind_address,
+                service.configuration.port,
+            )
+        };
+        let unit = format!(
+            "# Managed by Lumic\n[Unit]\nDescription={} Git forge\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser={}\nGroup=lumic-git\nWorkingDirectory={}\nUMask=0007\nExecStart={} web --config /etc/{}/app.ini\nRestart=on-failure\nRestartSec=5s\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths={} {}\n\n[Install]\nWantedBy=multi-user.target\n",
+            if self.id() == "gitea" {
+                "Gitea"
+            } else {
+                "Gogs"
+            },
+            self.specification.user,
+            self.specification.data_path,
+            self.specification.binary_path,
+            self.id(),
+            self.specification.data_path,
+            repository_root,
+        );
+        Ok(vec![
+            DriverConfigurationFile {
+                path: PathBuf::from(format!("/etc/{}/app.ini", self.id())),
+                content,
+                mode: 0o640,
+                owner: "root:lumic-git",
+            },
+            DriverConfigurationFile {
+                path: PathBuf::from(format!("/etc/systemd/system/{}.service", self.id())),
+                content: unit,
+                mode: 0o644,
+                owner: "root:root",
+            },
+        ])
+    }
+
+    fn backup_plan(
+        &self,
+        _service: &ManagedService,
+        _database: Option<&str>,
+        _directory: &Path,
+        _backup_id: &str,
+    ) -> Result<DriverBackupPlan> {
+        Err(unsupported_operation(self.id(), "backup"))
+    }
+
+    fn restore_plan(
+        &self,
+        _backup_path: &Path,
+        _database: Option<&str>,
+    ) -> Result<DriverRestorePlan> {
+        Err(unsupported_operation(self.id(), "restore"))
+    }
+
+    fn create_database_command(&self, _name: &str, _owner: Option<&str>) -> Result<ProcessSpec> {
+        Err(unsupported_resource(self.id()))
+    }
+
+    fn create_user_command(&self, _name: &str, _password: &str) -> Result<ProcessSpec> {
+        Err(unsupported_resource(self.id()))
+    }
+
+    fn grant_database_command(&self, _database: &str, _user: &str) -> Result<ProcessSpec> {
+        Err(unsupported_resource(self.id()))
     }
 }
 
@@ -1609,6 +1782,8 @@ mod tests {
             "prometheus",
             "grafana",
             "loki",
+            "gitea",
+            "gogs",
         ] {
             let definition = registry.definition(id).unwrap();
             assert_eq!(registry.driver(&definition.driver).unwrap().id(), id);
@@ -1736,6 +1911,43 @@ mod tests {
             .settings
             .insert("requirepass".into(), "unsafe".into());
         assert!(driver.validate_configuration(&configuration).is_err());
+    }
+
+    #[test]
+    fn git_forge_drivers_share_the_lumic_repository_root() {
+        let registry = ServiceDriverRegistry::built_in().unwrap();
+        let secrets = BTreeMap::from([
+            ("secret_key".into(), "forge-secret".into()),
+            ("internal_token".into(), "forge-internal-token".into()),
+        ]);
+        for kind in [ManagedServiceKind::Gitea, ManagedServiceKind::Gogs] {
+            let driver = registry.legacy_driver(kind).unwrap();
+            assert!(driver.git_forge_spec().is_some());
+            let service = service(kind);
+            driver
+                .validate_configuration(&service.configuration)
+                .unwrap();
+            let files = driver
+                .configuration_files(&service, None, &secrets)
+                .unwrap();
+            assert!(
+                files
+                    .iter()
+                    .any(|file| { file.content.contains("ROOT = /var/lib/lumic/repositories") })
+            );
+            let unit = files
+                .iter()
+                .find(|file| file.path.starts_with("/etc/systemd/system"))
+                .unwrap();
+            assert!(unit.content.contains("Group=lumic-git"));
+            assert!(unit.content.contains("ReadWritePaths=/var/lib/"));
+
+            let mut invalid = service.configuration;
+            invalid
+                .settings
+                .insert("repository_root".into(), "relative".into());
+            assert!(driver.validate_configuration(&invalid).is_err());
+        }
     }
 
     #[test]

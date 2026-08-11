@@ -1,6 +1,6 @@
 +++
 title = "Events & automation"
-description = "Lumic actively observes server state, records events and can notify or run constrained remediation."
+description = "Durable events, notifications, and constrained remediation."
 weight = 80
 [extra]
 kicker = "AUTOMATION"
@@ -55,7 +55,7 @@ sudo lumic operations subscribe failures incident-hook --event service.failed --
 sudo lumic operations deliveries
 ```
 
-Loopback HTTP is allowed only for local acceptance testing; remote destinations require HTTPS. Each POST is JSON with schema `lumic.webhook.v1`, delivery ID and the complete structured signal. `X-Lumic-Signature` is `sha256=<HMAC-SHA256>` and `X-Lumic-Delivery` is stable for the delivery. The secret is read locally and never sent as an argument or returned. Timeout is 100–30000 ms, attempts are bounded to 1–8, retry delay is exponential, and delivered/exhausted history is retained. `lumicd` processes due deliveries every 30 seconds; `lumic operations run-once` is the deterministic manual equivalent. `lumic operations observe` bypasses the five-minute snapshot gate for a deliberate acceptance check and may activate an approved rule.
+Destinations require HTTPS and must resolve entirely to public addresses. Lumic validates DNS on every attempt, pins an approved address for the transfer, disables proxy routing and allows only HTTPS redirects; private, loopback, link-local and otherwise non-public results fail closed. Each POST is JSON with schema `lumic.webhook.v1`, delivery ID and the complete structured signal. `X-Lumic-Signature` is `sha256=<HMAC-SHA256>` and `X-Lumic-Delivery` is stable for the delivery. The secret is read locally and never sent as an argument or returned. Timeout is 100–30000 ms, attempts are bounded to 1–8, retry delay is exponential, and delivered/exhausted history is retained. `lumicd` processes due deliveries every 30 seconds; `lumic operations run-once` is the deterministic manual equivalent. `lumic operations observe` bypasses the five-minute snapshot gate for a deliberate acceptance check and may activate an approved rule.
 
 ## Remediation
 

@@ -22,11 +22,13 @@ The installer verifies published SHA-256 files, installs `lumic` and `lumicd` at
 
 ## Open the operator UI
 
+The UI is already running on the VPS. Run this on your local computer and keep the terminal open:
+
 ```bash
-ssh -L 8080:127.0.0.1:8080 root@server
+ssh -N -L 8080:127.0.0.1:8080 root@server
 ```
 
-Open `http://127.0.0.1:8080` and sign in with the one-time displayed token. The daemon binds the UI to loopback; do not expose that HTTP listener directly.
+Open `http://127.0.0.1:8080` in your local browser and sign in with the one-time token displayed during installation. If you no longer have it, run `sudo lumic ui token rotate` on the VPS. The daemon binds the UI to loopback; do not expose that HTTP listener directly. See [Operator UI](@/docs/operator-ui.md) for detailed sign-in and access instructions.
 
 ## Establish the operating loop
 

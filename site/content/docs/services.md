@@ -4,10 +4,10 @@ description = "Install and operate native data, queue, storage, search, metrics,
 weight = 50
 [extra]
 kicker = "SERVICES"
-status = "15 native managed-service integrations implemented"
+status = "17 managed-service integrations implemented"
 +++
 
-Managed services are long-lived native capabilities with identity, desired configuration, lifecycle, health, logs, data operations and recovery—not aliases for every apt package. The built-in driver set covers MySQL, PostgreSQL, Redis, Typesense, Meilisearch, Valkey, RabbitMQ, MinIO, OpenSearch, Memcached, MongoDB, ClickHouse, Prometheus, Grafana, and Loki on Debian/Ubuntu. nginx is also independently owned as the singleton `nginx.main` service and provides validated, recoverable application web-host resources. CLI, UI, and MCP expose the shared trusted catalog and configuration schemas rather than maintaining provider lists in each adapter.
+Managed services are long-lived native capabilities with identity, desired configuration, lifecycle, health, logs, data operations and recovery—not aliases for every apt package. The built-in driver set covers MySQL, PostgreSQL, Redis, Typesense, Meilisearch, Valkey, RabbitMQ, MinIO, OpenSearch, Memcached, MongoDB, ClickHouse, Prometheus, Grafana, Loki, Gitea, and Gogs on Debian/Ubuntu. nginx is also independently owned as the singleton `nginx.main` service and provides validated, recoverable application web-host resources. CLI, UI, and MCP expose the shared trusted catalog and configuration schemas rather than maintaining provider lists in each adapter.
 
 Internally, this surface runs through a versioned built-in service catalog and trusted Rust driver registry. Catalog definitions provide UI/MCP metadata and validation but cannot execute commands; compiled drivers own platform mapping, configuration, health, data-operation plans and supported child resources. Stable resource IDs, explicit external-versus-Lumic ownership, typed outputs/bindings, journaled pipelines and cross-process mutation locks form the shared contract. Other catalog entries are not presented as fully managed services until their drivers and recovery paths are complete.
 
@@ -42,10 +42,11 @@ sudo lumic managed-service install alternate-search meilisearch
 sudo lumic managed-service install queue rabbitmq
 sudo lumic managed-service install object-storage minio
 sudo lumic managed-service install metrics prometheus
+sudo lumic managed-service install git-forge gitea
 lumic managed-service inspect primary-db
 ```
 
-Install uses Lumic's approved apt catalog, verifies that apt reports the package installed, writes provider configuration atomically, enables/restarts the systemd unit and requires a provider health probe before persisting managed state. Repeating the operation reconciles the same resource. All fifteen services bind to loopback by default; non-loopback exposure is rejected.
+Install uses either Lumic's approved apt catalog or a driver's pinned verified upstream artifact, writes provider configuration atomically, enables/restarts the systemd unit and requires a provider health probe before persisting managed state. Repeating the operation reconciles the same resource. All seventeen services bind to loopback by default; non-loopback exposure is rejected.
 
 Typesense and Meilisearch require `typesense-server` or `meilisearch` to have a candidate in an apt source already configured and trusted by the operator. Lumic does not enroll a third-party repository or key. Each install generates a private 256-bit credential in Lumic's mode-0600 secret store. Typesense writes `/etc/typesense/typesense-server.ini`; Meilisearch writes a mode-0600 `/etc/meilisearch.env` and a hardened Lumic-owned systemd unit. Health checks call the loopback `/health` endpoint without putting the credential in process arguments. Search backup/restore and database/user commands are not supported by these drivers.
 
@@ -68,6 +69,22 @@ RabbitMQ, Memcached, and Prometheus use distribution packages. Valkey, MinIO, Op
 
 These ten drivers provide install, validated configuration, lifecycle, logs, inspection, update, removal, and health. Provider-native backup/restore and child database/user operations are explicitly unsupported until a recovery contract exists. Their catalog mappings and renderers have workspace unit coverage; the clean-image and live managed-service CI gates remain limited to the providers named in the installation support matrix.
 
+## Git forge services
+
+Gitea and Gogs are artifact-backed managed services for `x86_64` and `aarch64` Debian/Ubuntu hosts. Lumic downloads a pinned upstream release over HTTPS, verifies its SHA-256 digest through the shared artifact manager, installs a dedicated system user and hardened systemd unit, and stores private forge metadata in `/var/lib/gitea` or `/var/lib/gogs`. The HTTP service is loopback-only by default, the built-in SSH server is disabled, and exposure through a reviewed reverse-proxy host remains an explicit operator action.
+
+```bash
+lumic managed-service plan-install git-forge gitea
+sudo lumic managed-service install git-forge gitea
+# Or choose Gogs instead; only one forge may own a repository root.
+sudo lumic managed-service install git-forge gogs
+lumic managed-service inspect git-forge
+```
+
+Both drivers use the exact `git.repository_root` from Lumic configuration. Installation creates the `lumic-git` group, reconciles existing repository ownership and group-write permissions, and runs the forge with that shared group. Lumic-created and imported bare repositories use Git's group-sharing mode. The forge keeps its own SQLite metadata, so an existing filesystem repository does not automatically become a forge database record; register or import it through the selected forge when UI visibility is required. Running Gitea and Gogs concurrently over the same root is rejected.
+
+Update reconciles the pinned verified release. Removal stops and disables the unit and removes the installed binary, while retaining configuration, secrets, forge data, and repositories for recovery. Provider-native backup/restore and child-resource operations are not yet exposed for these drivers; back up both the forge data directory and Lumic repository root before maintenance.
+
 ## Lifecycle, configuration and logs
 
 ```bash
@@ -83,7 +100,7 @@ driver and catalog definition therefore does not require a new CLI command shape
 provider-specific configure and data commands remain available where the selected definition
 declares those capabilities.
 
-Only provider-specific allowlisted settings are accepted. A material configuration change is written atomically, restarted, health-checked and rolled back to the previous file—or removed if Lumic created it—when validation fails. Removal is rejected while a database, credential, or search endpoint still has an application binding. Otherwise it stops/disables the unit and removes the native package while deliberately retaining service data and generated service credentials for recovery; data purge is not bundled into this command.
+Only provider-specific allowlisted settings are accepted. A material configuration change is written atomically, restarted, health-checked and rolled back to the previous file—or removed if Lumic created it—when validation fails. Removal is rejected while a database, credential, or search endpoint still has an application binding. Otherwise it stops/disables the unit and removes the native package or verified forge binary while deliberately retaining service data and generated service credentials for recovery; data purge is not bundled into this command.
 
 Dependencies between managed resources are explicit metadata for status and later impact analysis:
 

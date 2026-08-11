@@ -130,7 +130,7 @@ Build the Installatron-like application provisioning substrate.
 - versioned/signed recipe distribution design.
 - one simple reference recipe proving the mechanism.
 
-Nightly owns further breadth: Laravel, Symfony, Drupal, Forgejo/Gitea, Ghost, Matomo, etc.
+Nightly owns further breadth: Laravel, Symfony, Drupal, Forgejo, Ghost, Matomo, etc. Gitea and Gogs are implemented as artifact-backed managed services sharing Lumic's repository root.
 
 **Exit:** new application installers can usually be added as data/recipe work rather than core Rust changes.
 

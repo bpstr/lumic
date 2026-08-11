@@ -1,6 +1,7 @@
 use axum::{
     Form, Json, Router,
-    extract::{Path as RoutePath, Query, Request, State},
+    body::{Bytes, to_bytes},
+    extract::{Path as RoutePath, Query, RawQuery, Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
@@ -18,7 +19,7 @@ use lumic_platform::{
     CpuTimeSample, application::ApplicationService, atomic_file::write_atomic,
     attention::AttentionService, event_store::EventStore, infrastructure::InfrastructureService,
     inspect_cpu_time, inspect_host, inspect_load_average_1m, intelligence::ApplicationIntelligence,
-    managed_service::ManagedServiceManager, recipe::RecipeManager,
+    managed_service::ManagedServiceManager, recipe::RecipeManager, repository::RepositoryService,
     resource_framework::ResourceFramework, server::HostOperator, software::SoftwareManager,
     systemd::ServiceAction,
 };
@@ -164,6 +165,7 @@ enum NavSection {
     Installers,
     Recipes,
     Infrastructure,
+    Repositories,
     Host,
     Events,
 }
@@ -299,6 +301,10 @@ impl UiState {
         InfrastructureService::new(&self.state_dir, self.apps_root.clone())
     }
 
+    fn repositories(&self) -> Result<RepositoryService> {
+        RepositoryService::new(&self.state_dir)
+    }
+
     fn intelligence(&self) -> ApplicationIntelligence {
         ApplicationIntelligence::new(&self.state_dir, self.apps_root.clone())
     }
@@ -328,6 +334,19 @@ pub fn router(state: UiState) -> Router {
         .route("/recipes", get(recipes))
         .route("/host", get(host_operator))
         .route("/infrastructure", get(infrastructure))
+        .route("/repositories", get(repositories))
+        .route("/repositories/{namespace}/{name}", get(repository_detail))
+        .route("/actions/repository/create", post(repository_create))
+        .route("/actions/repository/import", post(repository_import))
+        .route("/actions/repository/register", post(repository_register))
+        .route(
+            "/actions/repository/deployment",
+            post(repository_deployment_configure),
+        )
+        .route(
+            "/git/{namespace}/{repository}/{*service}",
+            get(git_smart_http).post(git_smart_http),
+        )
         .route("/api/infrastructure", get(infrastructure_api))
         .route("/deployments/{app}/{id}", get(deployment_detail))
         .route("/operations/{id}", get(operation_detail))
@@ -798,6 +817,345 @@ async fn infrastructure_api(State(state): State<UiState>, headers: HeaderMap) ->
         )
             .into_response(),
     }
+}
+
+async fn repositories(State(state): State<UiState>, headers: HeaderMap) -> Response {
+    let Some(session) = auth(&state, &headers) else {
+        return Redirect::to("/login").into_response();
+    };
+    let service = match state.repositories() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let items = match service.list() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let rows = items.iter().map(|repository| format!(
+        "<tr><td><a href=/repositories/{}/{}>{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+        url_segment(&repository.namespace), url_segment(&repository.name), escape(&repository.id),
+        if repository.storage.managed() { "managed bare" } else { "external" },
+        escape(&repository.default_branch), repository.remotes.len()
+    )).collect::<String>();
+    let body = format!(
+        "<h1>Repositories</h1><p class=muted>Managed bare repositories and explicitly registered external Git storage.</p><table><tr><th>Repository</th><th>Storage</th><th>Default branch</th><th>Remotes</th></tr>{rows}</table><h2>Create</h2><form class=panel method=post action=/actions/repository/create><label>Name<br><input name=name required></label><p><label>Namespace<br><input name=namespace placeholder=default></label></p><p><label>Default branch<br><input name=branch placeholder=main></label></p><input type=hidden name=csrf value=\"{}\"><button>Create managed bare repository</button></form><h2>Import</h2><form class=panel method=post action=/actions/repository/import><label>Name<br><input name=name required></label><p><label>Namespace<br><input name=namespace placeholder=default></label></p><p><label>Remote URL<br><input name=url required></label></p><p><label>Credential reference<br><input name=credential_reference></label></p><input type=hidden name=csrf value=\"{}\"><button>Import bare repository</button></form><h2>Register existing</h2><form class=panel method=post action=/actions/repository/register><label>Name<br><input name=name required></label><p><label>Namespace<br><input name=namespace placeholder=default></label></p><p><label>Git directory<br><input name=path required placeholder=/srv/git/project.git></label></p><input type=hidden name=csrf value=\"{}\"><button>Register without modifying files</button></form>",
+        escape(&session.csrf),
+        escape(&session.csrf),
+        escape(&session.csrf)
+    );
+    page("Repositories", &body, true).into_response()
+}
+
+async fn repository_detail(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    RoutePath((namespace, name)): RoutePath<(String, String)>,
+) -> Response {
+    let Some(session) = auth(&state, &headers) else {
+        return Redirect::to("/login").into_response();
+    };
+    let service = match state.repositories() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let id = format!("{namespace}/{name}");
+    let repository = match service.get(&id) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let (status, branches, tags) = match tokio::try_join!(
+        service.status(&id),
+        service.branches(&id),
+        service.tags(&id)
+    ) {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    let branch_rows = branches
+        .iter()
+        .map(|reference| {
+            format!(
+                "<tr><td>{}</td><td class=mono>{}</td></tr>",
+                escape(&reference.name),
+                escape(&reference.object_id)
+            )
+        })
+        .collect::<String>();
+    let tag_rows = tags
+        .iter()
+        .map(|reference| {
+            format!(
+                "<tr><td>{}</td><td class=mono>{}</td></tr>",
+                escape(&reference.name),
+                escape(&reference.object_id)
+            )
+        })
+        .collect::<String>();
+    let clone_url = service
+        .clone_url(&id, "")
+        .unwrap_or_else(|_| "Smart HTTP disabled".into());
+    let remotes = repository
+        .remotes
+        .iter()
+        .map(|remote| {
+            format!(
+                "<tr><td>{}</td><td>{:?}</td><td class=mono>{}</td><td>{}/{}</td></tr>",
+                escape(&remote.name),
+                remote.provider,
+                escape(&remote.url),
+                remote.fetch_enabled,
+                remote.push_enabled
+            )
+        })
+        .collect::<String>();
+    let deployment = repository.deployment.as_ref().map_or_else(
+        || "<p class=muted>Deployment is not configured.</p>".into(),
+        |configuration| format!(
+            "<dl class=card><dt>Application</dt><dd>{}</dd><dt>Strategy</dt><dd>{:?}</dd><dt>Branch</dt><dd class=mono>{}</dd><dt>Destination</dt><dd class=mono>{}</dd><dt>Deploy on push</dt><dd>{}</dd><dt>Keep releases</dt><dd>{}</dd></dl>",
+            escape(&configuration.application_id), configuration.strategy,
+            escape(&configuration.branch), escape(&configuration.destination.display().to_string()),
+            configuration.deploy_on_push, configuration.keep_releases
+        ),
+    );
+    page("Repository", &format!(
+        "<h1>{}</h1><p class=muted>{} · default <span class=mono>{}</span></p><p>Clone: <span class=mono>{}</span></p><div class=grid><div class=card><h2>Health</h2><p class={}>{}</p></div><div class=card><h2>HEAD</h2><p class=mono>{}</p></div><div class=card><h2>Objects</h2><p>{}</p></div></div><h2>Remotes</h2><table><tr><th>Name</th><th>Provider</th><th>URL</th><th>Fetch/push</th></tr>{remotes}</table><h2>Deployment</h2>{deployment}<form class=panel method=post action=/actions/repository/deployment><input type=hidden name=repository value=\"{}\"><label>Application<br><input name=application required></label><p><label>Destination<br><input name=destination required placeholder=/var/www/shop></label></p><p><label>Branch<br><input name=branch value=\"{}\"></label></p><p><label>Strategy<br><select name=strategy><option value=atomic>Atomic (zero-downtime-capable)</option><option value=in_place>In place</option></select></label></p><p><label><input type=checkbox name=deploy_on_push> Deploy on push</label></p><p><label>Keep releases<br><input type=number min=1 max=100 name=keep_releases value=5></label></p><input type=hidden name=csrf value=\"{}\"><button>Configure deployment</button></form><h2>Branches</h2><table><tr><th>Name</th><th>Object</th></tr>{branch_rows}</table><h2>Tags</h2><table><tr><th>Name</th><th>Object</th></tr>{tag_rows}</table>",
+        escape(&repository.id), escape(&repository.storage.path().display().to_string()), escape(&repository.default_branch),
+        escape(&clone_url), if status.healthy { "ok" } else { "bad" }, escape(&status.message), escape(status.head.as_deref().unwrap_or("unborn")),
+        status.object_count.map_or_else(|| "unknown".into(), |value| value.to_string()), escape(&repository.id), escape(&repository.default_branch), escape(&session.csrf)
+    ), true).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct RepositoryDeploymentForm {
+    repository: String,
+    application: String,
+    destination: String,
+    branch: String,
+    strategy: String,
+    deploy_on_push: Option<String>,
+    keep_releases: usize,
+    csrf: String,
+}
+
+async fn repository_deployment_configure(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    Form(form): Form<RepositoryDeploymentForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let strategy = match form.strategy.as_str() {
+        "atomic" => lumic_core::repository::DeploymentStrategy::Atomic,
+        "in_place" => lumic_core::repository::DeploymentStrategy::InPlace,
+        _ => {
+            return error_response(LumicError::InvalidInput {
+                field: "strategy".into(),
+                message: "must be `atomic` or `in_place`".into(),
+            });
+        }
+    };
+    let configuration = lumic_core::repository::RepositoryDeploymentConfiguration {
+        enabled: true,
+        application_id: form.application,
+        branch: form.branch,
+        destination: form.destination.into(),
+        strategy,
+        deploy_on_push: form.deploy_on_push.is_some(),
+        keep_releases: form.keep_releases,
+        install_command: None,
+        build_command: None,
+        migrate_command: None,
+        hooks: Vec::new(),
+        shared_directories: Vec::new(),
+        shared_files: Vec::new(),
+        health: lumic_core::repository::DeploymentHealthConfiguration::default(),
+    };
+    match state.repositories().and_then(|service| {
+        service.configure_deployment(
+            &form.repository,
+            configuration,
+            &ui_context("repository-configure-deployment"),
+        )
+    }) {
+        Ok(result) => result_page("Deployment configured", &result.message),
+        Err(error) => error_response(error),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RepositoryCreateForm {
+    name: String,
+    namespace: String,
+    branch: String,
+    csrf: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepositoryImportForm {
+    name: String,
+    namespace: String,
+    url: String,
+    credential_reference: String,
+    csrf: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepositoryRegisterForm {
+    name: String,
+    namespace: String,
+    path: String,
+    csrf: String,
+}
+
+async fn repository_create(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    Form(form): Form<RepositoryCreateForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let service = match state.repositories() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    match service
+        .create(
+            nonempty(&form.namespace),
+            &form.name,
+            nonempty(&form.branch),
+            &ui_context("repository-create"),
+        )
+        .await
+    {
+        Ok(result) => result_page("Repository created", &result.message),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn repository_import(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    Form(form): Form<RepositoryImportForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let service = match state.repositories() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    match service
+        .import(
+            nonempty(&form.namespace),
+            &form.name,
+            &form.url,
+            nonempty(&form.credential_reference).map(str::to_owned),
+            &ui_context("repository-import"),
+        )
+        .await
+    {
+        Ok(result) => result_page("Repository imported", &result.message),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn repository_register(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    Form(form): Form<RepositoryRegisterForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let service = match state.repositories() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    match service.register_external(
+        nonempty(&form.namespace),
+        &form.name,
+        std::path::Path::new(&form.path),
+        &ui_context("repository-register"),
+    ) {
+        Ok(result) => result_page("Repository registered", &result.message),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn git_smart_http(
+    State(state): State<UiState>,
+    RoutePath((namespace, repository, service_path)): RoutePath<(String, String, String)>,
+    RawQuery(query): RawQuery,
+    request: Request,
+) -> Response {
+    let actor = match git_actor(&state, request.headers()) {
+        Some(value) => value,
+        None => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+    let method = request.method().as_str().to_owned();
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let body: Bytes = match to_bytes(request.into_body(), 64 * 1024 * 1024).await {
+        Ok(value) => value,
+        Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+    };
+    let service = match state.repositories() {
+        Ok(value) => value,
+        Err(error) => return error_response(error),
+    };
+    match service
+        .smart_http(
+            &method,
+            &format!("/{namespace}/{repository}/{service_path}"),
+            query.as_deref().unwrap_or(""),
+            content_type.as_deref(),
+            body.to_vec(),
+            &actor,
+        )
+        .await
+    {
+        Ok(result) => {
+            let mut response = (
+                StatusCode::from_u16(result.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                result.body,
+            )
+                .into_response();
+            for (name, value) in result.headers {
+                if let (Ok(name), Ok(value)) =
+                    (HeaderName::try_from(name), HeaderValue::try_from(value))
+                {
+                    response.headers_mut().insert(name, value);
+                }
+            }
+            response
+        }
+        Err(error) => (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+    }
+}
+
+fn git_actor(state: &UiState, headers: &HeaderMap) -> Option<String> {
+    if auth(state, headers).is_some() {
+        return Some("local-ui-admin".into());
+    }
+    let token = headers
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")?;
+    UiCredentialStore::at_state_dir(&state.state_dir)
+        .verified_revision(token)
+        .ok()
+        .flatten()
+        .map(|_| "git-http-admin".into())
+}
+
+fn nonempty(value: &str) -> Option<&str> {
+    (!value.trim().is_empty()).then(|| value.trim())
 }
 
 async fn applications(State(state): State<UiState>, headers: HeaderMap) -> Response {
@@ -1753,6 +2111,11 @@ fn nav_section_for_page(title: &str, body: &str) -> NavSection {
         "Installers" | "Set up software" | "Software setup complete" => NavSection::Installers,
         "Recipes" => NavSection::Recipes,
         "Infrastructure" => NavSection::Infrastructure,
+        "Repositories"
+        | "Repository"
+        | "Repository created"
+        | "Repository imported"
+        | "Repository registered" => NavSection::Repositories,
         "Host operator" | "Apply security updates" | "Security updates complete" => {
             NavSection::Host
         }
@@ -1809,11 +2172,18 @@ fn navigation(active: NavSection) -> String {
         "06",
         "Infrastructure",
     );
-    let host = link(active, NavSection::Host, "/host", "07", "Host");
-    let events = link(active, NavSection::Events, "/events", "08", "Events");
+    let repositories = link(
+        active,
+        NavSection::Repositories,
+        "/repositories",
+        "07",
+        "Repositories",
+    );
+    let host = link(active, NavSection::Host, "/host", "08", "Host");
+    let events = link(active, NavSection::Events, "/events", "09", "Events");
 
     format!(
-        "<div class=sidenav-header><a class=brand href=/><span class=brand-mark>L</span><span class=brand-copy>Lumic<small>Node operator</small></span></a><div class=node-chip>Local node</div></div><nav class=sidenav-content><section class=sidenav-group aria-labelledby=nav-monitor><div class=sidenav-label id=nav-monitor>Monitor</div><div class=sidenav-menu>{monitor}</div></section><section class=sidenav-group aria-labelledby=nav-workloads><div class=sidenav-label id=nav-workloads>Workloads</div><div class=sidenav-menu>{applications}{services}{installers}{recipes}</div></section><section class=sidenav-group aria-labelledby=nav-system><div class=sidenav-label id=nav-system>System</div><div class=sidenav-menu>{infrastructure}{host}{events}</div></section></nav><div class=sidenav-footer><div class=operator><span class=avatar aria-hidden=true>OP</span><span class=operator-copy><strong>Operator</strong><small>Local administrator</small></span></div><form method=post action=/logout><button class=signout type=submit>Sign out</button></form></div>"
+        "<div class=sidenav-header><a class=brand href=/><span class=brand-mark>L</span><span class=brand-copy>Lumic<small>Node operator</small></span></a><div class=node-chip>Local node</div></div><nav class=sidenav-content><section class=sidenav-group aria-labelledby=nav-monitor><div class=sidenav-label id=nav-monitor>Monitor</div><div class=sidenav-menu>{monitor}</div></section><section class=sidenav-group aria-labelledby=nav-workloads><div class=sidenav-label id=nav-workloads>Workloads</div><div class=sidenav-menu>{applications}{services}{installers}{recipes}</div></section><section class=sidenav-group aria-labelledby=nav-system><div class=sidenav-label id=nav-system>System</div><div class=sidenav-menu>{infrastructure}{repositories}{host}{events}</div></section></nav><div class=sidenav-footer><div class=operator><span class=avatar aria-hidden=true>OP</span><span class=operator-copy><strong>Operator</strong><small>Local administrator</small></span></div><form method=post action=/logout><button class=signout type=submit>Sign out</button></form></div>"
     )
 }
 

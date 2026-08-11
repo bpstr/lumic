@@ -538,6 +538,8 @@ const BUILT_IN_SERVICES: &[&str] = &[
     include_str!("../catalog/services/prometheus.toml"),
     include_str!("../catalog/services/grafana.toml"),
     include_str!("../catalog/services/loki.toml"),
+    include_str!("../catalog/services/gitea.toml"),
+    include_str!("../catalog/services/gogs.toml"),
 ];
 const BUILT_IN_RUNTIMES: &[&str] = &[
     include_str!("../catalog/runtimes/php.toml"),
@@ -664,7 +666,7 @@ mod tests {
     #[test]
     fn built_in_catalog_is_valid_and_contains_foundation_definitions() {
         let catalog = Catalog::built_in().unwrap();
-        assert_eq!(catalog.services().count(), 16);
+        assert_eq!(catalog.services().count(), 18);
         for id in [
             "nginx",
             "mysql",
@@ -682,6 +684,8 @@ mod tests {
             "prometheus",
             "grafana",
             "loki",
+            "gitea",
+            "gogs",
         ] {
             assert!(catalog.service(id).is_some(), "missing service {id}");
         }

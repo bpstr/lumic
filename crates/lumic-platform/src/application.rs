@@ -1071,42 +1071,17 @@ impl ApplicationService {
         ));
         self.upsert_deployment(deployment)?;
 
-        match application.runtime {
-            ApplicationRuntime::Php if release.join("composer.json").exists() => {
-                let mut spec = ProcessSpec::new("composer")
-                    .args([
-                        "install",
-                        "--no-dev",
-                        "--no-interaction",
-                        "--prefer-dist",
-                        "--optimize-autoloader",
-                    ])
-                    .current_dir(release);
-                spec.timeout = Duration::from_secs(600);
-                self.run(spec).await?;
-                deployment.phases.push(phase(
-                    "build",
-                    DeploymentPhaseStatus::Completed,
-                    "Composer dependencies installed",
-                ));
-            }
-            ApplicationRuntime::Node if release.join("package-lock.json").exists() => {
-                let mut spec = ProcessSpec::new("npm")
-                    .args(["ci", "--omit=dev"])
-                    .current_dir(release);
-                spec.timeout = Duration::from_secs(600);
-                self.run(spec).await?;
-                deployment.phases.push(phase(
-                    "build",
-                    DeploymentPhaseStatus::Completed,
-                    "npm dependencies installed",
-                ));
-            }
-            _ => deployment.phases.push(phase(
+        if let Some((spec, message)) = dependency_install_spec(application.runtime, release) {
+            self.run(spec).await?;
+            deployment
+                .phases
+                .push(phase("build", DeploymentPhaseStatus::Completed, message));
+        } else {
+            deployment.phases.push(phase(
                 "build",
                 DeploymentPhaseStatus::Skipped,
                 "runtime has no dependency build step",
-            )),
+            ));
         }
         let entry_point = match application.runtime {
             ApplicationRuntime::Static => release.join("index.html"),
@@ -1595,6 +1570,37 @@ impl ApplicationService {
     }
 }
 
+fn dependency_install_spec(
+    runtime: ApplicationRuntime,
+    release: &Path,
+) -> Option<(ProcessSpec, &'static str)> {
+    let (mut spec, message) = match runtime {
+        ApplicationRuntime::Php if release.join("composer.json").is_file() => (
+            ProcessSpec::new("composer")
+                .args([
+                    "install",
+                    "--no-dev",
+                    "--no-interaction",
+                    "--no-plugins",
+                    "--no-scripts",
+                    "--prefer-dist",
+                    "--optimize-autoloader",
+                ])
+                .current_dir(release),
+            "Composer dependencies installed with plugins and scripts disabled",
+        ),
+        ApplicationRuntime::Node if release.join("package-lock.json").is_file() => (
+            ProcessSpec::new("npm")
+                .args(["ci", "--omit=dev", "--ignore-scripts"])
+                .current_dir(release),
+            "npm dependencies installed with lifecycle scripts disabled",
+        ),
+        _ => return None,
+    };
+    spec.timeout = Duration::from_secs(600);
+    Some((spec, message))
+}
+
 fn phase(
     name: impl Into<String>,
     status: DeploymentPhaseStatus,
@@ -1823,6 +1829,25 @@ mod tests {
                 ..HealthCheck::default()
             },
         }
+    }
+
+    #[test]
+    fn dependency_installers_disable_untrusted_lifecycle_code() {
+        let root = std::env::temp_dir().join(format!(
+            "lumic-dependency-spec-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("composer.json"), b"{}").unwrap();
+        let (composer, _) = dependency_install_spec(ApplicationRuntime::Php, &root).unwrap();
+        assert!(composer.args.iter().any(|arg| arg == "--no-plugins"));
+        assert!(composer.args.iter().any(|arg| arg == "--no-scripts"));
+
+        fs::write(root.join("package-lock.json"), b"{}").unwrap();
+        let (npm, _) = dependency_install_spec(ApplicationRuntime::Node, &root).unwrap();
+        assert!(npm.args.iter().any(|arg| arg == "--ignore-scripts"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

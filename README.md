@@ -36,23 +36,24 @@ A fresh VPS becomes a Lumic node. Lumic detects the host and provides the daemon
 
 ### 2. Connect MCP
 
-The current MCP server is local stdio. The nightly installer does not yet publish `lumic-mcp`; for source-tree development, build it and register the resulting absolute path with Codex:
+For a remote VPS, first provision a dedicated restricted MCP key as described in the [installation guide](site/content/docs/installation.md). Then run the registration command on your local computer, where Codex runs—not inside an SSH session on the VPS:
 
 ```bash
-cargo build --release -p lumic-mcp
-codex mcp add lumic -- "$PWD/target/release/lumic-mcp"
+codex mcp add lumic-server -- ssh -T -o BatchMode=yes \
+  -i "$HOME/.ssh/lumic-server" root@server
 ```
 
-Once connected, the coding agent can inspect the node and call structured Lumic operations instead of being given unrestricted SSH access. Authenticated remote MCP transport is not implemented. See the MCP guide for the exact limitations.
+The restricted key starts the installed `lumic mcp serve` transport on the VPS without granting a general shell. Once connected, the coding agent can inspect the node and call structured Lumic operations. See the [MCP guide](site/content/docs/mcp.md) for local stdio, restricted SSH, mutation policy, and optional authenticated HTTP setup.
 
 ### 3. Open the UI
 
+The installer already starts the UI on the VPS. Run this on your local computer and keep the terminal open:
+
 ```bash
-sudo lumic ui token rotate
-ssh -L 8080:127.0.0.1:8080 root@server
+ssh -N -L 8080:127.0.0.1:8080 root@server
 ```
 
-Open `http://127.0.0.1:8080`. The installed daemon serves the UI on loopback, and the UI exposes the same server, application, service, deployment, event and diagnostic model as CLI and MCP.
+Open `http://127.0.0.1:8080` on your local computer and sign in with the token printed during installation. If it was lost, run `sudo lumic ui token rotate` on the VPS. The installed daemon serves the UI on loopback, and the UI exposes the same server, application, service, deployment, event and diagnostic model as CLI and MCP. See the [operator UI guide](site/content/docs/operator-ui.md) for detailed instructions.
 
 That is Lumic:
 

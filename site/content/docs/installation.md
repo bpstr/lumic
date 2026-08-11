@@ -57,7 +57,7 @@ A node never silently changes channels.
 Stable installation resolves GitHub's latest stable release. Pin an exact immutable stable or prerelease when required:
 
 ```bash
-curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_VERSION=2.0.0-alpha.1 sh
+curl -fsSL https://lumic.cc/install.sh | sudo env LUMIC_VERSION=2.0.0-alpha.2 sh
 ```
 
 Exact prerelease versions are opt-in and do not change the node's recorded stable/nightly channel. GitHub marks prerelease tags separately, so they never replace the latest stable release.
@@ -100,12 +100,19 @@ lumic how-are-you
 
 The installer creates the initial UI credential if none exists. Rotate it later if needed, then connect over an SSH tunnel:
 
+On the VPS, or from a normal SSH session to it, rotate a lost or expired token:
+
 ```bash
 sudo lumic ui token rotate
-ssh -L 8080:127.0.0.1:8080 root@server
 ```
 
-The UI listens on `127.0.0.1:8080` by default. `LUMIC_UI_BIND` may select another loopback address/port; non-loopback binds are rejected.
+On your local computer, start the tunnel and leave that terminal running while you use the UI:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 root@server
+```
+
+Then open `http://127.0.0.1:8080` in your local browser. The UI listens on the VPS at `127.0.0.1:8080` by default; the SSH tunnel makes it available only on your local computer. `LUMIC_UI_BIND` may select another loopback address/port; non-loopback binds are rejected. See the [operator UI guide](@/docs/operator-ui.md) for sign-in, session, service, and remote-access details.
 
 ## Supported systems
 

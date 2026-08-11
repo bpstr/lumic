@@ -1,6 +1,6 @@
 +++
 title = "Server management"
-description = "The host is Lumic's primary abstraction: OS, packages, services, users, network, storage and diagnostics."
+description = "Typed operations for the Linux host and its native subsystems."
 weight = 30
 [extra]
 kicker = "SERVER"

@@ -352,6 +352,8 @@ fn service_from_instance(instance: &ServiceInstance) -> Result<ManagedService> {
         "prometheus" => ManagedServiceKind::Prometheus,
         "grafana" => ManagedServiceKind::Grafana,
         "loki" => ManagedServiceKind::Loki,
+        "gitea" => ManagedServiceKind::Gitea,
+        "gogs" => ManagedServiceKind::Gogs,
         _ => {
             return Err(invalid(
                 "service.definition_id",

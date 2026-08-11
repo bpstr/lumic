@@ -1,12 +1,12 @@
 +++
 title = "Lumic Control Center documentation"
-description = "Install Lumic Control Center, connect MCP, open the UI, then let Lumic manage the server."
+description = "Install Lumic, connect an agent, and operate the node."
 sort_by = "weight"
 template = "section.html"
 page_template = "page.html"
 +++
 
-**Lumic Control Center** (Lumic) is a host-native Linux server operating layer available at [lumic.cc](https://lumic.cc). Its core workflow has three steps.
+**Lumic Control Center** (Lumic) is a host-native operating layer for Linux servers. Install it once, then use the same typed capabilities through CLI, UI, and MCP.
 
 ## 1. Install Lumic
 
@@ -14,7 +14,7 @@ page_template = "page.html"
 ssh root@server 'curl -fsSL https://lumic.cc/install.sh | sh'
 ```
 
-A fresh VPS becomes an autonomous Lumic node with the daemon, CLI, management surface and structured host model. The installer is published directly at `https://lumic.cc/install.sh` from the repository's canonical root `install.sh`.
+A fresh VPS becomes an autonomous Lumic node. The canonical installer is `https://lumic.cc/install.sh`.
 
 ## 2. Ask the node
 
@@ -22,26 +22,23 @@ A fresh VPS becomes an autonomous Lumic node with the daemon, CLI, management su
 lumic how-are-you
 ```
 
-The CLI, UI and MCP `server_attention` tool expose the same factual health, recent changes, active incidents, upcoming attention and recommendations. Installed stdio, restricted SSH and optional authenticated Streamable HTTP onboarding are documented in the [MCP guide](@/docs/mcp.md).
+CLI, UI, and MCP share one factual view of health, incidents, recent changes, and recommended attention. See [MCP](@/docs/mcp.md) for stdio, restricted SSH, and authenticated HTTP setup.
 
 ## 3. Open the UI
 
+The installer starts the UI on the VPS and prints its one-time sign-in token. Run the following tunnel command on your local computer and leave it running:
+
 ```bash
-sudo lumic ui token rotate
-ssh -L 8080:127.0.0.1:8080 root@server
+ssh -N -L 8080:127.0.0.1:8080 root@server
 ```
 
-Use the clean Rust management UI when you want visibility or direct control. CLI, UI and MCP must operate over the same capability model.
+Open `http://127.0.0.1:8080` on your local computer and sign in with the token. If the token was lost, run `sudo lumic ui token rotate` on the VPS (for example, through a normal SSH session) to create a replacement. The authenticated Rust UI shows applications, services, repositories, deployments, events, host status, and confirmed actions. [Read the detailed operator UI instructions](@/docs/operator-ui.md).
 
-Open `http://127.0.0.1:8080`. The installed `lumicd` serves the authenticated Rust UI on loopback; it exposes live applications, services, recipes, host operations, deployments, events/logs and confirmed safe actions.
-
-Those three actions define Lumic. The growing collection of server capabilities is deliberately secondary: packages, runtimes, PHP extensions, Git hosting, databases, Redis, TLS, deployments, workers, events, diagnostics, notifications, webhooks and multi-node infrastructure should increasingly feel like things Lumic simply already knows how to do.
+Browse the dedicated [Features](@/features/_index.md) catalog for supported applications, managed services, and host capabilities.
 
 ## Describe the application once
 
-Application repositories can include an optional [`lumic.yaml`](./lumic-yaml/) file. It records the useful production intent that otherwise has to be explained repeatedly to coding agents: runtime, services, build commands, web process, workers, scheduled jobs, domains, secrets, health checks and deployment hooks.
-
-The file is intentionally not a strict infrastructure language. Lumic and the coding agent should combine it with repository evidence and target-node state, fill in safe obvious details, then show a plan before material changes.
+Repositories can include an optional [`lumic.yaml`](./lumic-yaml/) with runtime, service, process, domain, secret-reference, health, and deployment intent. Lumic combines that intent with repository evidence and live node state before proposing a plan.
 
 A typical request can therefore be short:
 
@@ -49,20 +46,16 @@ A typical request can therefore be short:
 
 ## Give Codex a complete VPS task
 
-After MCP is connected, the ideal Lumic workflow looks like this:
+After MCP is connected, ask for the outcome and require a plan before mutation:
 
-> Inspect this Lumic node and the current repository. Prepare the VPS as a production environment for this application. Detect the required runtime, system packages, extensions and backing services. Install only what is needed, configure the web server, database, cache, TLS, firewall, workers and scheduled jobs where applicable, and create a zero-downtime Git deployment from the repository. Use Lumic plans before material changes, keep the host secure, verify the deployment with health checks, and report exactly what was configured. Do not use unrestricted shell access when a Lumic capability exists.
+> Inspect this Lumic node and repository. Plan the runtime, services, web routing, TLS, workers, schedules, and Git deployment. Apply the approved plan, verify health, and report what changed.
 
-The coding agent performs the reasoning. Lumic provides trustworthy host status, safe operations, plans, policy and auditability.
+The agent supplies the reasoning. Lumic supplies host evidence, plans, policy, safe operations, and an audit trail.
 
-## Common outcomes without infrastructure frameworks
+## Explore supported features
 
-A Laravel project should be able to resolve into PHP, the required extensions, Composer, Nginx, PostgreSQL or MariaDB, Redis when needed, TLS, environment configuration, workers/Horizon, the scheduler, Git deployment and zero-downtime releases.
+The [Features](@/features/_index.md) section lists application support, managed services, and host capabilities in compact catalogs. The [Feature matrix](@/docs/feature-matrix.md) records exact platform coverage and planned expansion.
 
-A React or Node project should be able to resolve into its actual Node/build requirements, environment variables, static or server-rendered deployment mode, Nginx routing, TLS, Git deployment, health checks and zero-downtime activation where applicable — giving a VPS a Render/Vercel-like application workflow without handing control of the infrastructure to a hosted platform.
-
-The same model will cover Python applications, static sites, APIs, workers and custom services as their integrations become available.
-
-> **Documentation status:** These pages are the public contract for Lumic 1.x. Pages clearly distinguish implemented behavior from planned work and must be updated in the same change that changes the product.
+> **Documentation status:** These pages are the public product contract. Each page distinguishes implemented, nightly, foundation-only, and planned behavior.
 
 Lumic manages Linux directly. Docker is supported as a workload feature, not used as the product's core abstraction.

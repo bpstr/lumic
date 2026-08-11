@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -Eeuo pipefail
 
 : "${LUMIC_TEST_BINARY:?set LUMIC_TEST_BINARY to the built lumic CLI}"
 case "$LUMIC_TEST_BINARY" in
   /*) LUMIC_BIN="$LUMIC_TEST_BINARY" ;;
   *) LUMIC_BIN="$(pwd)/$LUMIC_TEST_BINARY" ;;
 esac
+
+installer_report_error() {
+  local status="$1"
+  local source_file="$2"
+  local line="$3"
+  local command="$4"
+  trap - ERR
+  printf 'installer test failed at %s:%s: %s\n' "$source_file" "$line" "$command" >&2
+  if [[ -n "${INSTALLER_TEST_ROOT:-}" && -n "${INSTALLER_RESULTS_DIR:-}" ]]; then
+    mkdir -p "$INSTALLER_RESULTS_DIR/diagnostics"
+    find "$INSTALLER_TEST_ROOT" -maxdepth 1 -type f \
+      \( -name '*.json' -o -name '*.error' \) \
+      -exec cp {} "$INSTALLER_RESULTS_DIR/diagnostics/" \;
+  fi
+  return "$status"
+}
+
+trap 'installer_report_error "$?" "${BASH_SOURCE[0]:-unknown}" "$LINENO" "$BASH_COMMAND"' ERR
 
 assert_json() {
   local expression="$1"

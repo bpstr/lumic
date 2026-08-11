@@ -29,6 +29,9 @@ across future OS and architecture matrices.
 Catalog dry-runs also exercise the negative package-source guard. Definitions whose
 native package is not present in the stock runner repositories must fail with the typed
 trusted-source precondition instead of attempting an unverified installation.
+Catalog definitions that do not yet have an apply driver likewise must return the typed
+missing-driver boundary; their schema and plan remain covered without claiming a live
+integration that does not exist.
 
 GitHub-hosted Ubuntu images include a password-initialized MySQL instance. Before live
 service and recipe gates, CI removes that preinitialized server and its data so Lumic is

@@ -29,9 +29,10 @@ while IFS= read -r definition; do
   assert_json '.changes | any(.capability == "managed_service.install")' "$plan"
   if "$LUMIC_BIN" managed-service install "$service" "$definition" --dry-run >"$dry_run" 2>"$dry_run_error"; then
     assert_json '.changed == false and (.message | contains("dry run"))' "$dry_run"
-  else
-    assert_file_contains "$dry_run_error" 'no install candidate for'
+  elif grep -Fq 'no install candidate for' "$dry_run_error"; then
     assert_file_contains "$dry_run_error" 'configure a trusted apt source before setup'
+  else
+    assert_file_contains "$dry_run_error" 'has no managed-service driver'
   fi
 done < <(jq -r '.[].id' "$catalog")
 

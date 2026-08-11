@@ -6,7 +6,7 @@ template = "changelog.html"
 
 The changelog tracks shipped behavior, not every commit. Nightly entries are dated, concise, and linked to the documentation that defines the current contract.
 
-## 2026-08-12 · 2.0.0-alpha.6
+## 2026-08-12 · 2.0.0-alpha.7
 
 - Kept ordinary application deployments independent of the root-only runtime environment directory; protected environment files are now materialized only for persistent processes and blue/green Node handoffs that consume them.
 

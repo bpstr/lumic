@@ -94,6 +94,7 @@ git -C "$SOURCE" commit -q -m initial
 "$LUMIC_BIN" app repository set "$APP" "file://$SOURCE" --branch main >/dev/null
 "$LUMIC_BIN" app manifest plan "$APP" --repository-root "$SOURCE" >/dev/null
 "$LUMIC_BIN" app manifest apply "$APP" --repository-root "$SOURCE" >/dev/null
+"$LUMIC_BIN" app provision "$APP" --runtime-version 22 >/dev/null
 "$LUMIC_BIN" app deploy "$APP" --json > "$TEST_ROOT/first.json"
 grep -q '"status": "completed"' "$TEST_ROOT/first.json"
 systemctl is-active --quiet "lumic-app-$APP-queue.service"

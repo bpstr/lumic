@@ -1,0 +1,16 @@
+schema_version = 1
+definition_version = 1
+id = "drupal"
+name = "Drupal"
+description = "Drupal with PHP-FPM, nginx and MySQL"
+driver = "generic-php"
+
+[[requirements]]
+capability = "web.http"
+role = "web"
+[[requirements]]
+capability = "runtime.php_fpm"
+role = "runtime"
+[[requirements]]
+capability = "database.mysql_compatible"
+role = "database"

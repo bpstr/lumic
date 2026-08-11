@@ -252,6 +252,7 @@ impl RecipeManager {
                 ApplicationServiceReference {
                     service_id: service_id.clone(),
                     role: requirement.role.clone(),
+                    service_type: None,
                     database: None,
                     user: None,
                     secret_reference: None,
@@ -260,8 +261,13 @@ impl RecipeManager {
             )?;
             service_ids.push(service_id);
         }
-        apps.provision(&request.application_id, &recipe.components, context)
-            .await?;
+        apps.provision_versioned(
+            &request.application_id,
+            recipe.runtime_version.as_deref(),
+            &recipe.components,
+            context,
+        )
+        .await?;
         for step in &recipe.setup {
             match step {
                 RecipeSetupStep::HealthCheck { path, port } => {
@@ -572,6 +578,7 @@ impl RecipeManager {
             ApplicationServiceReference {
                 service_id: service_id.clone(),
                 role: "database".into(),
+                service_type: None,
                 database: Some(database.clone()),
                 user: Some(database_user.clone()),
                 secret_reference: None,
@@ -990,7 +997,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("lumic-recipe-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let manager = RecipeManager::at_state_dir(&dir, dir.join("apps"));
-        assert_eq!(manager.catalog().len(), 2);
+        let catalog = manager.catalog();
+        assert_eq!(catalog.len(), 8);
+        assert!(catalog.iter().any(|recipe| recipe.metadata.id == "laravel"));
+        assert!(catalog.iter().any(|recipe| recipe.metadata.id == "ghost"));
         let plan = manager
             .plan_install(&RecipeInstallRequest {
                 recipe_id: "static-git".into(),

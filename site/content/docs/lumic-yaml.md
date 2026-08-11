@@ -37,6 +37,14 @@ workers:
   queue:
     command: ["node", "dist/worker.js"]
     instances: 2
+    environment:
+      QUEUE: default
+    working_directory: apps/worker
+    restart: always
+    health:
+      command: ["node", "dist/worker-health.js"]
+      interval_seconds: 30
+      timeout_seconds: 5
 
 cron:
   cleanup:
@@ -62,6 +70,10 @@ deployment:
   retain_releases: 7
   drain_seconds: 10
 
+shared:
+  directories: [storage, uploads]
+  files: [.env]
+
 health:
   path: /health
   port: 3100
@@ -79,11 +91,11 @@ runtime:
 ```yaml
 runtime:
   php: "8.4"
-  extensions: [bcmath, intl, mbstring, mysql, redis, zip]
+  extensions: [curl, intl, mbstring, mysql, xml, zip]
 public: public
 ```
 
-Exactly one of `static`, `node`, or `php` is required. Runtime versions and PHP components become typed runtime requirements; installation remains a separately reviewable provisioning operation.
+Exactly one of `static`, `node`, or `php` is required. Node requires major `20`, `22`, or `24`; PHP requires `8.1`, `8.2`, `8.3`, or `8.4`. Manifest apply installs trusted packages and then verifies the actual executable version, loaded PHP extensions, and selected Node package manager. Deployment performs the same checks read-only and stops on drift.
 
 ## Semantics
 
@@ -93,13 +105,14 @@ Exactly one of `static`, `node`, or `php` is required. Runtime versions and PHP 
 - `output` and `public` are mutually exclusive paths below the working directory. Static and PHP entry-point validation and nginx document roots use this directory.
 - `build` and `migrations` each accept one argv command in schema version 1. `deployment.before` and `deployment.after` accept multiple argv commands.
 - Node `web.command` and `web.port` compile to the existing blue/green release handoff. The secondary port is the next port and `drain_seconds` is bounded to 300 seconds.
-- Each worker instance becomes an owned systemd process. Each cron entry becomes an owned systemd timer after a healthy deployment.
+- Each worker instance becomes an owned systemd process. Workers can declare bounded environment values, a release-relative or absolute working directory, `no`, `on_failure`, or `always` restart behavior, and an argv health command supervised by a systemd timer. Each cron entry becomes an owned systemd timer after a healthy deployment.
 - Schema version 1 cron accepts five fields containing a wildcard or one number. Day-of-month and day-of-week cannot both be constrained because their cron and systemd semantics differ.
-- Service entries are requirements, not implicit package installation. Deployment stops until every named role has a matching managed-service binding. Optional `instance`, `database`, and `user` values must match that binding.
+- Service entries are requirements, not implicit package installation. Deployment stops until every named role is bound to the declared managed-service type; a Redis cache requirement cannot be satisfied by a differently typed cache binding. Optional `instance`, `database`, and `user` values must also match.
+- `shared.directories` and `shared.files` are persistent application paths materialized below the app's shared root and symlinked into every release. Overlapping declarations, traversal, and release collisions are rejected; a first file declaration seeds its shared copy from the repository when present.
 - A health check gates activation and automatic release rollback. `expect` is an exact HTTP status.
 - `retain_releases` is bounded from 1 to 100. `deploy_on_push` gates the native Git `post-receive` deployment path after an operator connects a hosted repository to the application with `lumic git trigger <repository> <application>`.
 
-Secrets, environment values, arbitrary operating-system packages, shell strings, and unrestricted host commands are deliberately outside schema version 1.
+Secrets, arbitrary operating-system packages, shell strings, and unrestricted host commands are deliberately outside schema version 1. Worker environment values are non-secret configuration; application secrets remain in Lumic's encrypted environment store.
 
 ## Inspect, plan, apply, deploy
 
@@ -122,7 +135,7 @@ lumic app manifest apply billing-api --repository-root .
 lumic app deploy billing-api
 ```
 
-Every deployment also reads `lumic.yaml` from the exact checked-out Git commit. A valid committed contract updates the deployment phases and application intent before build and activation, so a pushed revision carries its build, paths, workers, schedules, health gate, and migration behavior with it. Removing a previously applied contract blocks deployment instead of silently falling back.
+Every deployment also reads `lumic.yaml` from the exact checked-out Git commit and requires it to equal the reviewed, applied contract. Changing or removing the committed contract blocks deployment until a new manifest plan is applied; deployment never silently mutates runtime or application intent.
 
 For a Lumic-hosted repository, configure the repository-to-application mapping once:
 

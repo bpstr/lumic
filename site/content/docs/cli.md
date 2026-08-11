@@ -158,7 +158,7 @@ Package search is discovery only and never grants trust. Installation and remova
 
 ## Application deployment
 
-`app provision` installs only packages in Lumic's explicit runtime/component catalog. PHP requires `--runtime-version`; `8.1`, `8.2`, `8.3`, and `8.4` are allowlisted, and the selected version must be present in the node's configured apt repositories. PHP currently supports `curl`, `intl`, `mbstring`, `mysql`, `xml`, and `zip` components, each resolved to the selected version-qualified package. Supplying a runtime version for a non-PHP application is rejected.
+`app provision` installs only packages in Lumic's explicit runtime/component catalog. PHP requires `--runtime-version`; `8.1`, `8.2`, `8.3`, and `8.4` are allowlisted, and the selected version must be present in the node's configured apt repositories. PHP currently supports `curl`, `intl`, `mbstring`, `mysql`, `xml`, and `zip` components, each resolved to the selected version-qualified package. Node requires an explicit allowlisted major (`20`, `22`, or `24`) and reconciliation fails if the configured apt packages do not provide that exact major. Static applications reject a runtime version.
 
 nginx is installed and recorded independently, not as an implicit runtime dependency. Lumic writes the owned web host atomically, runs `nginx -t` before activation, binds PHP sites to the selected runtime's published FPM socket, and restores the prior configuration if validation, reload, or resource-state persistence fails. Node has a minimal package/build/proxy foundation; the two acceptance references are static and generic PHP Git applications.
 

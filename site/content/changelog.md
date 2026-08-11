@@ -6,6 +6,12 @@ template = "changelog.html"
 
 The changelog tracks shipped behavior, not every commit. Nightly entries are dated, concise, and linked to the documentation that defines the current contract.
 
+## 2026-08-12 · 2.0.0-alpha.4
+
+- Enforced the exact [`lumic.yaml`](@/docs/lumic-yaml.md) Node/PHP version, PHP extension, package-manager, and typed managed-service intent during apply and deployment; added persistent shared release paths and richer supervised worker configuration.
+- Expanded the built-in application catalog with Laravel, Drupal, Symfony, Forgejo, Ghost, Matomo, and framework/service combinations, and completed recipe lifecycle actions in the operator UI alongside CLI and MCP.
+- Added SSH private-key authentication to managed repository import/fetch/push with operation-scoped decrypted identity files and isolated OpenSSH configuration.
+
 ## 2026-08-11 · 2.0.0-alpha.3
 
 - Added the strict, versioned [`lumic.yaml`](@/docs/lumic-yaml.md) repository contract for runtimes, source/public paths, builds, workers, cron, service requirements, health, migrations, and deployment behavior across CLI, MCP, and the contract-gated Git push release path.

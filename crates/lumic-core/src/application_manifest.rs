@@ -4,8 +4,8 @@ use crate::{
     LumicError, Result,
     application::{
         ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, ApplicationSchedule,
-        DeploymentWorkflow, HealthCheck, NodeHandoff, validate_branch, validate_command,
-        validate_slug,
+        DeploymentWorkflow, HealthCheck, NodeHandoff, NodePackageManager, ProcessHealthCheck,
+        ProcessRestartPolicy, validate_branch, validate_command, validate_slug,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,8 @@ pub struct ApplicationManifest {
     pub migrations: Vec<Vec<String>>,
     #[serde(default)]
     pub deployment: ManifestDeployment,
+    #[serde(default)]
+    pub shared: ManifestSharedPaths,
     pub health: Option<ManifestHealth>,
 }
 
@@ -91,6 +93,12 @@ pub struct ManifestWorker {
     pub command: Vec<String>,
     #[serde(default = "default_instances")]
     pub instances: u16,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+    pub working_directory: Option<PathBuf>,
+    #[serde(default)]
+    pub restart: ProcessRestartPolicy,
+    pub health: Option<ProcessHealthCheck>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +144,13 @@ pub struct ManifestDeployment {
     pub drain_seconds: u64,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ManifestSharedPaths {
+    pub directories: Vec<PathBuf>,
+    pub files: Vec<PathBuf>,
+}
+
 impl Default for ManifestDeployment {
     fn default() -> Self {
         Self {
@@ -166,6 +181,7 @@ pub struct ResolvedApplicationManifest {
     pub runtime: ApplicationRuntime,
     pub runtime_version: Option<String>,
     pub runtime_components: Vec<String>,
+    pub package_manager: Option<NodePackageManager>,
     pub branch: String,
     pub source_subdirectory: Option<PathBuf>,
     pub public_directory: Option<PathBuf>,
@@ -173,6 +189,8 @@ pub struct ResolvedApplicationManifest {
     pub health: HealthCheck,
     pub processes: Vec<ApplicationProcess>,
     pub service_requirements: Vec<ManifestServiceRequirement>,
+    pub shared_directories: Vec<PathBuf>,
+    pub shared_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,12 +291,29 @@ impl ApplicationManifest {
         if let Some(health) = &self.health {
             health.validate()?;
         }
+        for path in &self.shared.directories {
+            validate_optional_relative("shared.directories", Some(path))?;
+        }
+        for path in &self.shared.files {
+            validate_optional_relative("shared.files", Some(path))?;
+        }
+        if self.shared.directories.iter().any(|directory| {
+            self.shared.files.iter().any(|file| {
+                file == directory || file.starts_with(directory) || directory.starts_with(file)
+            })
+        }) {
+            return Err(invalid(
+                "shared",
+                "file and directory declarations must be distinct and non-overlapping",
+            ));
+        }
         Ok(())
     }
 
     pub fn resolve(&self, default_branch: &str) -> Result<ResolvedApplicationManifest> {
         self.validate()?;
         let (runtime, runtime_version, runtime_components) = self.runtime.resolve()?;
+        let package_manager = self.runtime.package_manager()?;
         let branch = self
             .source
             .branch
@@ -335,6 +370,13 @@ impl ApplicationManifest {
                     command: worker.command.clone(),
                     schedule: None,
                     enabled: true,
+                    environment: worker.environment.clone(),
+                    working_directory: worker
+                        .working_directory
+                        .as_ref()
+                        .map(|path| path.to_string_lossy().into_owned()),
+                    restart_policy: worker.restart,
+                    health_check: worker.health.clone(),
                 });
             }
         }
@@ -347,7 +389,14 @@ impl ApplicationManifest {
                     &job.schedule,
                 )?)),
                 enabled: true,
+                environment: BTreeMap::new(),
+                working_directory: None,
+                restart_policy: ProcessRestartPolicy::OnFailure,
+                health_check: None,
             });
+        }
+        for process in &processes {
+            process.validate()?;
         }
         let health = self
             .health
@@ -389,6 +438,7 @@ impl ApplicationManifest {
             runtime,
             runtime_version,
             runtime_components,
+            package_manager,
             branch,
             source_subdirectory: self.source.subdirectory.clone(),
             public_directory: self.public.clone().or_else(|| self.output.clone()),
@@ -396,11 +446,27 @@ impl ApplicationManifest {
             health,
             processes,
             service_requirements,
+            shared_directories: self.shared.directories.clone(),
+            shared_files: self.shared.files.clone(),
         })
     }
 }
 
 impl ManifestRuntime {
+    fn package_manager(&self) -> Result<Option<NodePackageManager>> {
+        self.package_manager
+            .as_deref()
+            .map(|manager| match manager {
+                "npm" => Ok(NodePackageManager::Npm),
+                "pnpm" => Ok(NodePackageManager::Pnpm),
+                "yarn" => Ok(NodePackageManager::Yarn),
+                _ => Err(invalid(
+                    "runtime.package_manager",
+                    "must be npm, pnpm, or yarn for Node",
+                )),
+            })
+            .transpose()
+    }
     fn validate(&self) -> Result<()> {
         let selected = usize::from(self.static_site == Some(true))
             + usize::from(self.node.is_some())
@@ -596,6 +662,12 @@ workers:
   queue:
     command: ["node", "dist/worker.js"]
     instances: 2
+    environment:
+      QUEUE: default
+    working_directory: worker
+    restart: always
+    health:
+      command: ["node", "dist/worker-health.js"]
 cron:
   cleanup:
     command: ["node", "dist/cleanup.js"]
@@ -624,6 +696,13 @@ health:
         assert_eq!(resolved.runtime, ApplicationRuntime::Node);
         assert_eq!(resolved.branch, "main");
         assert_eq!(resolved.processes.len(), 3);
+        assert_eq!(resolved.package_manager, Some(NodePackageManager::Pnpm));
+        assert_eq!(
+            resolved.processes[0].restart_policy,
+            ProcessRestartPolicy::Always
+        );
+        assert_eq!(resolved.processes[0].environment["QUEUE"], "default");
+        assert!(resolved.processes[0].health_check.is_some());
         assert_eq!(resolved.service_requirements.len(), 2);
         assert_eq!(resolved.public_directory, Some(PathBuf::from("dist")));
         assert!(resolved.workflow.node_handoff.is_some());
@@ -651,5 +730,22 @@ health:
             ApplicationManifest::parse(&VALID.replace("  node: 24", "  node: 24\n  php: \"8.4\""))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn resolves_shared_release_paths_and_rejects_overlaps() {
+        let source = VALID.replace(
+            "health:\n  path: /health",
+            "shared:\n  directories: [storage]\n  files: [.env]\nhealth:\n  path: /health",
+        );
+        let resolved = ApplicationManifest::parse(&source)
+            .unwrap()
+            .resolve("main")
+            .unwrap();
+        assert_eq!(resolved.shared_directories, vec![PathBuf::from("storage")]);
+        assert_eq!(resolved.shared_files, vec![PathBuf::from(".env")]);
+
+        let overlap = source.replace("files: [.env]", "files: [storage/cache]");
+        assert!(ApplicationManifest::parse(&overlap).is_err());
     }
 }

@@ -14,11 +14,11 @@ use crate::{
 use lumic_core::{
     Capability, Change, LumicError, OperationContext, Plan, Result, Risk, RiskLevel,
     application::{
-        Application, ApplicationProcess, ApplicationRuntime, ApplicationServiceReference,
-        CommitMetadata, Deployment, DeploymentLogEntry, DeploymentLogStream, DeploymentPhase,
-        DeploymentPhaseStatus, DeploymentStatus, DeploymentWorkflow, RepositoryConfig, TlsState,
-        unix_time_ms, validate_branch, validate_command, validate_domain, validate_repository_url,
-        validate_slug,
+        Application, ApplicationProcess, ApplicationRuntime, ApplicationRuntimeIntent,
+        ApplicationServiceReference, CommitMetadata, Deployment, DeploymentLogEntry,
+        DeploymentLogStream, DeploymentPhase, DeploymentPhaseStatus, DeploymentStatus,
+        DeploymentWorkflow, NodePackageManager, RepositoryConfig, TlsState, unix_time_ms,
+        validate_branch, validate_command, validate_domain, validate_repository_url, validate_slug,
     },
     application_lifecycle::{
         ApplicationLifecycleOperation, ApplicationLifecyclePlan, GenericPhpApplicationSpec,
@@ -262,6 +262,7 @@ impl ApplicationService {
             www_alias,
             root: root.to_string_lossy().into_owned(),
             runtime,
+            runtime_intent: ApplicationRuntimeIntent::default(),
             repository: None,
             environment_references: Default::default(),
             service_references: Vec::new(),
@@ -816,7 +817,7 @@ impl ApplicationService {
     }
 
     /// Apply a previously reviewable repository contract to application state.
-    pub fn apply_manifest(
+    pub async fn apply_manifest(
         &self,
         id: &str,
         repository_root: &Path,
@@ -843,7 +844,17 @@ impl ApplicationService {
             return Ok(before);
         }
 
+        let runtime_intent = ApplicationRuntimeIntent {
+            version: contract.runtime_version.clone(),
+            components: contract.runtime_components.clone(),
+            package_manager: contract.package_manager,
+        };
+        RuntimeManager::at_state_dir(&self.state_dir)
+            .reconcile_intent(contract.runtime, &runtime_intent, context)
+            .await?;
+
         let application = self.update_application(id, |application| {
+            application.runtime_intent = runtime_intent.clone();
             application.health_check = contract.health.clone();
             application.processes = contract.processes.clone();
             application.release_retention = contract.manifest.deployment.retain_releases;
@@ -1603,6 +1614,16 @@ impl ApplicationService {
                 ));
             }
             validate_manifest_service_bindings(application, &contract)?;
+            if repository.contract.as_ref() != Some(&contract) {
+                return Err(invalid(
+                    APPLICATION_MANIFEST_FILE,
+                    "the deployed revision changed runtime or deployment intent; review and apply its manifest before deployment",
+                ));
+            }
+            let runtime_intent = validate_reconciled_runtime_intent(application, &contract)?;
+            RuntimeManager::at_state_dir(&self.state_dir)
+                .verify_intent(contract.runtime, &runtime_intent)
+                .await?;
             application.health_check = contract.health.clone();
             application.processes = contract.processes.clone();
             application.release_retention = contract.manifest.deployment.retain_releases;
@@ -1656,6 +1677,8 @@ impl ApplicationService {
             ));
         }
 
+        materialize_shared_paths(application, repository, release)?;
+
         let working_directory = manifest_working_directory(repository, release);
         if !working_directory.is_dir() {
             return Err(invalid(
@@ -1685,9 +1708,11 @@ impl ApplicationService {
                 deployment,
             )
             .await?;
-        } else if let Some((spec, message)) =
-            dependency_install_spec(application.runtime, &working_directory)
-        {
+        } else if let Some((spec, message)) = dependency_install_spec(
+            application.runtime,
+            application.runtime_intent.package_manager,
+            &working_directory,
+        ) {
             deployment.phases.push(phase(
                 "build",
                 DeploymentPhaseStatus::Running,
@@ -2676,6 +2701,7 @@ fn redact_environment(value: &str, environment: &BTreeMap<String, String>) -> St
 
 fn dependency_install_spec(
     runtime: ApplicationRuntime,
+    package_manager: Option<NodePackageManager>,
     release: &Path,
 ) -> Option<(ProcessSpec, &'static str)> {
     let (mut spec, message) = match runtime {
@@ -2693,12 +2719,44 @@ fn dependency_install_spec(
                 .current_dir(release),
             "Composer dependencies installed with plugins and scripts disabled",
         ),
-        ApplicationRuntime::Node if release.join("package-lock.json").is_file() => (
-            ProcessSpec::new("npm")
-                .args(["ci", "--omit=dev", "--ignore-scripts"])
-                .current_dir(release),
-            "npm dependencies installed with lifecycle scripts disabled",
-        ),
+        ApplicationRuntime::Node
+            if package_manager.unwrap_or(NodePackageManager::Npm) == NodePackageManager::Npm
+                && release.join("package-lock.json").is_file() =>
+        {
+            (
+                ProcessSpec::new("npm")
+                    .args(["ci", "--omit=dev", "--ignore-scripts"])
+                    .current_dir(release),
+                "npm dependencies installed with lifecycle scripts disabled",
+            )
+        }
+        ApplicationRuntime::Node
+            if package_manager == Some(NodePackageManager::Pnpm)
+                && release.join("pnpm-lock.yaml").is_file() =>
+        {
+            (
+                ProcessSpec::new("pnpm")
+                    .args(["install", "--prod", "--frozen-lockfile", "--ignore-scripts"])
+                    .current_dir(release),
+                "pnpm dependencies installed with lifecycle scripts disabled",
+            )
+        }
+        ApplicationRuntime::Node
+            if package_manager == Some(NodePackageManager::Yarn)
+                && release.join("yarn.lock").is_file() =>
+        {
+            (
+                ProcessSpec::new("yarn")
+                    .args([
+                        "install",
+                        "--production",
+                        "--frozen-lockfile",
+                        "--ignore-scripts",
+                    ])
+                    .current_dir(release),
+                "Yarn dependencies installed with lifecycle scripts disabled",
+            )
+        }
         _ => return None,
     };
     spec.timeout = Duration::from_secs(600);
@@ -2784,6 +2842,75 @@ fn manifest_public_directory(repository: &RepositoryConfig, working_directory: &
         )
 }
 
+fn materialize_shared_paths(
+    application: &Application,
+    repository: &RepositoryConfig,
+    release: &Path,
+) -> Result<()> {
+    let Some(contract) = &repository.contract else {
+        return Ok(());
+    };
+    let shared_root = PathBuf::from(&application.root).join("shared");
+    for relative in &contract.shared_directories {
+        let shared = shared_root.join(relative);
+        let destination = release.join(relative);
+        if destination.exists() || destination.is_symlink() {
+            return Err(invalid(
+                "shared.directories",
+                &format!(
+                    "{} already exists in the release; shared paths must not be committed",
+                    relative.display()
+                ),
+            ));
+        }
+        fs::create_dir_all(&shared).map_err(state_io_error)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(state_io_error)?;
+        }
+        #[cfg(unix)]
+        symlink(&shared, &destination).map_err(state_io_error)?;
+    }
+    for relative in &contract.shared_files {
+        let shared = shared_root.join(relative);
+        let destination = release.join(relative);
+        if destination.is_symlink() || shared.is_symlink() {
+            return Err(invalid(
+                "shared.files",
+                "shared file paths cannot be symlinks",
+            ));
+        }
+        if let Some(parent) = shared.parent() {
+            fs::create_dir_all(parent).map_err(state_io_error)?;
+        }
+        if !shared.exists() {
+            if destination.is_file() {
+                fs::copy(&destination, &shared).map_err(state_io_error)?;
+            } else {
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&shared)
+                    .map_err(state_io_error)?;
+            }
+        }
+        if destination.exists() {
+            if !destination.is_file() {
+                return Err(invalid(
+                    "shared.files",
+                    "shared file collides with a directory",
+                ));
+            }
+            fs::remove_file(&destination).map_err(state_io_error)?;
+        }
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(state_io_error)?;
+        }
+        #[cfg(unix)]
+        symlink(&shared, &destination).map_err(state_io_error)?;
+    }
+    Ok(())
+}
+
 fn validate_manifest_service_bindings(
     application: &Application,
     contract: &ResolvedApplicationManifest,
@@ -2800,10 +2927,11 @@ fn validate_manifest_service_bindings(
                     requirement.service_type
                 ),
             })?;
-        if requirement
-            .instance
-            .as_ref()
-            .is_some_and(|instance| instance != &binding.service_id)
+        if binding.service_type.as_deref() != Some(requirement.service_type.as_str())
+            || requirement
+                .instance
+                .as_ref()
+                .is_some_and(|instance| instance != &binding.service_id)
             || requirement
                 .database
                 .as_ref()
@@ -2842,6 +2970,24 @@ fn validate_manifest_application(
         });
     }
     Ok(())
+}
+
+fn validate_reconciled_runtime_intent(
+    application: &Application,
+    contract: &ResolvedApplicationManifest,
+) -> Result<ApplicationRuntimeIntent> {
+    let expected = ApplicationRuntimeIntent {
+        version: contract.runtime_version.clone(),
+        components: contract.runtime_components.clone(),
+        package_manager: contract.package_manager,
+    };
+    if application.runtime_intent != expected {
+        return Err(LumicError::InvalidInput {
+            field: "runtime".into(),
+            message: "lumic.yaml runtime intent has not been applied; review and apply the manifest before deployment".into(),
+        });
+    }
+    Ok(expected)
 }
 
 fn persist_application_resource(state_dir: &Path, application: &Application) -> Result<()> {
@@ -3083,6 +3229,10 @@ mod tests {
                 command: vec!["php".into(), "worker.php".into()],
                 schedule: None,
                 enabled: true,
+                environment: Default::default(),
+                working_directory: None,
+                restart_policy: Default::default(),
+                health_check: None,
             }],
             health: HealthCheck {
                 enabled: true,
@@ -3092,8 +3242,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn plans_and_applies_a_repository_manifest_without_host_mutation() {
+    #[tokio::test]
+    async fn plans_and_applies_a_repository_manifest_without_host_mutation() {
         let base = std::env::temp_dir().join(format!(
             "lumic-manifest-test-{}-{}",
             std::process::id(),
@@ -3153,6 +3303,7 @@ health:
         );
         let applied = service
             .apply_manifest("manifest-app", &repository, &context())
+            .await
             .unwrap();
         assert_eq!(applied.release_retention, 7);
         assert_eq!(applied.processes.len(), 2);
@@ -3179,14 +3330,58 @@ health:
         ));
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("composer.json"), b"{}").unwrap();
-        let (composer, _) = dependency_install_spec(ApplicationRuntime::Php, &root).unwrap();
+        let (composer, _) = dependency_install_spec(ApplicationRuntime::Php, None, &root).unwrap();
         assert!(composer.args.iter().any(|arg| arg == "--no-plugins"));
         assert!(composer.args.iter().any(|arg| arg == "--no-scripts"));
 
         fs::write(root.join("package-lock.json"), b"{}").unwrap();
-        let (npm, _) = dependency_install_spec(ApplicationRuntime::Node, &root).unwrap();
+        let (npm, _) = dependency_install_spec(
+            ApplicationRuntime::Node,
+            Some(NodePackageManager::Npm),
+            &root,
+        )
+        .unwrap();
         assert!(npm.args.iter().any(|arg| arg == "--ignore-scripts"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_service_requirements_verify_the_bound_service_type() {
+        let base = std::env::temp_dir().join(format!(
+            "lumic-service-type-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let service = ApplicationService::new(base.join("state"), base.join("apps"));
+        let mut application = service
+            .create(
+                "typed-service",
+                "typed.example.com",
+                ApplicationRuntime::Static,
+                false,
+                &context(),
+            )
+            .unwrap();
+        application
+            .service_references
+            .push(ApplicationServiceReference {
+                role: "cache".into(),
+                service_id: "cache-primary".into(),
+                service_type: Some("memcached".into()),
+                database: None,
+                user: None,
+                secret_reference: None,
+            });
+        let contract = ApplicationManifest::parse(
+            "schema_version: 1\nname: typed-service\nruntime:\n  static: true\nservices:\n  cache: redis\n",
+        )
+        .unwrap()
+        .resolve("main")
+        .unwrap();
+        assert!(validate_manifest_service_bindings(&application, &contract).is_err());
+        application.service_references[0].service_type = Some("redis".into());
+        assert!(validate_manifest_service_bindings(&application, &contract).is_ok());
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -3270,6 +3465,10 @@ health:
             command: vec!["php".into(), "cron.php".into()],
             schedule: Some(ApplicationSchedule::calendar("hourly")),
             enabled: true,
+            environment: Default::default(),
+            working_directory: None,
+            restart_policy: Default::default(),
+            health_check: None,
         };
         persist_application_process(
             &state_dir,
@@ -3607,6 +3806,10 @@ deployment:
                 None,
                 &context(),
             )
+            .unwrap();
+        service
+            .apply_manifest("manifest-deploy", &source, &context())
+            .await
             .unwrap();
 
         let deployment = service.deploy("manifest-deploy", &context()).await.unwrap();

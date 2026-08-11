@@ -13,7 +13,7 @@ Lumic treats a small group of VPSs as explicit infrastructure without turning th
 
 The first-class [repository contract](@/docs/repositories.md) creates namespaced managed bare repositories, imports remotes, registers explicitly discovered external storage, exposes authenticated Smart HTTP and keeps fetch/push operations explicit. `lumic git host`, `lumic git mirror` and `lumic git trigger` remain compatibility commands for the original infrastructure workflow; the trigger cannot execute a caller-supplied command.
 
-Smart HTTP is served only for managed repositories and requires the administrator bearer token. SSH repository transport and per-repository identities remain follow-up work. Push-to-deploy invokes the installed `/usr/local/bin/lumic` and then uses the ordinary application deploy/health/rollback contract.
+Smart HTTP is served only for managed repositories and requires the administrator bearer token. External repository fetch, push, mirror, and import accept HTTPS bearer credentials or SSH private-key references. SSH keys are decrypted only for the operation into a private temporary identity directory, OpenSSH uses an isolated config and known-hosts file, and the directory is removed after Git exits. Fine-grained repository principals and grants remain follow-up work. Push-to-deploy invokes the installed `/usr/local/bin/lumic` and then uses the ordinary application deploy/health/rollback contract.
 
 ## Portable environments
 

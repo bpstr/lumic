@@ -1254,7 +1254,7 @@ impl LumicMcpServer {
         name = "application_manifest_apply",
         description = "Apply a validated lumic.yaml repository contract to application state. Mutating: requires node mutation policy, the mutations scope, and approved=true. It records runtime/build/public paths, workers, schedules, services, health, migration and deployment intent; it does not provision unresolved services."
     )]
-    fn application_manifest_apply(
+    async fn application_manifest_apply(
         &self,
         Parameters(request): Parameters<ApprovedApplicationManifestRequest>,
     ) -> Result<String, String> {
@@ -1266,6 +1266,7 @@ impl LumicMcpServer {
                     Path::new(&request.repository_root),
                     &operation_context("application_manifest_apply"),
                 )
+                .await
                 .map_err(string_error)?,
         )
     }
@@ -1537,6 +1538,10 @@ impl LumicMcpServer {
             command: request.command,
             schedule: request.schedule.map(ApplicationSchedule::calendar),
             enabled: request.enabled,
+            environment: Default::default(),
+            working_directory: None,
+            restart_policy: Default::default(),
+            health_check: None,
         };
         to_json(
             &application_service()
@@ -2863,6 +2868,7 @@ impl LumicMcpServer {
                     ApplicationServiceReference {
                         service_id: request.service,
                         role: request.role,
+                        service_type: None,
                         database: request.database,
                         user: request.user,
                         secret_reference: None,

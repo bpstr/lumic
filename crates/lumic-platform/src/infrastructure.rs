@@ -1788,6 +1788,7 @@ deployment:
         service
             .applications
             .apply_manifest("shop", &contract_root, &context)
+            .await
             .unwrap();
         let update = format!("{} {} refs/heads/main\n", "0".repeat(40), "a".repeat(40));
         assert!(

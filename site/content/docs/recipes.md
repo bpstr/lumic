@@ -4,7 +4,7 @@ description = "Install and reconcile versioned application compositions over Lum
 weight = 48
 [extra]
 kicker = "APPLICATIONS"
-status = "WordPress proof implemented"
+status = "catalog lifecycle implemented"
 +++
 
 Recipes are small, validated application definitions. They compose the same runtime, component, managed-service, domain, TLS, secret-reference, process and health-check capabilities available separately; they are not scripts and cannot run arbitrary shell.
@@ -44,8 +44,10 @@ Every mutation emits recipe events and audit records. Secret values are stored i
 
 `wordpress@1.0.0` provisions WordPress 6.8.2 through WP-CLI 2.12.0 with PHP 8.3, an isolated MySQL database and credential, an owned nginx site, optional TLS, and a generated administrator password. Both upstream artifacts are pinned by release URL, version, and SHA-256 digest. Lumic's shared artifact manager serializes acquisition, rejects unsafe cache entries, streams checksum verification and atomically commits only verified downloads; it reverifies cached bytes before reuse. Credentials are passed to native tools through stdin. The recipe records each durable lifecycle step so a failed apply can be inspected and retried; release activation restores the prior `current` target when setup fails.
 
-Uninstall deliberately retains the artifact cache, PHP runtime, native packages, MySQL service, database, user, and grant. It removes the recipe-owned application, nginx configuration, generated secrets and application bindings. Framework/CMS breadth—including Laravel, Drupal, Symfony, Ghost and Forgejo—remains follow-up work. Recipes remain compiled-in reviewed data for now; remote signed catalog distribution is not implemented.
+The compiled-in application catalog also covers Laravel, Laravel with Typesense, Drupal, Symfony with PostgreSQL, Ghost, Matomo, and Forgejo. Executable recipes are available for Laravel, Laravel with Typesense, Drupal, Symfony, Ghost, and Matomo; they reuse the generic repository/runtime/service deployment lifecycle. Forgejo is currently a catalog definition for the native service/application composition and is not advertised as an executable recipe until its application driver can provide complete lifecycle recovery.
+
+Uninstall deliberately retains artifact caches, shared runtimes, native packages, managed services, databases, users, and grants. It removes recipe-owned application state, nginx configuration, generated secrets and application bindings. Recipes remain compiled-in reviewed data for now; remote signed catalog distribution is not implemented.
 
 ## MCP and UI
 
-MCP exposes `recipe_catalog`, `recipe_installations`, `recipe_plan`, `recipe_install`, `recipe_update`, and `recipe_uninstall`. Apply calls require node mutation policy plus `approved: true`. The UI Recipes view shows catalog and installed-version state; installation remains a CLI/MCP planned workflow in this initial surface.
+MCP exposes `recipe_catalog`, `recipe_installations`, `recipe_plan`, `recipe_install`, `recipe_update`, and `recipe_uninstall`. Apply calls require node mutation policy plus `approved: true`. The UI Recipes view supports the same install review/apply, update, and uninstall lifecycle. Sensitive environment inputs are held in the authenticated session between review and confirmation and are not emitted into confirmation HTML.

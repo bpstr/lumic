@@ -72,6 +72,23 @@ impl ApplicationProcessManager {
                 write_atomic(&self.unit_dir.join(&timer_name), timer.as_bytes(), 0o644)?.changed;
             units.push(timer_name);
         }
+        if process.health_check.is_some() {
+            let health_service_name = format!("{prefix}-health.service");
+            let health_timer_name = format!("{prefix}-health.timer");
+            changed |= write_atomic(
+                &self.unit_dir.join(&health_service_name),
+                render_health_service(application, process, &service_name)?.as_bytes(),
+                0o644,
+            )?
+            .changed;
+            changed |= write_atomic(
+                &self.unit_dir.join(&health_timer_name),
+                render_health_timer(process, &health_service_name)?.as_bytes(),
+                0o644,
+            )?
+            .changed;
+            units.extend([health_service_name, health_timer_name.clone()]);
+        }
         let systemd = SystemdServiceManager::at_state_dir(&self.state_dir);
         systemd.daemon_reload().await?;
         let activation_unit = match process.kind {
@@ -99,6 +116,23 @@ impl ApplicationProcessManager {
             systemd
                 .apply(activation_unit, ServiceAction::Disable, context)
                 .await?;
+        }
+        if let Some(health_timer) = units.iter().find(|unit| unit.ends_with("-health.timer")) {
+            if process.enabled {
+                systemd
+                    .apply(health_timer, ServiceAction::Enable, context)
+                    .await?;
+                systemd
+                    .apply(health_timer, ServiceAction::Start, context)
+                    .await?;
+            } else {
+                systemd
+                    .apply(health_timer, ServiceAction::Stop, context)
+                    .await?;
+                systemd
+                    .apply(health_timer, ServiceAction::Disable, context)
+                    .await?;
+            }
         }
         Ok(ProcessConfigurationResult {
             process: process.name.clone(),
@@ -221,9 +255,12 @@ fn render_service(
         "simple"
     };
     let restart = if process.kind == ApplicationProcessKind::Worker {
-        "Restart=on-failure\nRestartSec=5s\n"
+        format!(
+            "Restart={}\nRestartSec=5s\n",
+            process.restart_policy.systemd_value()
+        )
     } else {
-        ""
+        String::new()
     };
     let environment = environment_file.map_or_else(String::new, |path| {
         format!(
@@ -231,15 +268,74 @@ fn render_service(
             systemd_quote(&path.to_string_lossy())
         )
     });
+    let explicit_environment = process
+        .environment
+        .iter()
+        .map(|(key, value)| format!("Environment={}\n", systemd_quote(&format!("{key}={value}"))))
+        .collect::<String>();
+    let working_directory = process.working_directory.as_ref().map_or_else(
+        || PathBuf::from(&application.root).join("current"),
+        |directory| {
+            let path = Path::new(directory);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                PathBuf::from(&application.root).join("current").join(path)
+            }
+        },
+    );
     Ok(format!(
-        "# Managed by Lumic\n[Unit]\nDescription=Lumic {} process {}\nAfter=network-online.target\n\n[Service]\nType={}\nUser=www-data\nWorkingDirectory={}\n{}ExecStart={}\n{}\n[Install]\nWantedBy=multi-user.target\n",
+        "# Managed by Lumic\n[Unit]\nDescription=Lumic {} process {}\nAfter=network-online.target\n\n[Service]\nType={}\nUser=www-data\nWorkingDirectory={}\n{}{}ExecStart={}\n{}\n[Install]\nWantedBy=multi-user.target\n",
         application.id,
         process.name,
         service_type,
-        systemd_quote(&format!("{}/current", application.root)),
+        systemd_quote(&working_directory.to_string_lossy()),
         environment,
+        explicit_environment,
         command,
         restart
+    ))
+}
+
+fn render_health_service(
+    application: &Application,
+    process: &ApplicationProcess,
+    process_unit: &str,
+) -> Result<String> {
+    let health = process
+        .health_check
+        .as_ref()
+        .ok_or_else(|| LumicError::Internal {
+            message: "process health service requested without a health check".into(),
+        })?;
+    health.validate()?;
+    let command = health
+        .command
+        .iter()
+        .map(|part| systemd_quote(part))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok(format!(
+        "# Managed by Lumic\n[Unit]\nDescription=Lumic {} process {} health check\nAfter={}\n\n[Service]\nType=oneshot\nUser=www-data\nWorkingDirectory={}\nTimeoutStartSec={}s\nExecStart={}\n",
+        application.id,
+        process.name,
+        process_unit,
+        systemd_quote(&format!("{}/current", application.root)),
+        health.timeout_seconds,
+        command,
+    ))
+}
+
+fn render_health_timer(process: &ApplicationProcess, health_service: &str) -> Result<String> {
+    let health = process
+        .health_check
+        .as_ref()
+        .ok_or_else(|| LumicError::Internal {
+            message: "process health timer requested without a health check".into(),
+        })?;
+    Ok(format!(
+        "# Managed by Lumic\n[Unit]\nDescription=Lumic process {} health schedule\n\n[Timer]\nOnUnitActiveSec={}s\nUnit={}\n\n[Install]\nWantedBy=timers.target\n",
+        process.name, health.interval_seconds, health_service,
     ))
 }
 
@@ -292,6 +388,7 @@ mod tests {
             www_alias: false,
             root: "/var/lib/lumic/apps/demo".into(),
             runtime: ApplicationRuntime::Php,
+            runtime_intent: Default::default(),
             repository: None,
             environment_references: BTreeMap::new(),
             service_references: Vec::new(),
@@ -314,10 +411,45 @@ mod tests {
             command: vec!["php".into(), "artisan".into(), "queue:work".into()],
             schedule: None,
             enabled: true,
+            environment: Default::default(),
+            working_directory: None,
+            restart_policy: Default::default(),
+            health_check: None,
         };
         let unit = render_service(&app(), &process, None).unwrap();
         assert!(unit.contains("ExecStart=\"php\" \"artisan\" \"queue:work\""));
         assert!(!unit.contains("sh -c"));
+    }
+
+    #[test]
+    fn renders_worker_runtime_policy_and_health_units() {
+        let process = ApplicationProcess {
+            name: "queue".into(),
+            kind: ApplicationProcessKind::Worker,
+            command: vec!["php".into(), "artisan".into(), "queue:work".into()],
+            schedule: None,
+            enabled: true,
+            environment: BTreeMap::from([("QUEUE".into(), "priority".into())]),
+            working_directory: Some("worker".into()),
+            restart_policy: lumic_core::application::ProcessRestartPolicy::Always,
+            health_check: Some(lumic_core::application::ProcessHealthCheck {
+                command: vec!["php".into(), "artisan".into(), "queue:health".into()],
+                interval_seconds: 45,
+                timeout_seconds: 7,
+            }),
+        };
+
+        let unit = render_service(&app(), &process, None).unwrap();
+        assert!(unit.contains("WorkingDirectory=\"/var/lib/lumic/apps/demo/current/worker\""));
+        assert!(unit.contains("Environment=\"QUEUE=priority\""));
+        assert!(unit.contains("Restart=always"));
+
+        let health =
+            render_health_service(&app(), &process, "lumic-app-demo-queue.service").unwrap();
+        assert!(health.contains("TimeoutStartSec=7s"));
+        assert!(health.contains("ExecStart=\"php\" \"artisan\" \"queue:health\""));
+        let timer = render_health_timer(&process, "lumic-app-demo-queue-health.service").unwrap();
+        assert!(timer.contains("OnUnitActiveSec=45s"));
     }
 
     #[test]
@@ -328,6 +460,10 @@ mod tests {
             command: vec!["php\n".into()],
             schedule: Some(ApplicationSchedule::calendar("daily")),
             enabled: true,
+            environment: Default::default(),
+            working_directory: None,
+            restart_policy: Default::default(),
+            health_check: None,
         };
         assert!(process.validate().is_err());
     }
@@ -343,6 +479,10 @@ mod tests {
             command: vec!["php".into(), "cleanup.php".into()],
             schedule: Some(schedule),
             enabled: true,
+            environment: Default::default(),
+            working_directory: None,
+            restart_policy: Default::default(),
+            health_check: None,
         };
         let unit = render_timer(&process, "lumic-app-demo-cleanup.service").unwrap();
         assert!(unit.contains("OnUnitActiveSec=300s"));

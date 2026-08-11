@@ -130,3 +130,21 @@ jobs:
       - run: sudo apt-get update
       - name: Recipe lifecycle and host-operator smoke test
         run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_EPIC_C_LIVE=1 "$PWD/tests/epic-c-smoke.sh"
+
+  application-lifecycle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      - run: cargo build --locked -p lumic-cli --release
+      - name: Expose the pinned Node runtime to systemd services
+        run: |
+          sudo ln -sf "$(command -v node)" /usr/local/bin/node
+          sudo ln -sf "$(command -v npm)" /usr/local/bin/npm
+      - run: sudo apt-get update && sudo apt-get install -y nginx jq
+      - name: Clean-host application lifecycle acceptance test
+        run: sudo -E env PATH="/usr/local/bin:/usr/bin:/bin" LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_APPLICATION_LIVE=1 "$PWD/tests/application-lifecycle-live.sh"

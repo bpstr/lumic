@@ -7,9 +7,38 @@ use std::collections::BTreeMap;
 pub struct ApplicationServiceReference {
     pub service_id: String,
     pub role: String,
+    /// The catalog service type resolved when the binding was created.
+    #[serde(default)]
+    pub service_type: Option<String>,
     pub database: Option<String>,
     pub user: Option<String>,
     pub secret_reference: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodePackageManager {
+    Npm,
+    Pnpm,
+    Yarn,
+}
+
+impl NodePackageManager {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Npm => "npm",
+            Self::Pnpm => "pnpm",
+            Self::Yarn => "yarn",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationRuntimeIntent {
+    pub version: Option<String>,
+    #[serde(default)]
+    pub components: Vec<String>,
+    pub package_manager: Option<NodePackageManager>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +158,59 @@ pub enum ApplicationProcessKind {
     Schedule,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessRestartPolicy {
+    No,
+    #[default]
+    OnFailure,
+    Always,
+}
+
+impl ProcessRestartPolicy {
+    pub const fn systemd_value(self) -> &'static str {
+        match self {
+            Self::No => "no",
+            Self::OnFailure => "on-failure",
+            Self::Always => "always",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessHealthCheck {
+    pub command: Vec<String>,
+    #[serde(default = "default_process_health_interval")]
+    pub interval_seconds: u64,
+    #[serde(default = "default_process_health_timeout")]
+    pub timeout_seconds: u64,
+}
+
+impl ProcessHealthCheck {
+    pub fn validate(&self) -> Result<()> {
+        validate_command(&self.command)?;
+        if self.interval_seconds == 0
+            || self.interval_seconds > 86_400
+            || self.timeout_seconds == 0
+            || self.timeout_seconds > self.interval_seconds
+        {
+            return Err(LumicError::InvalidInput {
+                field: "process.health".into(),
+                message: "requires a 1-86400 second interval and a non-zero timeout no longer than the interval".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+const fn default_process_health_interval() -> u64 {
+    30
+}
+
+const fn default_process_health_timeout() -> u64 {
+    5
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ScheduleTiming {
@@ -229,12 +311,33 @@ pub struct ApplicationProcess {
     pub command: Vec<String>,
     pub schedule: Option<ApplicationSchedule>,
     pub enabled: bool,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+    pub working_directory: Option<String>,
+    #[serde(default)]
+    pub restart_policy: ProcessRestartPolicy,
+    pub health_check: Option<ProcessHealthCheck>,
 }
 
 impl ApplicationProcess {
     pub fn validate(&self) -> Result<()> {
         validate_slug("process", &self.name)?;
         validate_command(&self.command)?;
+        validate_process_environment(&self.environment)?;
+        if self.working_directory.as_deref().is_some_and(|directory| {
+            directory.is_empty()
+                || directory.len() > 4096
+                || directory.contains(['\n', '\r', '\0'])
+                || directory.split('/').any(|part| part == "..")
+        }) {
+            return Err(LumicError::InvalidInput {
+                field: "process.working_directory".into(),
+                message: "must be a bounded normalized path without parent traversal".into(),
+            });
+        }
+        if let Some(health) = &self.health_check {
+            health.validate()?;
+        }
         match self.kind {
             ApplicationProcessKind::Worker if self.schedule.is_some() => {
                 Err(invalid_schedule("worker processes cannot have a schedule"))
@@ -270,6 +373,8 @@ pub struct Application {
     pub www_alias: bool,
     pub root: String,
     pub runtime: ApplicationRuntime,
+    #[serde(default)]
+    pub runtime_intent: ApplicationRuntimeIntent,
     pub repository: Option<RepositoryConfig>,
     pub environment_references: BTreeMap<String, String>,
     #[serde(default)]
@@ -285,6 +390,27 @@ pub struct Application {
     pub health_status: String,
     pub created_at_unix_ms: u128,
     pub updated_at_unix_ms: u128,
+}
+
+fn validate_process_environment(environment: &BTreeMap<String, String>) -> Result<()> {
+    let invalid = environment.iter().any(|(key, value)| {
+        key.is_empty()
+            || key.len() > 128
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+            || key.as_bytes()[0].is_ascii_digit()
+            || value.len() > 16 * 1024
+            || value.contains(['\0', '\n', '\r'])
+    });
+    if invalid {
+        Err(LumicError::InvalidInput {
+            field: "process.environment".into(),
+            message: "keys must be uppercase environment names and values must be bounded single-line text".into(),
+        })
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

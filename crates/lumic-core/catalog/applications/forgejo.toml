@@ -1,0 +1,13 @@
+schema_version = 1
+definition_version = 1
+id = "forgejo"
+name = "Forgejo"
+description = "Forgejo Git forge using the shared Lumic repository root"
+driver = "forgejo"
+
+[[requirements]]
+capability = "web.http"
+role = "web"
+[[requirements]]
+capability = "git.repository_host"
+role = "repositories"

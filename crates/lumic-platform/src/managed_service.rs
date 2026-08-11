@@ -1150,6 +1150,7 @@ impl ManagedServiceManager {
             .iter()
             .find(|item| item.id == reference.service_id)
             .ok_or_else(|| not_found(&reference.service_id))?;
+        reference.service_type = Some(managed_service.kind.id().into());
         let is_search = matches!(
             managed_service.kind,
             ManagedServiceKind::Typesense | ManagedServiceKind::Meilisearch
@@ -1755,6 +1756,7 @@ mod tests {
             www_alias: false,
             root: "/var/lib/lumic/apps/demo".into(),
             runtime: ApplicationRuntime::Php,
+            runtime_intent: Default::default(),
             repository: None,
             environment_references: BTreeMap::new(),
             service_references: Vec::new(),
@@ -1902,6 +1904,7 @@ mod tests {
                 &ApplicationServiceReference {
                     service_id: "mysql".into(),
                     role: role.into(),
+                    service_type: Some("mysql".into()),
                     database: Some(database.into()),
                     user: Some(user.into()),
                     secret_reference: Some(secret.into()),
@@ -1970,6 +1973,7 @@ mod tests {
             &ApplicationServiceReference {
                 service_id: "search".into(),
                 role: "search".into(),
+                service_type: Some("typesense".into()),
                 database: None,
                 user: None,
                 secret_reference: Some("search-api-key".into()),

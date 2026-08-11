@@ -400,6 +400,7 @@ impl ApplicationIntelligence {
                 ApplicationServiceReference {
                     service_id: plan.service_id.clone(),
                     role: "cache".into(),
+                    service_type: None,
                     database: None,
                     user: None,
                     secret_reference: None,

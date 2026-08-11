@@ -563,6 +563,7 @@ mod tests {
             www_alias: true,
             root: "/var/lib/lumic/apps/demo".into(),
             runtime,
+            runtime_intent: Default::default(),
             repository: None,
             environment_references: BTreeMap::new(),
             service_references: Vec::new(),

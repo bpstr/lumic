@@ -2543,8 +2543,9 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
                 repository_root,
                 json,
             } => {
-                let application =
-                    service.apply_manifest(&app, &repository_root, &operation_context(false))?;
+                let application = service
+                    .apply_manifest(&app, &repository_root, &operation_context(false))
+                    .await?;
                 render_json_or_app(&application, json)?;
             }
         },
@@ -2609,6 +2610,10 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
                         command,
                         schedule: None,
                         enabled: true,
+                        environment: Default::default(),
+                        working_directory: None,
+                        restart_policy: Default::default(),
+                        health_check: None,
                     },
                 ),
                 ProcessCommand::Schedule {
@@ -2624,6 +2629,10 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
                         command,
                         schedule: Some(ApplicationSchedule::calendar(on_calendar)),
                         enabled: true,
+                        environment: Default::default(),
+                        working_directory: None,
+                        restart_policy: Default::default(),
+                        health_check: None,
                     },
                 ),
             };
@@ -3003,6 +3012,7 @@ async fn run_managed_service(
             ApplicationServiceReference {
                 service_id: service,
                 role,
+                service_type: None,
                 database,
                 user,
                 secret_reference: None,

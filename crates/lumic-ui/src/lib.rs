@@ -12,6 +12,7 @@ use lumic_core::{
     application::Deployment,
     attention::AttentionSummary,
     pipeline::PipelineExecution,
+    recipe::RecipeInstallRequest,
     resource::{ResourceKind, ResourceRef},
     server::UpdateScope,
     software::{SOFTWARE_CATALOG, SoftwareSetupScope},
@@ -27,7 +28,7 @@ use lumic_platform::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -219,6 +220,7 @@ struct SessionRecord {
     csrf: String,
     expires_unix: u64,
     credential_revision: String,
+    pending_recipe: Option<RecipeInstallRequest>,
 }
 
 #[derive(Debug, Default)]
@@ -333,6 +335,16 @@ pub fn router(state: UiState) -> Router {
         .route("/services/{id}/logs", get(service_logs))
         .route("/installers", get(installers))
         .route("/recipes", get(recipes))
+        .route("/actions/recipe/plan", post(recipe_plan))
+        .route("/actions/recipe/install", post(recipe_install))
+        .route(
+            "/actions/recipe/{id}/update",
+            get(confirm_recipe_update).post(recipe_update),
+        )
+        .route(
+            "/actions/recipe/{id}/uninstall",
+            get(confirm_recipe_uninstall).post(recipe_uninstall),
+        )
         .route("/host", get(host_operator))
         .route("/infrastructure", get(infrastructure))
         .route("/repositories", get(repositories))
@@ -483,6 +495,7 @@ async fn login(State(state): State<UiState>, Form(form): Form<LoginForm>) -> Res
             csrf,
             expires_unix: now + SESSION_SECONDS,
             credential_revision,
+            pending_recipe: None,
         },
     );
     drop(sessions);
@@ -1214,9 +1227,10 @@ async fn applications(State(state): State<UiState>, headers: HeaderMap) -> Respo
 }
 
 async fn recipes(State(state): State<UiState>, headers: HeaderMap) -> Response {
-    if auth(&state, &headers).is_none() {
-        return Redirect::to("/login").into_response();
-    }
+    let session = match auth(&state, &headers) {
+        Some(session) => session,
+        None => return Redirect::to("/login").into_response(),
+    };
     let installations = match state.recipes().list() {
         Ok(value) => value,
         Err(error) => return error_response(error),
@@ -1225,11 +1239,13 @@ async fn recipes(State(state): State<UiState>, headers: HeaderMap) -> Response {
         .iter()
         .map(|item| {
             format!(
-                "<tr><td>{}</td><td>{}@{}</td><td>{:?}</td></tr>",
+                "<tr><td>{}</td><td>{}@{}</td><td>{:?}</td><td><a href=/actions/recipe/{}/update>Update</a> · <a href=/actions/recipe/{}/uninstall>Uninstall</a></td></tr>",
                 escape(&item.application_id),
                 escape(&item.recipe_id),
                 escape(&item.recipe_version),
-                item.status
+                item.status,
+                url_segment(&item.application_id),
+                url_segment(&item.application_id),
             )
         })
         .collect::<String>();
@@ -1246,7 +1262,212 @@ async fn recipes(State(state): State<UiState>, headers: HeaderMap) -> Response {
             )
         })
         .collect::<String>();
-    page("Recipes", &format!("<h1>Application recipes</h1><p class=muted>Versioned, inspectable compositions over Lumic applications and managed services.</p><h2>Installed</h2><table><tr><th>Application</th><th>Recipe</th><th>Status</th></tr>{installed}</table><h2>Catalog</h2><table><tr><th>Recipe</th><th>Version</th><th>Description</th></tr>{catalog}</table>"), true).into_response()
+    let options = state
+        .recipes()
+        .catalog()
+        .iter()
+        .map(|item| {
+            format!(
+                "<option value=\"{}\">{} — {}</option>",
+                escape(&item.metadata.id),
+                escape(&item.metadata.name),
+                escape(&item.metadata.version)
+            )
+        })
+        .collect::<String>();
+    page("Recipes", &format!("<h1>Application recipes</h1><p class=muted>Versioned, inspectable compositions over Lumic applications and managed services.</p><h2>Installed</h2><table><tr><th>Application</th><th>Recipe</th><th>Status</th><th>Actions</th></tr>{installed}</table><h2>Install</h2><form class=panel method=post action=/actions/recipe/plan><input type=hidden name=csrf value=\"{}\"><label>Recipe<br><select name=recipe_id>{options}</select></label><label>Application ID<br><input name=application_id required pattern='[a-z][a-z0-9._-]*'></label><label>Domain<br><input name=domain required></label><label>Repository URL (when required)<br><input name=repository_url></label><label>Branch<br><input name=branch value=main required></label><label>TLS email<br><input name=tls_email type=email></label><label>Environment inputs (one NAME=value per line)<br><textarea name=environment rows=5></textarea></label><p class=muted>The request is held in the authenticated session while you review the exact plan; secret inputs are not returned in confirmation HTML.</p><button>Review plan</button></form><h2>Catalog</h2><table><tr><th>Recipe</th><th>Version</th><th>Description</th></tr>{catalog}</table>", escape(&session.csrf)), true).into_response()
+}
+
+#[derive(Deserialize)]
+struct RecipePlanForm {
+    csrf: String,
+    recipe_id: String,
+    application_id: String,
+    domain: String,
+    repository_url: Option<String>,
+    branch: String,
+    tls_email: Option<String>,
+    environment: String,
+}
+
+fn recipe_environment(source: &str) -> Result<BTreeMap<String, String>> {
+    let mut values = BTreeMap::new();
+    for line in source.lines().filter(|line| !line.trim().is_empty()) {
+        let (name, value) = line
+            .split_once('=')
+            .ok_or_else(|| LumicError::InvalidInput {
+                field: "environment".into(),
+                message: "each environment input must use NAME=value".into(),
+            })?;
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+            || values.insert(name.into(), value.into()).is_some()
+        {
+            return Err(LumicError::InvalidInput {
+                field: "environment".into(),
+                message: "environment names must be unique uppercase identifiers".into(),
+            });
+        }
+    }
+    Ok(values)
+}
+
+async fn recipe_plan(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    Form(form): Form<RecipePlanForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let environment = match recipe_environment(&form.environment) {
+        Ok(values) => values,
+        Err(error) => return error_response(error),
+    };
+    let request = RecipeInstallRequest {
+        recipe_id: form.recipe_id,
+        application_id: form.application_id,
+        domain: form.domain,
+        repository_url: form
+            .repository_url
+            .as_deref()
+            .and_then(nonempty)
+            .map(str::to_owned),
+        branch: form.branch,
+        tls_email: form
+            .tls_email
+            .as_deref()
+            .and_then(nonempty)
+            .map(str::to_owned),
+        environment,
+    };
+    let plan = match state.recipes().plan_install(&request) {
+        Ok(plan) => plan,
+        Err(error) => return error_response(error),
+    };
+    let Some(session_id) = session_cookie(&headers) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let mut sessions = match state.sessions.lock() {
+        Ok(sessions) => sessions,
+        Err(_) => return error_response(session_error()),
+    };
+    let Some(session) = sessions.get_mut(&session_id) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    session.pending_recipe = Some(request);
+    let changes = plan
+        .changes
+        .iter()
+        .map(|change| format!("<li>{}</li>", escape(&change.summary)))
+        .collect::<String>();
+    page(
+        "Install recipe",
+        &format!("<h1>Install recipe</h1><form class=panel method=post action=/actions/recipe/install><p>{}</p><ul>{changes}</ul><input type=hidden name=csrf value=\"{}\"><button>Confirm</button></form>", escape(&plan.summary), escape(&session.csrf)),
+        true,
+    )
+    .into_response()
+}
+
+async fn recipe_install(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    Form(form): Form<ConfirmForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(session_id) = session_cookie(&headers) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let request = match state.sessions.lock() {
+        Ok(mut sessions) => sessions
+            .get_mut(&session_id)
+            .and_then(|session| session.pending_recipe.take()),
+        Err(_) => return error_response(session_error()),
+    };
+    let Some(request) = request else {
+        return (StatusCode::CONFLICT, "recipe plan expired; review it again").into_response();
+    };
+    match state
+        .recipes()
+        .install(&request, &ui_context("recipe_install"))
+        .await
+    {
+        Ok(result) => result_page("Recipe installed", &result.message),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn confirm_recipe_update(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    RoutePath(id): RoutePath<String>,
+) -> Response {
+    confirm(
+        &state,
+        &headers,
+        "Update recipe",
+        &format!(
+            "Reconcile {} to the current catalog recipe and deploy it?",
+            escape(&id)
+        ),
+    )
+}
+
+async fn recipe_update(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    RoutePath(id): RoutePath<String>,
+    Form(form): Form<ConfirmForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match state
+        .recipes()
+        .update(&id, &ui_context("recipe_update"))
+        .await
+    {
+        Ok(result) => result_page("Recipe updated", &result.message),
+        Err(error) => error_response(error),
+    }
+}
+
+async fn confirm_recipe_uninstall(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    RoutePath(id): RoutePath<String>,
+) -> Response {
+    confirm(
+        &state,
+        &headers,
+        "Uninstall recipe",
+        &format!(
+            "Remove application {} and its Lumic-owned recipe resources? Shared application data is retained.",
+            escape(&id)
+        ),
+    )
+}
+
+async fn recipe_uninstall(
+    State(state): State<UiState>,
+    headers: HeaderMap,
+    RoutePath(id): RoutePath<String>,
+    Form(form): Form<ConfirmForm>,
+) -> Response {
+    if !authorized_post(&state, &headers, &form.csrf) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match state
+        .recipes()
+        .uninstall(&id, &ui_context("recipe_uninstall"))
+    {
+        Ok(result) => result_page("Recipe uninstalled", &result.message),
+        Err(error) => error_response(error),
+    }
 }
 
 async fn host_operator(State(state): State<UiState>, headers: HeaderMap) -> Response {
@@ -2698,5 +2919,14 @@ mod tests {
         assert!(html.contains("install-example-1"));
         assert!(html.contains("Failed"));
         assert!(html.contains("health check failed; retry after fixing DNS"));
+    }
+
+    #[test]
+    fn recipe_environment_inputs_are_strict_and_do_not_collapse_duplicates() {
+        let values = recipe_environment("APP_KEY=value\nQUEUE=default").unwrap();
+        assert_eq!(values["APP_KEY"], "value");
+        assert!(recipe_environment("bad=value").is_err());
+        assert!(recipe_environment("APP_KEY=one\nAPP_KEY=two").is_err());
+        assert!(recipe_environment("missing-separator").is_err());
     }
 }

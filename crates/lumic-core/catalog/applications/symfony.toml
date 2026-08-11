@@ -1,0 +1,16 @@
+schema_version = 1
+definition_version = 1
+id = "symfony"
+name = "Symfony"
+description = "Symfony with PHP-FPM, nginx and PostgreSQL"
+driver = "generic-php"
+
+[[requirements]]
+capability = "web.http"
+role = "web"
+[[requirements]]
+capability = "runtime.php_fpm"
+role = "runtime"
+[[requirements]]
+capability = "database.postgresql"
+role = "database"

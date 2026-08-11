@@ -545,7 +545,16 @@ const BUILT_IN_RUNTIMES: &[&str] = &[
     include_str!("../catalog/runtimes/php.toml"),
     include_str!("../catalog/runtimes/node.toml"),
 ];
-const BUILT_IN_APPLICATIONS: &[&str] = &[include_str!("../catalog/applications/wordpress.toml")];
+const BUILT_IN_APPLICATIONS: &[&str] = &[
+    include_str!("../catalog/applications/wordpress.toml"),
+    include_str!("../catalog/applications/laravel.toml"),
+    include_str!("../catalog/applications/laravel-typesense.toml"),
+    include_str!("../catalog/applications/drupal.toml"),
+    include_str!("../catalog/applications/symfony.toml"),
+    include_str!("../catalog/applications/forgejo.toml"),
+    include_str!("../catalog/applications/ghost.toml"),
+    include_str!("../catalog/applications/matomo.toml"),
+];
 
 fn parse_toml<T>(kind: &str, document: &str) -> Result<T>
 where

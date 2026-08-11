@@ -60,6 +60,8 @@ pub struct RecipeDefinition {
     pub metadata: RecipeMetadata,
     pub runtime: ApplicationRuntime,
     #[serde(default)]
+    pub runtime_version: Option<String>,
+    #[serde(default)]
     pub repository_required: bool,
     #[serde(default)]
     pub components: Vec<String>,
@@ -143,6 +145,29 @@ impl RecipeDefinition {
     pub fn validate(&self) -> Result<()> {
         validate_resource_id("recipe", &self.metadata.id)?;
         validate_version(&self.metadata.version)?;
+        match (self.runtime, self.runtime_version.as_deref()) {
+            (ApplicationRuntime::Static, None) => {}
+            (ApplicationRuntime::Static, Some(_)) => {
+                return Err(invalid(
+                    "runtime_version",
+                    "static recipes cannot declare a runtime version",
+                ));
+            }
+            (ApplicationRuntime::Php, Some("8.1" | "8.2" | "8.3" | "8.4")) => {}
+            (ApplicationRuntime::Node, Some("20" | "22" | "24")) => {}
+            (ApplicationRuntime::Php, _) => {
+                return Err(invalid(
+                    "runtime_version",
+                    "PHP recipes require a supported explicit version",
+                ));
+            }
+            (ApplicationRuntime::Node, _) => {
+                return Err(invalid(
+                    "runtime_version",
+                    "Node recipes require a supported explicit major version",
+                ));
+            }
+        }
         if self.metadata.name.trim().is_empty() || self.metadata.description.trim().is_empty() {
             return Err(invalid("recipe", "name and description must not be empty"));
         }
@@ -293,6 +318,7 @@ pub fn reference_recipes() -> Vec<RecipeDefinition> {
                     .into(),
         },
         runtime: ApplicationRuntime::Static,
+        runtime_version: None,
         repository_required: true,
         components: Vec::new(),
         services: Vec::new(),
@@ -307,7 +333,8 @@ pub fn reference_recipes() -> Vec<RecipeDefinition> {
             },
             RecipeSetupStep::Deploy,
         ],
-    }, wordpress_recipe()]
+    }, wordpress_recipe(), laravel_recipe(false), laravel_recipe(true), drupal_recipe(),
+        symfony_recipe(), ghost_recipe(), matomo_recipe()]
 }
 
 pub fn wordpress_recipe() -> RecipeDefinition {
@@ -319,6 +346,7 @@ pub fn wordpress_recipe() -> RecipeDefinition {
             description: "A checksum-verified WordPress application with PHP-FPM, nginx and MySQL.".into(),
         },
         runtime: ApplicationRuntime::Php,
+        runtime_version: Some("8.3".into()),
         repository_required: false,
         components: ["curl", "mbstring", "mysql", "xml", "zip"]
             .map(str::to_owned)
@@ -354,6 +382,146 @@ pub fn wordpress_recipe() -> RecipeDefinition {
                 },
             },
             RecipeSetupStep::HealthCheck { path: "/wp-login.php".into(), port: 80 },
+        ],
+    }
+}
+
+fn php_repository_recipe(
+    id: &str,
+    name: &str,
+    description: &str,
+    services: Vec<RecipeServiceRequirement>,
+    environment: Vec<RecipeEnvironmentValue>,
+) -> RecipeDefinition {
+    RecipeDefinition {
+        metadata: RecipeMetadata {
+            id: id.into(),
+            version: "1.0.0".into(),
+            name: name.into(),
+            description: description.into(),
+        },
+        runtime: ApplicationRuntime::Php,
+        runtime_version: Some("8.3".into()),
+        repository_required: true,
+        components: ["curl", "intl", "mbstring", "mysql", "xml", "zip"]
+            .map(str::to_owned)
+            .to_vec(),
+        services,
+        environment,
+        setup: vec![
+            RecipeSetupStep::HealthCheck {
+                path: "/".into(),
+                port: 80,
+            },
+            RecipeSetupStep::Deploy,
+        ],
+    }
+}
+
+fn service(id_suffix: &str, kind: ManagedServiceKind, role: &str) -> RecipeServiceRequirement {
+    RecipeServiceRequirement {
+        id_suffix: id_suffix.into(),
+        kind,
+        role: role.into(),
+        required: true,
+    }
+}
+
+fn laravel_recipe(typesense: bool) -> RecipeDefinition {
+    let mut services = vec![
+        service("mysql", ManagedServiceKind::Mysql, "database"),
+        service("redis", ManagedServiceKind::Redis, "cache"),
+    ];
+    if typesense {
+        services.push(service(
+            "typesense",
+            ManagedServiceKind::Typesense,
+            "search",
+        ));
+    }
+    php_repository_recipe(
+        if typesense {
+            "laravel-typesense"
+        } else {
+            "laravel"
+        },
+        if typesense {
+            "Laravel + Typesense"
+        } else {
+            "Laravel"
+        },
+        "Laravel application with PHP-FPM, nginx, MySQL and Redis; the Typesense variant adds typed search.",
+        services,
+        vec![RecipeEnvironmentValue {
+            name: "APP_KEY".into(),
+            source: RecipeEnvironmentSource::GeneratedSecret,
+        }],
+    )
+}
+
+fn drupal_recipe() -> RecipeDefinition {
+    php_repository_recipe(
+        "drupal",
+        "Drupal",
+        "Drupal application with PHP-FPM, nginx and MySQL.",
+        vec![service("mysql", ManagedServiceKind::Mysql, "database")],
+        vec![RecipeEnvironmentValue {
+            name: "DRUPAL_HASH_SALT".into(),
+            source: RecipeEnvironmentSource::GeneratedSecret,
+        }],
+    )
+}
+
+fn symfony_recipe() -> RecipeDefinition {
+    php_repository_recipe(
+        "symfony",
+        "Symfony",
+        "Symfony application with PHP-FPM, nginx and PostgreSQL.",
+        vec![service(
+            "postgresql",
+            ManagedServiceKind::Postgresql,
+            "database",
+        )],
+        vec![RecipeEnvironmentValue {
+            name: "APP_SECRET".into(),
+            source: RecipeEnvironmentSource::GeneratedSecret,
+        }],
+    )
+}
+
+fn matomo_recipe() -> RecipeDefinition {
+    php_repository_recipe(
+        "matomo",
+        "Matomo",
+        "Matomo analytics application with PHP-FPM, nginx and MySQL.",
+        vec![service("mysql", ManagedServiceKind::Mysql, "database")],
+        Vec::new(),
+    )
+}
+
+fn ghost_recipe() -> RecipeDefinition {
+    RecipeDefinition {
+        metadata: RecipeMetadata {
+            id: "ghost".into(),
+            version: "1.0.0".into(),
+            name: "Ghost".into(),
+            description: "Ghost publishing application with Node, nginx and MySQL.".into(),
+        },
+        runtime: ApplicationRuntime::Node,
+        runtime_version: Some("22".into()),
+        repository_required: true,
+        components: Vec::new(),
+        services: vec![service("mysql", ManagedServiceKind::Mysql, "database")],
+        environment: vec![RecipeEnvironmentValue {
+            name: "GHOST_ADMIN_TOKEN".into(),
+            source: RecipeEnvironmentSource::GeneratedSecret,
+        }],
+        setup: vec![
+            RecipeSetupStep::HealthCheck {
+                path: "/".into(),
+                port: 80,
+            },
+            RecipeSetupStep::Deploy,
         ],
     }
 }

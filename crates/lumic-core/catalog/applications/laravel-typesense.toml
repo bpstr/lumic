@@ -1,0 +1,22 @@
+schema_version = 1
+definition_version = 1
+id = "laravel-typesense"
+name = "Laravel + Typesense"
+description = "Laravel with MySQL, Redis and typed Typesense search"
+driver = "generic-php"
+
+[[requirements]]
+capability = "web.http"
+role = "web"
+[[requirements]]
+capability = "runtime.php_fpm"
+role = "runtime"
+[[requirements]]
+capability = "database.mysql_compatible"
+role = "database"
+[[requirements]]
+capability = "cache.redis"
+role = "cache"
+[[requirements]]
+capability = "search.typesense"
+role = "search"

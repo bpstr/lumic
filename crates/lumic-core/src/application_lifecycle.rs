@@ -628,6 +628,7 @@ mod tests {
             databases: vec![ApplicationServiceReference {
                 service_id: "mysql.main".into(),
                 role: "primary".into(),
+                service_type: Some("mysql".into()),
                 database: Some("shop".into()),
                 user: Some("shop".into()),
                 secret_reference: Some("secret://mysql-shop-password".into()),
@@ -640,6 +641,10 @@ mod tests {
                 command: vec!["php".into(), "artisan".into(), "queue:work".into()],
                 schedule: None,
                 enabled: true,
+                environment: Default::default(),
+                working_directory: None,
+                restart_policy: Default::default(),
+                health_check: None,
             }],
             health: HealthCheck {
                 enabled: true,

@@ -21,7 +21,7 @@ use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
     io::Read,
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
@@ -367,15 +367,14 @@ impl RepositoryService {
                 .ok_or_else(|| invalid("repository.path", "has no parent"))?,
         )
         .map_err(io_error)?;
-        let mut spec = self.git_spec(vec![
+        let spec = self.git_spec(vec![
             "clone".into(),
             "--bare".into(),
             "--".into(),
             url.into(),
             path.display().to_string(),
         ])?;
-        spec = self.apply_credential(spec, &remote)?;
-        if let Err(error) = self.run(spec).await {
+        if let Err(error) = self.run_remote(spec, &remote).await {
             let _ = fs::remove_dir_all(&path);
             return Err(error);
         }
@@ -978,8 +977,8 @@ impl RepositoryService {
             args.push("--mirror".into());
         }
         args.extend(["--".into(), remote.url.clone()]);
-        let spec = self.apply_credential(self.git_spec(args)?, &remote)?;
-        self.run(spec).await?;
+        let spec = self.git_spec(args)?;
+        self.run_remote(spec, &remote).await?;
         let event = if is_push {
             "repository.pushed"
         } else {
@@ -1227,23 +1226,69 @@ impl RepositoryService {
             .environment("GIT_CONFIG_NOSYSTEM", "1"))
     }
 
-    fn apply_credential(
+    async fn run_remote(
         &self,
         mut spec: ProcessSpec,
         remote: &RepositoryRemote,
-    ) -> Result<ProcessSpec> {
+    ) -> Result<ProcessOutput> {
+        let mut identity_directory = None;
         if let Some(reference) = &remote.credential_reference {
-            let value = String::from_utf8(self.secrets.read(reference)?)
-                .map_err(|_| invalid("credential_reference", "credential must be UTF-8"))?;
-            spec = spec
-                .environment("GIT_CONFIG_COUNT", "1")
-                .environment("GIT_CONFIG_KEY_0", "http.extraHeader")
-                .environment(
-                    "GIT_CONFIG_VALUE_0",
-                    format!("Authorization: Bearer {}", value.trim()),
-                );
+            let value = self.secrets.read(reference)?;
+            if is_ssh_remote(&remote.url) {
+                let directory = PathBuf::from(format!(
+                    "/tmp/lumic-git-identity-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(|error| invalid("system_time", &error.to_string()))?
+                        .as_nanos()
+                ));
+                let mut builder = fs::DirBuilder::new();
+                builder.recursive(false).mode(0o700);
+                builder.create(&directory).map_err(io_error)?;
+                let identity = directory.join("identity");
+                let known_hosts = directory.join("known_hosts");
+                let config = directory.join("config");
+                if let Err(error) = (|| -> Result<()> {
+                    write_atomic(&identity, &value, 0o600)?;
+                    write_atomic(&known_hosts, b"", 0o600)?;
+                    let configuration = format!(
+                        "Host *\n  IdentityFile {}\n  IdentitiesOnly yes\n  BatchMode yes\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile {}\n",
+                        identity.display(),
+                        known_hosts.display()
+                    );
+                    write_atomic(&config, configuration.as_bytes(), 0o600)?;
+                    Ok(())
+                })() {
+                    let _ = fs::remove_dir_all(&directory);
+                    return Err(error);
+                }
+                spec = spec
+                    .environment("HOME", directory.to_string_lossy())
+                    .environment("GIT_SSH", "/usr/bin/ssh")
+                    .environment("GIT_SSH_VARIANT", "ssh")
+                    .environment("GIT_CONFIG_COUNT", "1")
+                    .environment("GIT_CONFIG_KEY_0", "core.sshCommand")
+                    .environment("GIT_CONFIG_VALUE_0", format!("ssh -F {}", config.display()));
+                identity_directory = Some(directory);
+            } else {
+                let value = String::from_utf8(value).map_err(|_| {
+                    invalid("credential_reference", "HTTP credential must be UTF-8")
+                })?;
+                spec = spec
+                    .environment("GIT_CONFIG_COUNT", "1")
+                    .environment("GIT_CONFIG_KEY_0", "http.extraHeader")
+                    .environment(
+                        "GIT_CONFIG_VALUE_0",
+                        format!("Authorization: Bearer {}", value.trim()),
+                    );
+            }
         }
-        Ok(spec)
+        let result = self.run(spec).await;
+        if let Some(directory) = identity_directory {
+            fs::remove_dir_all(directory).map_err(io_error)?;
+        }
+        result
     }
 
     async fn git_text<const N: usize>(&self, path: &Path, args: [&str; N]) -> Result<String> {
@@ -1328,6 +1373,10 @@ impl RepositoryService {
                 message: format!("event append failed: {error}"),
             })
     }
+}
+
+fn is_ssh_remote(url: &str) -> bool {
+    url.starts_with("ssh://") || url.starts_with("git@")
 }
 
 fn validate_repository_record(repository: &Repository) -> Result<()> {
@@ -1617,6 +1666,13 @@ mod tests {
             [("Content-Type".into(), "text/plain".into())]
         );
         assert_eq!(response.body, b"denied");
+    }
+
+    #[test]
+    fn distinguishes_ssh_identity_remotes_from_http_bearer_remotes() {
+        assert!(is_ssh_remote("ssh://git@example.com/team/repo.git"));
+        assert!(is_ssh_remote("git@example.com:team/repo.git"));
+        assert!(!is_ssh_remote("https://example.com/team/repo.git"));
     }
 
     #[test]

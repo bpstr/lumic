@@ -219,7 +219,14 @@ fn render_node_release_service(
     let command = handoff
         .command
         .iter()
-        .map(|part| systemd_quote(part))
+        .enumerate()
+        .map(|(index, part)| {
+            if index == 0 && part == "node" {
+                systemd_quote("/usr/bin/node")
+            } else {
+                systemd_quote(part)
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ");
     let environment = environment_file.map_or_else(String::new, |path| {
@@ -502,8 +509,26 @@ mod tests {
         let unit = render_node_release_service(&app(), &handoff, release, 3101, None);
         assert!(unit.contains("WorkingDirectory=\"/var/lib/lumic/apps/demo/releases/123\""));
         assert!(unit.contains("Environment=PORT=3101"));
-        assert!(unit.contains("ExecStart=\"node\" \"server.js\""));
+        assert!(unit.contains("ExecStart=\"/usr/bin/node\" \"server.js\""));
         assert!(!unit.contains("sh -c"));
+    }
+
+    #[test]
+    fn preserves_an_explicit_node_release_executable() {
+        let handoff = NodeHandoff {
+            command: vec!["/opt/node/bin/node".into(), "server.js".into()],
+            primary_port: 3100,
+            secondary_port: 3101,
+            drain_seconds: 5,
+        };
+        let unit = render_node_release_service(
+            &app(),
+            &handoff,
+            Path::new("/srv/apps/demo/releases/release-1"),
+            3100,
+            None,
+        );
+        assert!(unit.contains("ExecStart=\"/opt/node/bin/node\" \"server.js\""));
     }
 
     #[test]

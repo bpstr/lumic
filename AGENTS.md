@@ -113,14 +113,17 @@ Write commit subjects as concise imperative sentences without conventional-commi
 Lumic follows Semantic Versioning. Treat the version reported by every binary, release tag, installer, updater, release artifact, and public document as one coordinated contract.
 
 - Use `MAJOR.MINOR.PATCH` stable release tags without a `v` prefix.
-- Treat an intentional `MAJOR.MINOR.PATCH-PRERELEASE.N` workspace version as the forward development line. Preserve `2.0.0-alpha.1` until explicitly advancing it; the earlier stable release remains `1.0.0`.
+- Treat an intentional `MAJOR.MINOR.PATCH-PRERELEASE.N` workspace version as the forward development line; the earlier stable release remains `1.0.0` until a newer stable release passes every gate.
 - Publish a prerelease tag only through an explicit prerelease channel; the stable release workflow accepts stable versions only.
 - Increment `MAJOR` for incompatible public CLI, API, MCP, configuration, state-format, or operational-contract changes.
 - Increment `MINOR` for backward-compatible capabilities.
 - Increment `PATCH` for backward-compatible fixes and hardening.
-- Never reuse, move, or publish a release tag with a version that disagrees with the Cargo workspace version.
+- Push release-candidate commits without a tag and wait for every required GitHub Actions workflow on the exact candidate commit to succeed. Create the version tag only after that green commit is final.
+- A fix or test commit is not a release by itself. Group related commits under one candidate version and create one tag only when the complete candidate is proven.
+- Never use a version tag to test CI. If a tag was pushed before its gates completed and any gate fails, delete the local and remote tag, do not publish a GitHub release for it, retire that version, and advance the workspace version before the next candidate.
+- Never reuse, move, or publish a successful release tag, or a release tag with a version that disagrees with the Cargo workspace version.
 - Never decrease a released version or publish unrelated builds under the same version.
-- Before tagging, verify the release workflow, installer, and self-updater all resolve the exact tag and artifacts. A release is incomplete until existing Lumic servers can discover and install it through their configured channel.
+- After the untagged candidate is green, verify the release workflow, installer, and self-updater resolve the intended exact tag and artifacts before pushing the tag. A release is incomplete until the tag workflow succeeds and existing Lumic servers can discover and install it through their configured channel.
 - Update public release and installation documentation in the same commit as any release-contract change.
 
 Before finishing a change:

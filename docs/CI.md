@@ -29,7 +29,11 @@ The nightly workflow runs scheduled CI, builds the static Linux artifact, and up
 
 ## Versioned releases
 
-An immutable tag must exactly match the Cargo workspace version. Stable `MAJOR.MINOR.PATCH` tags and explicit `MAJOR.MINOR.PATCH-PRERELEASE.N` tags run the same formatting, lint, test, audit, static-build, smoke, checksum and attestation gates. GitHub publishes tags with a prerelease suffix as prereleases; only stable tags can become the latest stable release.
+Release candidates are pushed to `main` without a version tag. The exact candidate commit must first pass every required push workflow, including CI, documentation, and application golden coverage. A fix or test commit is not independently released; related commits share one candidate version.
+
+After the candidate is green and final, an immutable tag matching the Cargo workspace version may be pushed. Stable `MAJOR.MINOR.PATCH` tags and explicit `MAJOR.MINOR.PATCH-PRERELEASE.N` tags run the release workflow's formatting, lint, test, audit, static-build, smoke, checksum and attestation gates. GitHub publishes tags with a prerelease suffix as prereleases; only stable tags can become the latest stable release.
+
+A tag pushed before green candidate CI is invalid. If any gate fails, delete that local and remote tag, publish no GitHub release for it, retire the version, and advance the workspace version before trying again. Successful published release tags remain immutable.
 
 ## Future matrix
 

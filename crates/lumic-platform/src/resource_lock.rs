@@ -55,6 +55,11 @@ impl ResourceLock {
         Self::acquire_key(state_dir, "repository-state", false)
     }
 
+    /// Serializes read-modify-write updates to application and deployment state.
+    pub fn acquire_application_state(state_dir: impl AsRef<Path>) -> Result<Self> {
+        Self::acquire_key(state_dir, "application-state", false)
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

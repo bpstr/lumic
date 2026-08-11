@@ -92,9 +92,37 @@ impl NginxManager {
         runtime_resource_id: Option<&str>,
         context: &OperationContext,
     ) -> Result<WebConfigurationResult> {
+        self.configure_with_node_port(application, php_socket, runtime_resource_id, None, context)
+            .await
+    }
+
+    pub async fn configure_node_upstream(
+        &self,
+        application: &Application,
+        port: u16,
+        context: &OperationContext,
+    ) -> Result<WebConfigurationResult> {
+        if application.runtime != ApplicationRuntime::Node || port == 0 {
+            return Err(LumicError::InvalidInput {
+                field: "node_upstream".into(),
+                message: "requires a Node application and a non-zero loopback port".into(),
+            });
+        }
+        self.configure_with_node_port(application, None, None, Some(port), context)
+            .await
+    }
+
+    async fn configure_with_node_port(
+        &self,
+        application: &Application,
+        php_socket: Option<&Path>,
+        runtime_resource_id: Option<&str>,
+        node_port: Option<u16>,
+        context: &OperationContext,
+    ) -> Result<WebConfigurationResult> {
         validate_runtime_binding(application, php_socket, runtime_resource_id)?;
         let _nginx_lock = ResourceLock::try_acquire_nginx(&self.state_dir)?;
-        let config = render_nginx_config(application, php_socket)?;
+        let config = render_nginx_config_with_node_port(application, php_socket, node_port)?;
         let path = self
             .available_dir
             .join(format!("lumic-{}.conf", application.id));
@@ -360,12 +388,32 @@ impl NginxManager {
 }
 
 pub fn render_nginx_config(application: &Application, php_socket: Option<&Path>) -> Result<String> {
+    render_nginx_config_with_node_port(application, php_socket, None)
+}
+
+fn render_nginx_config_with_node_port(
+    application: &Application,
+    php_socket: Option<&Path>,
+    node_port: Option<u16>,
+) -> Result<String> {
     let aliases = if application.www_alias {
         format!(" www.{}", application.domain)
     } else {
         String::new()
     };
-    let current = PathBuf::from(&application.root).join("current");
+    let mut current = PathBuf::from(&application.root).join("current");
+    if let Some(contract) = application
+        .repository
+        .as_ref()
+        .and_then(|repository| repository.contract.as_ref())
+    {
+        if let Some(subdirectory) = &contract.source_subdirectory {
+            current.push(subdirectory);
+        }
+        if let Some(public_directory) = &contract.public_directory {
+            current.push(public_directory);
+        }
+    }
     let body = match application.runtime {
         ApplicationRuntime::Static => format!(
             "    root {};\n    index index.html;\n    location / {{ try_files $uri $uri/ =404; }}\n",
@@ -378,10 +426,14 @@ pub fn render_nginx_config(application: &Application, php_socket: Option<&Path>)
             })?;
             format!(
                 "    root {};\n    index index.php;\n    location / {{ try_files $uri $uri/ /index.php?$query_string; }}\n    location ~ \\.php$ {{ include snippets/fastcgi-php.conf; fastcgi_pass unix:{}; }}\n",
-                current.display(), socket.display()
+                current.display(),
+                socket.display()
             )
         }
-        ApplicationRuntime::Node => "    location / { proxy_pass http://127.0.0.1:3000; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; }\n".into(),
+        ApplicationRuntime::Node => format!(
+            "    location / {{ proxy_pass http://127.0.0.1:{}; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; }}\n",
+            node_port.unwrap_or(3000)
+        ),
     };
     Ok(format!(
         "# Managed by Lumic. Edit the application through Lumic, not this file.\nserver {{\n    listen 80;\n    listen [::]:80;\n    server_name {}{};\n{} }}\n",
@@ -537,6 +589,13 @@ mod tests {
         )
         .unwrap();
         assert!(php.contains("fastcgi_pass unix:/run/php/php8.4-fpm.sock"));
+        let node = render_nginx_config_with_node_port(
+            &application(ApplicationRuntime::Node),
+            None,
+            Some(3101),
+        )
+        .unwrap();
+        assert!(node.contains("proxy_pass http://127.0.0.1:3101"));
     }
 
     #[test]

@@ -505,7 +505,16 @@ impl InfrastructureService {
         let Some(trigger) = trigger else {
             return Ok(None);
         };
-        let target_ref = format!("refs/heads/{}", trigger.branch);
+        let application = self.applications.inspect(&trigger.application_id)?;
+        let contract = application
+            .repository
+            .as_ref()
+            .and_then(|repository| repository.contract.as_ref());
+        if contract.is_some_and(|contract| !contract.manifest.deployment.deploy_on_push) {
+            return Ok(None);
+        }
+        let branch = contract.map_or(trigger.branch.as_str(), |contract| contract.branch.as_str());
+        let target_ref = format!("refs/heads/{branch}");
         let matched = updates.lines().any(|line| {
             let fields = line.split_whitespace().collect::<Vec<_>>();
             fields.len() == 3
@@ -1175,9 +1184,11 @@ impl InfrastructureService {
                     .deploy(&request.operation.resource_id, context)
                     .await
             }
-            "application.rollback" => self
-                .applications
-                .rollback(&request.operation.resource_id, context),
+            "application.rollback" => {
+                self.applications
+                    .rollback(&request.operation.resource_id, context)
+                    .await
+            }
             _ => Err(invalid("operation", "unsupported remote operation")),
         };
         self.audit.append(&AuditRecord::now(
@@ -1750,6 +1761,42 @@ mod tests {
             "#!/bin/sh\nexec /usr/local/bin/lumic git receive shop\n"
         );
         assert!(!hook.contains("sh -c"));
+
+        service
+            .applications
+            .set_repository(
+                "shop",
+                &format!("file://{}", repository.path),
+                "main",
+                None,
+                &context,
+            )
+            .unwrap();
+        let contract_root = root.join("contract");
+        fs::create_dir_all(&contract_root).unwrap();
+        fs::write(
+            contract_root.join("lumic.yaml"),
+            r#"schema_version: 1
+name: shop
+runtime:
+  static: true
+deployment:
+  deploy_on_push: false
+"#,
+        )
+        .unwrap();
+        service
+            .applications
+            .apply_manifest("shop", &contract_root, &context)
+            .unwrap();
+        let update = format!("{} {} refs/heads/main\n", "0".repeat(40), "a".repeat(40));
+        assert!(
+            service
+                .receive_push("shop", &update, &context)
+                .await
+                .unwrap()
+                .is_none()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -7,8 +7,8 @@ pub use transport::{McpHttpCredentialStore, serve_stdio, streamable_http_router}
 use lumic_core::{
     HostFacts, OperationContext, OperationInterface,
     application::{
-        ApplicationProcess, ApplicationProcessKind, ApplicationRuntime, ApplicationSchedule,
-        ApplicationServiceReference, Deployment,
+        Application, ApplicationProcess, ApplicationProcessKind, ApplicationRuntime,
+        ApplicationSchedule, ApplicationServiceReference, Deployment,
     },
     binding::Binding,
     infrastructure::{
@@ -60,6 +60,7 @@ use rmcp::{
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::path::Path;
 
 pub const HOST_STATUS_URI: &str = "lumic://server/status";
 pub const SERVER_ATTENTION_URI: &str = "lumic://server/attention";
@@ -72,6 +73,29 @@ pub fn host_status() -> lumic_core::Result<HostFacts> {
 struct ApplicationId {
     /// Stable Lumic application identifier.
     app: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApplicationManifestRequest {
+    /// Stable Lumic application identifier.
+    app: String,
+    /// Absolute or working-directory-relative repository checkout containing lumic.yaml.
+    repository_root: String,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApprovedApplicationManifestRequest {
+    /// Stable Lumic application identifier.
+    app: String,
+    /// Absolute or working-directory-relative repository checkout containing lumic.yaml.
+    repository_root: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ManifestInspectRequest {
+    /// Absolute or working-directory-relative repository checkout containing lumic.yaml.
+    repository_root: String,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -313,6 +337,13 @@ struct SetEnvironmentReference {
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ModifyApplicationEnvironmentSecret {
+    application: String,
+    name: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct ImportEnvironment {
     /// Exact JSON returned by environment_export.
     bundle_json: String,
@@ -454,6 +485,47 @@ struct SetHealthCheck {
 struct ApprovedApplication {
     app: String,
     approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ConfigureApplicationDeployment {
+    app: String,
+    #[serde(default)]
+    pre_deploy: Vec<Vec<String>>,
+    build: Option<Vec<String>>,
+    migrate: Option<Vec<String>>,
+    #[serde(default)]
+    post_deploy: Vec<Vec<String>>,
+    node_handoff: Option<NodeHandoffRequest>,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct NodeHandoffRequest {
+    command: Vec<String>,
+    primary_port: u16,
+    secondary_port: u16,
+    #[serde(default = "default_node_drain_seconds")]
+    drain_seconds: u64,
+}
+
+const fn default_node_drain_seconds() -> u64 {
+    10
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct ApprovedDeployment {
+    app: String,
+    deployment: String,
+    approved: bool,
+}
+
+#[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
+struct DeploymentLogs {
+    app: String,
+    deployment: String,
+    #[serde(default)]
+    after_sequence: u64,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
@@ -940,12 +1012,13 @@ impl LumicMcpServer {
         description = "List Lumic-managed applications from the persistent node state, including domains, runtimes, repository configuration references and health state. Read-only. Repository credentials are never returned."
     )]
     fn application_list(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(
-            &application_service()
-                .list()
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())
+        let applications = application_service()
+            .list()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(mask_application_environment)
+            .collect::<Vec<_>>();
+        serde_json::to_string_pretty(&applications).map_err(|error| error.to_string())
     }
 
     #[tool(
@@ -956,7 +1029,9 @@ impl LumicMcpServer {
         &self,
         Parameters(ApplicationId { app }): Parameters<ApplicationId>,
     ) -> Result<String, String> {
-        to_json(&application_service().inspect(&app).map_err(string_error)?)
+        to_json(&mask_application_environment(
+            application_service().inspect(&app).map_err(string_error)?,
+        ))
     }
 
     #[tool(
@@ -1146,6 +1221,56 @@ impl LumicMcpServer {
     }
 
     #[tool(
+        name = "application_manifest_inspect",
+        description = "Parse and strictly validate a repository's versioned lumic.yaml contract. Read-only; returns declared intent without changing application or host state."
+    )]
+    fn application_manifest_inspect(
+        &self,
+        Parameters(request): Parameters<ManifestInspectRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &application_service()
+                .inspect_manifest(Path::new(&request.repository_root))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_manifest_plan",
+        description = "Resolve lumic.yaml against an existing application and return exact changes, risks, preconditions, validation and recovery. Read-only; call before application_manifest_apply."
+    )]
+    fn application_manifest_plan(
+        &self,
+        Parameters(request): Parameters<ApplicationManifestRequest>,
+    ) -> Result<String, String> {
+        to_json(
+            &application_service()
+                .plan_manifest(&request.app, Path::new(&request.repository_root))
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_manifest_apply",
+        description = "Apply a validated lumic.yaml repository contract to application state. Mutating: requires node mutation policy, the mutations scope, and approved=true. It records runtime/build/public paths, workers, schedules, services, health, migration and deployment intent; it does not provision unresolved services."
+    )]
+    fn application_manifest_apply(
+        &self,
+        Parameters(request): Parameters<ApprovedApplicationManifestRequest>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &application_service()
+                .apply_manifest(
+                    &request.app,
+                    Path::new(&request.repository_root),
+                    &operation_context("application_manifest_apply"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
         name = "application_deployments",
         description = "Return newest-first deployment history, phases, health result and automatic rollback state for one application. Read-only."
     )]
@@ -1265,10 +1390,100 @@ impl LumicMcpServer {
     }
 
     #[tool(
+        name = "application_configure_deployment",
+        description = "Configure validated argv-only pre-deploy, build, database migration, and post-deploy phases. Commands run directly in the immutable release without a shell. Mutating: requires approved=true."
+    )]
+    fn application_configure_deployment(
+        &self,
+        Parameters(request): Parameters<ConfigureApplicationDeployment>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        let workflow = lumic_core::application::DeploymentWorkflow {
+            pre_deploy: request.pre_deploy,
+            build: request.build,
+            migrate: request.migrate,
+            post_deploy: request.post_deploy,
+            node_handoff: request.node_handoff.map(|handoff| {
+                lumic_core::application::NodeHandoff {
+                    command: handoff.command,
+                    primary_port: handoff.primary_port,
+                    secondary_port: handoff.secondary_port,
+                    drain_seconds: handoff.drain_seconds,
+                }
+            }),
+        };
+        to_json(
+            &application_service()
+                .configure_deployment(
+                    &request.app,
+                    workflow,
+                    &operation_context("application_configure_deployment"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_cancel_deployment",
+        description = "Request cooperative cancellation of an active deployment. The current direct process is allowed to finish, then Lumic stops at the next phase boundary and restores the prior release if activation occurred. Mutating: requires approved=true."
+    )]
+    fn application_cancel_deployment(
+        &self,
+        Parameters(request): Parameters<ApprovedDeployment>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &application_service()
+                .cancel_deployment(
+                    &request.app,
+                    &request.deployment,
+                    &operation_context("application_cancel_deployment"),
+                )
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_redeploy",
+        description = "Create a new immutable deployment of the exact commit recorded by an earlier deployment. Mutating: requires approved=true."
+    )]
+    async fn application_redeploy(
+        &self,
+        Parameters(request): Parameters<ApprovedDeployment>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(
+            &application_service()
+                .redeploy(
+                    &request.app,
+                    &request.deployment,
+                    &operation_context("application_redeploy"),
+                )
+                .await
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
+        name = "application_deployment_logs",
+        description = "Read persistent deployment stdout, stderr, and system messages after a sequence cursor. Poll with the last sequence to stream new entries. Read-only."
+    )]
+    fn application_deployment_logs(
+        &self,
+        Parameters(request): Parameters<DeploymentLogs>,
+    ) -> Result<String, String> {
+        to_json(
+            &application_service()
+                .deployment_logs(&request.app, &request.deployment, request.after_sequence)
+                .map_err(string_error)?,
+        )
+    }
+
+    #[tool(
         name = "application_rollback",
         description = "Atomically restore the previous known-good release. Mutating and potentially disruptive: requires node policy enablement and approved=true."
     )]
-    fn application_rollback(
+    async fn application_rollback(
         &self,
         Parameters(ApprovedApplication { app, approved }): Parameters<ApprovedApplication>,
     ) -> Result<String, String> {
@@ -1276,6 +1491,7 @@ impl LumicMcpServer {
         to_json(
             &application_service()
                 .rollback(&app, &operation_context("application_rollback"))
+                .await
                 .map_err(string_error)?,
         )
     }
@@ -1860,8 +2076,8 @@ impl LumicMcpServer {
         Parameters(request): Parameters<SetEnvironmentReference>,
     ) -> Result<String, String> {
         require_mutation(request.approved)?;
-        to_json(
-            &application_service()
+        to_json(&mask_application_environment(
+            application_service()
                 .set_environment_reference(
                     &request.application,
                     &request.name,
@@ -1869,7 +2085,47 @@ impl LumicMcpServer {
                     &operation_context("application_environment_reference_set"),
                 )
                 .map_err(string_error)?,
-        )
+        ))
+    }
+
+    #[tool(
+        name = "application_environment_secret_rotate",
+        description = "Rotate an application-owned environment value with fresh random material. Returns masked application state and never returns the value or secret reference. Mutating: requires policy enablement and approved=true."
+    )]
+    fn application_environment_secret_rotate(
+        &self,
+        Parameters(request): Parameters<ModifyApplicationEnvironmentSecret>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(&mask_application_environment(
+            application_service()
+                .rotate_environment_secret(
+                    &request.application,
+                    &request.name,
+                    &operation_context("application_environment_secret_rotate"),
+                )
+                .map_err(string_error)?,
+        ))
+    }
+
+    #[tool(
+        name = "application_environment_secret_delete",
+        description = "Delete an application environment key and its application-owned encrypted value. Returns key-only masked application state. Mutating: requires policy enablement and approved=true."
+    )]
+    fn application_environment_secret_delete(
+        &self,
+        Parameters(request): Parameters<ModifyApplicationEnvironmentSecret>,
+    ) -> Result<String, String> {
+        require_mutation(request.approved)?;
+        to_json(&mask_application_environment(
+            application_service()
+                .delete_environment_secret(
+                    &request.application,
+                    &request.name,
+                    &operation_context("application_environment_secret_delete"),
+                )
+                .map_err(string_error)?,
+        ))
     }
 
     #[tool(
@@ -3329,6 +3585,13 @@ fn application_service() -> ApplicationService {
     ApplicationService::new(state, apps)
 }
 
+fn mask_application_environment(mut application: Application) -> Application {
+    for reference in application.environment_references.values_mut() {
+        *reference = "<masked>".into();
+    }
+    application
+}
+
 fn attention_service() -> AttentionService {
     let state = state_directory();
     let apps = std::env::var_os("LUMIC_APPS_ROOT")
@@ -3701,6 +3964,17 @@ mod tests {
         );
         assert!(tools.iter().any(|tool| tool.name == "application_deploy"));
         assert!(tools.iter().any(|tool| tool.name == "application_rollback"));
+        for name in [
+            "application_manifest_inspect",
+            "application_manifest_plan",
+            "application_manifest_apply",
+            "application_configure_deployment",
+            "application_cancel_deployment",
+            "application_redeploy",
+            "application_deployment_logs",
+        ] {
+            assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
+        }
         assert!(tools.iter().any(|tool| tool.name == "diagnose_server"));
         assert!(tools.iter().any(|tool| tool.name == "package_install"));
         assert!(

@@ -1,6 +1,7 @@
 use crate::{
     application::ApplicationService, atomic_file::write_atomic, audit_store::AuditStore,
-    diagnostics::diagnose_host, event_store::EventStore, managed_service::ManagedServiceManager,
+    diagnostics::diagnose_host, event_store::EventStore, framework_state::FrameworkStateStore,
+    managed_service::ManagedServiceManager,
 };
 use lumic_core::{
     DiagnosticReport, LumicError, OperationContext, OperationResult, OperationStatus, Result,
@@ -11,18 +12,28 @@ use lumic_core::{
     },
     events::{AuditRecord, Event},
     managed_service::{BackupStatus, ServiceBackup},
+    resource::ResourceKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::BTreeSet,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const MAX_PERIOD_HOURS: u64 = 24 * 30;
 const MAX_CHANGES: usize = 20;
+const MAX_BACKUP_AGE_HOURS: u128 = 24;
+const CERTIFICATE_WARNING_DAYS: u64 = 30;
+const CERTIFICATE_CRITICAL_DAYS: u64 = 7;
+
+#[derive(Debug, Clone)]
+struct CertificateEvidence {
+    name: String,
+    expires_at_unix_seconds: Option<u64>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AttentionSettings {
@@ -129,6 +140,14 @@ impl AttentionService {
         }
         let diagnostics = diagnose_host().await?;
         let applications = ApplicationService::new(&self.state_dir, &self.apps_root).list()?;
+        let application_service = ApplicationService::new(&self.state_dir, &self.apps_root);
+        let deployment_count = applications
+            .iter()
+            .try_fold(0_usize, |count, application| {
+                application_service
+                    .deployments(&application.id)
+                    .map(|deployments| count + deployments.len())
+            })?;
         let manager = ManagedServiceManager::at_state_dir(&self.state_dir);
         let services = manager.list()?;
         let mut backups = Vec::new();
@@ -136,6 +155,7 @@ impl AttentionService {
             backups.extend(manager.backups(&service.id)?);
         }
         let events = EventStore::at_state_dir(&self.state_dir).list(200)?;
+        let certificates = certificate_evidence(&self.state_dir)?;
         let personality = self.personality()?;
         let now = now_ms();
         let summary = build_summary(
@@ -143,7 +163,9 @@ impl AttentionService {
             &applications,
             &backups,
             &events,
+            &certificates,
             services.len(),
+            deployment_count,
             now,
             period_hours,
         );
@@ -165,7 +187,9 @@ fn build_summary(
     applications: &[Application],
     backups: &[ServiceBackup],
     events: &[Event],
+    certificates: &[CertificateEvidence],
     service_count: usize,
+    deployment_count: usize,
     now: u128,
     period_hours: u64,
 ) -> AttentionSummary {
@@ -237,6 +261,30 @@ fn build_summary(
             label: "Managed services".into(),
             value: service_count.to_string(),
             evidence: "Lumic managed-service state".into(),
+        },
+        AttentionFact {
+            key: "deployments".into(),
+            label: "Deployments".into(),
+            value: deployment_count.to_string(),
+            evidence: "Lumic deployment history".into(),
+        },
+        AttentionFact {
+            key: "failed_services".into(),
+            label: "Failed services".into(),
+            value: diagnostics.failed_services.len().to_string(),
+            evidence: "systemd failed-unit inspection".into(),
+        },
+        AttentionFact {
+            key: "certificates".into(),
+            label: "Certificates".into(),
+            value: certificates.len().to_string(),
+            evidence: "Lumic certificate resource state".into(),
+        },
+        AttentionFact {
+            key: "backups".into(),
+            label: "Recorded backups".into(),
+            value: backups.len().to_string(),
+            evidence: "Lumic managed-service backup state".into(),
         },
         AttentionFact {
             key: "updates".into(),
@@ -337,6 +385,69 @@ fn build_summary(
                 recommendation: format!("inspect and retry backup {}", backup.id),
             });
         }
+        let age_hours = now
+            .saturating_sub(backup.created_at_unix_ms)
+            .checked_div(60 * 60 * 1000)
+            .unwrap_or(0);
+        if age_hours > MAX_BACKUP_AGE_HOURS {
+            upcoming_attention.push(AttentionItem {
+                id: format!("backup-age-{}", backup.service_id),
+                severity: AttentionSeverity::Warning,
+                summary: format!(
+                    "latest backup for {} is {age_hours} hours old",
+                    backup.service_id
+                ),
+                evidence: format!(
+                    "backup {} was recorded at {}; policy maximum is {} hours",
+                    backup.id, backup.created_at_unix_ms, MAX_BACKUP_AGE_HOURS
+                ),
+                recommendation: format!("run and verify a fresh backup for {}", backup.service_id),
+            });
+        }
+    }
+    let now_seconds = u64::try_from(now / 1000).unwrap_or(u64::MAX);
+    for certificate in certificates {
+        let Some(expires_at) = certificate.expires_at_unix_seconds else {
+            upcoming_attention.push(AttentionItem {
+                id: format!("certificate-expiry-{}", certificate.name),
+                severity: AttentionSeverity::Warning,
+                summary: format!(
+                    "certificate {} has no recorded expiry evidence",
+                    certificate.name
+                ),
+                evidence: "certificate resource has no expires_at_unix_seconds observation".into(),
+                recommendation: format!("inspect and renew certificate {}", certificate.name),
+            });
+            continue;
+        };
+        let remaining_days = expires_at.saturating_sub(now_seconds) / (24 * 60 * 60);
+        if expires_at <= now_seconds || remaining_days <= CERTIFICATE_CRITICAL_DAYS {
+            active_incidents.push(AttentionItem {
+                id: format!("certificate-expiry-{}", certificate.name),
+                severity: AttentionSeverity::Critical,
+                summary: if expires_at <= now_seconds {
+                    format!("certificate {} is expired", certificate.name)
+                } else {
+                    format!(
+                        "certificate {} expires in {remaining_days} days",
+                        certificate.name
+                    )
+                },
+                evidence: format!("recorded expiry is Unix second {expires_at}"),
+                recommendation: format!("renew certificate {} immediately", certificate.name),
+            });
+        } else if remaining_days <= CERTIFICATE_WARNING_DAYS {
+            upcoming_attention.push(AttentionItem {
+                id: format!("certificate-expiry-{}", certificate.name),
+                severity: AttentionSeverity::Warning,
+                summary: format!(
+                    "certificate {} expires in {remaining_days} days",
+                    certificate.name
+                ),
+                evidence: format!("recorded expiry is Unix second {expires_at}"),
+                recommendation: format!("schedule renewal for certificate {}", certificate.name),
+            });
+        }
     }
     recommendations.extend(active_incidents.iter().cloned());
     recommendations.extend(upcoming_attention.iter().cloned());
@@ -360,6 +471,27 @@ fn build_summary(
         upcoming_attention,
         recommendations,
     }
+}
+
+fn certificate_evidence(state_dir: &Path) -> Result<Vec<CertificateEvidence>> {
+    Ok(FrameworkStateStore::at_state_dir(state_dir)
+        .load()?
+        .resources
+        .into_iter()
+        .filter(|record| record.resource.kind == ResourceKind::Certificate)
+        .map(|record| CertificateEvidence {
+            name: record
+                .attributes
+                .get("certificate_name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&record.resource.id)
+                .to_owned(),
+            expires_at_unix_seconds: record
+                .attributes
+                .get("expires_at_unix_seconds")
+                .and_then(serde_json::Value::as_u64),
+        })
+        .collect())
 }
 
 fn severity_from_finding(value: &str) -> AttentionSeverity {
@@ -477,7 +609,7 @@ mod tests {
             correlation_id: "test".into(),
             payload: json!({}),
         };
-        let summary = build_summary(diagnostic(), &[], &[], &[event], 0, 10_000, 1);
+        let summary = build_summary(diagnostic(), &[], &[], &[event], &[], 0, 0, 10_000, 1);
         assert_eq!(summary.severity, AttentionSeverity::Healthy);
         assert_eq!(summary.changes.len(), 1);
         assert!(summary.active_incidents.is_empty());
@@ -496,7 +628,7 @@ mod tests {
             created_at_unix_ms: 9_000,
             message: "provider returned failure".into(),
         };
-        let summary = build_summary(diagnostic(), &[], &[backup], &[], 1, 10_000, 1);
+        let summary = build_summary(diagnostic(), &[], &[backup], &[], &[], 1, 0, 10_000, 1);
         assert_eq!(summary.severity, AttentionSeverity::Warning);
         assert!(
             summary.upcoming_attention[0]
@@ -504,6 +636,50 @@ mod tests {
                 .contains("latest backup")
         );
         assert!(summary.recommendations[0].recommendation.contains("retry"));
+    }
+
+    #[test]
+    fn stale_backup_and_near_expiry_certificate_are_visible_attention() {
+        let now = 40 * 60 * 60 * 1000_u128;
+        let backup = ServiceBackup {
+            id: "backup-old".into(),
+            service_id: "database".into(),
+            database: None,
+            path: "/var/backups/lumic/backup-old".into(),
+            size_bytes: 10,
+            checksum_sha256: Some("checksum".into()),
+            status: BackupStatus::Completed,
+            created_at_unix_ms: now - (25 * 60 * 60 * 1000),
+            message: "completed".into(),
+        };
+        let certificate = CertificateEvidence {
+            name: "demo.example.com".into(),
+            expires_at_unix_seconds: Some(u64::try_from(now / 1000).unwrap() + 6 * 86_400),
+        };
+        let summary = build_summary(
+            diagnostic(),
+            &[],
+            &[backup],
+            &[],
+            &[certificate],
+            1,
+            0,
+            now,
+            24,
+        );
+        assert_eq!(summary.severity, AttentionSeverity::Critical);
+        assert!(
+            summary
+                .upcoming_attention
+                .iter()
+                .any(|item| item.id == "backup-age-database")
+        );
+        assert!(
+            summary
+                .active_incidents
+                .iter()
+                .any(|item| item.id == "certificate-expiry-demo.example.com")
+        );
     }
 
     #[test]

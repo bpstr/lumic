@@ -1,694 +1,141 @@
 +++
 title = "lumic.yaml"
-description = "Record application runtime, service, and deployment intent once."
+description = "The versioned repository-to-server application and deployment contract."
 weight = 45
 [extra]
 kicker = "APPLICATIONS"
-status = "planned contract"
+status = "schema version 1 implemented"
 +++
 
-`lumic.yaml` is an optional repository-level application intent file for Lumic Control Center.
+`lumic.yaml` is Lumic Control Center's repository-owned application contract. Put it at the repository root. Lumic validates it before changing server state and resolves it into the same typed application, deployment, process, schedule, health, and managed-service contracts used by CLI, UI, and MCP.
 
-Put it in the root of an application repository:
+The file describes application intent, not Linux commands or secret values. Unknown fields are rejected so misspellings cannot silently change a deployment. Executable fields are argument arrays and are launched directly without a shell.
 
-```text
-my-app/
-├── lumic.yaml
-├── package.json
-└── src/
-```
-
-The file exists primarily so humans and coding agents do not have to describe or rediscover the complete production stack on every deployment.
-
-It is intentionally **not a rigid infrastructure language**. It should describe what the application needs; Lumic decides how to provide those requirements safely on the target server.
-
-A coding agent should be able to inspect a repository, read `lumic.yaml`, inspect the target Lumic node and then use Lumic plans and capabilities to prepare the machine.
-
-## Design principles
-
-- Keep the file short, readable and repository-owned.
-- Describe application requirements, not low-level Linux implementation details.
-- Omit obvious values when Lumic or the coding agent can infer them safely.
-- Prefer named services and references over hard-coded localhost URLs and generated passwords.
-- Keep secrets out of Git.
-- Native Linux services are the default. Containers are an explicit workload choice, not the default architecture.
-- Application commands run as the application's unprivileged user, never as root unless a specific trusted Lumic capability requires privilege.
-- The file is a hint and desired-intent document. Lumic may inspect the repository and server before producing the final plan.
-
-## Minimal example
-
-A small Node application can be as short as:
+## Complete schema version 1 example
 
 ```yaml
-name: example-api
-
-runtime:
-  node: 24
-
-services:
-  database: postgres
-  cache: redis
-
-web:
-  command: node dist/server.js
-  port: 3000
-
-build:
-  - npm ci
-  - npm run build
-
-health:
-  path: /health
-```
-
-This is enough context for an agent to understand that the VPS probably needs Node.js, PostgreSQL, Redis, an application process, a web proxy, environment wiring and a health check.
-
-Lumic should still inspect the repository before applying changes.
-
-## Reference
-
-The sections below are the recommended vocabulary. They are deliberately small and may grow as real application deployments reveal useful patterns.
-
-### `name`
-
-Human-readable application identifier.
-
-```yaml
+schema_version: 1
 name: billing-api
-```
 
-Prefer a stable, filesystem-safe name.
-
-### `source`
-
-Optional Git source hints.
-
-```yaml
 source:
   branch: main
-```
+  subdirectory: apps/api
 
-The repository URL normally does not need to be repeated when Lumic is operating from an already checked-out repository.
-
-Possible fields:
-
-- `branch` — deployment branch.
-- `subdirectory` — application root inside a monorepo.
-
-### `runtime`
-
-Primary application runtime.
-
-Node example:
-
-```yaml
 runtime:
   node: 24
   package_manager: pnpm
-```
 
-PHP example:
+build:
+  - ["pnpm", "run", "build"]
+output: dist
 
-```yaml
-runtime:
-  php: "8.4"
-  extensions:
-    - bcmath
-    - intl
-    - mbstring
-    - pdo_pgsql
-    - redis
-    - zip
-```
+web:
+  command: ["node", "dist/server.js"]
+  port: 3100
 
-Python example:
+workers:
+  queue:
+    command: ["node", "dist/worker.js"]
+    instances: 2
 
-```yaml
-runtime:
-  python: "3.13"
-```
+cron:
+  cleanup:
+    command: ["node", "dist/cleanup.js"]
+    schedule: "0 2 * * *"
 
-The runtime section describes what the application expects. Lumic resolves the appropriate host-native installation for the target operating system.
-
-### `tools`
-
-Development or build tools required by the application in addition to its main runtime.
-
-```yaml
-tools:
-  composer: true
-  node: 24
-```
-
-Typical uses include Composer for PHP applications or Node.js for frontend asset builds in Laravel applications.
-
-### `packages`
-
-Extra trusted operating-system packages required by the application.
-
-```yaml
-packages:
-  - imagemagick
-  - ffmpeg
-```
-
-Package installation must go through Lumic's package policy and allowlist. `lumic.yaml` is not an escape hatch for arbitrary root shell execution.
-
-Do not list ordinary dependencies that belong in `package.json`, `composer.json`, `requirements.txt` or equivalent application manifests.
-
-### `services`
-
-Backing services the application requires.
-
-Simple form:
-
-```yaml
 services:
-  database: postgres
+  database:
+    type: postgresql
+    database: billing
+    user: billing
   cache: redis
-  search: typesense
-```
 
-Expanded form:
+migrations:
+  - ["pnpm", "prisma", "migrate", "deploy"]
 
-```yaml
-services:
-  database:
-    type: postgres
-    database: app
-    user: app
-    storage: 20GB
-    backups:
-      schedule: "0 3 * * *"
-      retain: 7
-
-  cache:
-    type: redis
-    persistence: false
-
-  search:
-    type: typesense
-    storage: 10GB
-```
-
-Service keys such as `database`, `cache` and `search` are local names chosen by the application. `type` identifies the actual service Lumic should provide.
-
-Likely initial service types include:
-
-- `postgres`
-- `mysql`
-- `mariadb`
-- `redis`
-- `valkey`
-- `typesense`
-- `meilisearch`
-- `minio`
-
-The supported catalog should expand without requiring every application manifest to become more complicated.
-
-### Service references
-
-Environment configuration should prefer references to Lumic-managed services instead of hard-coded connection strings.
-
-```yaml
-env:
-  DATABASE_URL:
-    from: service.database.url
-
-  REDIS_URL:
-    from: service.cache.url
-```
-
-A service may expose values such as:
-
-```text
-service.database.host
-service.database.port
-service.database.database
-service.database.user
-service.database.password
-service.database.url
-```
-
-The exact value is resolved by Lumic for the target machine.
-
-This allows the same application description to work when a service is local, moved to another Lumic node, or replaced by a managed service later.
-
-### `env`
-
-Non-secret environment values and references.
-
-```yaml
-env:
-  NODE_ENV: production
-  LOG_LEVEL: info
-
-  DATABASE_URL:
-    from: service.database.url
-```
-
-Do not commit passwords, API tokens or private keys here.
-
-### `secrets`
-
-Names of secrets required by the application.
-
-```yaml
-secrets:
-  OPENAI_API_KEY:
-    required: true
-
-  STRIPE_SECRET:
-    required: true
-```
-
-Lumic should obtain missing secrets interactively, from the UI, CLI, MCP workflow or another configured secure source.
-
-Generated secrets can be described without storing the value:
-
-```yaml
-secrets:
-  SESSION_SECRET:
-    generate: random
-```
-
-Framework-aware helpers may be supported when useful:
-
-```yaml
-secrets:
-  APP_KEY:
-    generate: laravel-key
-```
-
-### `build`
-
-Commands used to prepare an application release.
-
-```yaml
-build:
-  - pnpm install --frozen-lockfile
-  - pnpm build
-```
-
-Laravel example:
-
-```yaml
-build:
-  - composer install --no-dev --prefer-dist --optimize-autoloader
-  - npm ci
-  - npm run build
-```
-
-Build commands run inside the application release directory as the unprivileged application user.
-
-### `web`
-
-The main HTTP workload.
-
-Node example:
-
-```yaml
-web:
-  command: node dist/server.js
-  port: 3000
-  instances: 2
-```
-
-PHP example:
-
-```yaml
-web:
-  type: php-fpm
-  root: public
-  index: index.php
-```
-
-Lumic can use this information to create the appropriate process, reverse proxy or PHP-FPM configuration.
-
-### `processes`
-
-Long-running non-web application processes such as queue consumers.
-
-```yaml
-processes:
-  worker:
-    command: node dist/worker.js
-    instances: 2
-
-  emails:
-    command: node dist/email-worker.js
-    instances: 1
-```
-
-Laravel example:
-
-```yaml
-processes:
-  queue:
-    command: php artisan queue:work --sleep=1 --tries=3
-    instances: 2
-```
-
-Lumic normally maps these to supervised host-native services such as systemd units.
-
-### `jobs`
-
-Scheduled application commands.
-
-```yaml
-jobs:
-  cleanup:
-    command: node dist/jobs/cleanup.js
-    schedule: "0 2 * * *"
-```
-
-Laravel scheduler:
-
-```yaml
-jobs:
-  scheduler:
-    command: php artisan schedule:run
-    schedule: "* * * * *"
-```
-
-Lumic may implement these using systemd timers or another trusted host-native scheduler.
-
-### `domains`
-
-Domains that should route to the application.
-
-```yaml
-domains:
-  - example.com
-  - www.example.com
-```
-
-Expanded form:
-
-```yaml
-domains:
-  - domain: example.com
-    tls: auto
-
-  - domain: www.example.com
-    redirect: https://example.com
-```
-
-Lumic should configure the web server, certificate management and safe HTTP-to-HTTPS behavior from this intent.
-
-### `deploy`
-
-Application-specific deployment actions.
-
-```yaml
-deploy:
+deployment:
   before:
-    - pnpm prisma migrate deploy
-
+    - ["pnpm", "run", "predeploy"]
   after:
-    - pnpm cache:warm
-```
+    - ["node", "dist/warm-cache.js"]
+  deploy_on_push: true
+  retain_releases: 7
+  drain_seconds: 10
 
-Laravel example:
-
-```yaml
-deploy:
-  before:
-    - php artisan down
-
-  migrate:
-    - php artisan migrate --force
-
-  after:
-    - php artisan config:cache
-    - php artisan route:cache
-    - php artisan view:cache
-    - php artisan up
-```
-
-These commands describe application lifecycle hooks. They are not privileged server provisioning commands.
-
-### `health`
-
-Health-check hints used after deployment and during normal operation.
-
-```yaml
 health:
   path: /health
+  port: 3100
   expect: 200
+  timeout_seconds: 10
 ```
 
-Expanded form:
+Static and PHP runtimes use the same contract:
 
 ```yaml
-health:
-  path: /health
-  interval: 30s
-  timeout: 5s
-  expect: 200
-```
-
-### `storage`
-
-Application-owned writable or persistent paths.
-
-```yaml
-storage:
-  writable:
-    - storage
-    - bootstrap/cache
-```
-
-Future forms may also describe persistent/shared directories that survive release switching.
-
-### `container`
-
-Use a container only when the application explicitly needs one.
-
-```yaml
-container:
-  image: ghcr.io/example/app:latest
-```
-
-Container support is a workload feature. Lumic remains host-native by default.
-
-## TypeScript application example
-
-```yaml
-name: example-saas
-
-source:
-  branch: main
-
 runtime:
-  node: 24
-  package_manager: pnpm
-
-packages:
-  - imagemagick
-
-services:
-  database:
-    type: postgres
-    database: app
-    user: app
-    storage: 20GB
-    backups:
-      schedule: "0 3 * * *"
-      retain: 7
-
-  cache:
-    type: redis
-
-  search:
-    type: typesense
-    storage: 10GB
-
-  storage:
-    type: minio
-    storage: 50GB
-
-env:
-  NODE_ENV: production
-
-  DATABASE_URL:
-    from: service.database.url
-
-  REDIS_URL:
-    from: service.cache.url
-
-  TYPESENSE_HOST:
-    from: service.search.host
-
-  TYPESENSE_API_KEY:
-    from: service.search.api_key
-
-secrets:
-  SESSION_SECRET:
-    generate: random
-
-  OPENAI_API_KEY:
-    required: true
-
-build:
-  - pnpm install --frozen-lockfile
-  - pnpm build
-
-web:
-  command: node dist/server.js
-  port: 3000
-  instances: 2
-
-processes:
-  worker:
-    command: node dist/worker.js
-    instances: 1
-
-jobs:
-  cleanup:
-    command: node dist/jobs/cleanup.js
-    schedule: "0 2 * * *"
-
-domains:
-  - domain: example.com
-    tls: auto
-
-  - domain: www.example.com
-    redirect: https://example.com
-
-deploy:
-  before:
-    - pnpm prisma migrate deploy
-
-health:
-  path: /health
-  expect: 200
+  static: true
 ```
 
-## Laravel application example
-
 ```yaml
-name: example-laravel
-
-source:
-  branch: main
-
 runtime:
   php: "8.4"
-  extensions:
-    - bcmath
-    - curl
-    - intl
-    - mbstring
-    - pdo_pgsql
-    - redis
-    - zip
-
-tools:
-  composer: true
-  node: 24
-
-packages:
-  - imagemagick
-
-services:
-  database:
-    type: postgres
-    database: app
-    user: app
-    storage: 20GB
-    backups:
-      schedule: "0 3 * * *"
-      retain: 14
-
-  cache:
-    type: redis
-    persistence: true
-
-env:
-  APP_ENV: production
-  APP_DEBUG: "false"
-
-  DATABASE_URL:
-    from: service.database.url
-
-  REDIS_URL:
-    from: service.cache.url
-
-secrets:
-  APP_KEY:
-    generate: laravel-key
-
-  STRIPE_SECRET:
-    required: true
-
-build:
-  - composer install --no-dev --prefer-dist --optimize-autoloader
-  - npm ci
-  - npm run build
-
-web:
-  type: php-fpm
-  root: public
-  index: index.php
-
-processes:
-  queue:
-    command: php artisan queue:work --sleep=1 --tries=3
-    instances: 2
-
-jobs:
-  scheduler:
-    command: php artisan schedule:run
-    schedule: "* * * * *"
-
-domains:
-  - domain: example.com
-    tls: auto
-
-deploy:
-  migrate:
-    - php artisan migrate --force
-
-  after:
-    - php artisan config:cache
-    - php artisan route:cache
-    - php artisan view:cache
-
-health:
-  path: /up
-  expect: 200
-
-storage:
-  writable:
-    - storage
-    - bootstrap/cache
+  extensions: [bcmath, intl, mbstring, mysql, redis, zip]
+public: public
 ```
 
-## How coding agents should use the file
+Exactly one of `static`, `node`, or `php` is required. Runtime versions and PHP components become typed runtime requirements; installation remains a separately reviewable provisioning operation.
 
-A coding agent should treat `lumic.yaml` as strong repository context, not blindly execute it.
+## Semantics
 
-Recommended workflow:
+- `name` is a lowercase DNS-style slug and must match the target application ID.
+- `source.branch` selects the deployment branch. A branch change requires an explicit manifest plan and apply before deployment.
+- `source.subdirectory` selects the application working directory in a monorepo.
+- `output` and `public` are mutually exclusive paths below the working directory. Static and PHP entry-point validation and nginx document roots use this directory.
+- `build` and `migrations` each accept one argv command in schema version 1. `deployment.before` and `deployment.after` accept multiple argv commands.
+- Node `web.command` and `web.port` compile to the existing blue/green release handoff. The secondary port is the next port and `drain_seconds` is bounded to 300 seconds.
+- Each worker instance becomes an owned systemd process. Each cron entry becomes an owned systemd timer after a healthy deployment.
+- Schema version 1 cron accepts five fields containing a wildcard or one number. Day-of-month and day-of-week cannot both be constrained because their cron and systemd semantics differ.
+- Service entries are requirements, not implicit package installation. Deployment stops until every named role has a matching managed-service binding. Optional `instance`, `database`, and `user` values must match that binding.
+- A health check gates activation and automatic release rollback. `expect` is an exact HTTP status.
+- `retain_releases` is bounded from 1 to 100. `deploy_on_push` gates the native Git `post-receive` deployment path after an operator connects a hosted repository to the application with `lumic git trigger <repository> <application>`.
 
-1. Read `lumic.yaml`.
-2. Inspect normal application manifests such as `package.json`, `composer.json`, lock files and framework configuration.
-3. Inspect the target Lumic node and currently installed services.
-4. Resolve omissions or obvious mismatches from repository evidence.
-5. Ask for missing secrets only when required.
-6. Produce a Lumic plan before material host changes.
-7. Apply changes through typed Lumic capabilities instead of unrestricted root shell commands.
-8. Deploy the application.
-9. Run health checks and report the resulting runtime, services, domains and process state.
+Secrets, environment values, arbitrary operating-system packages, shell strings, and unrestricted host commands are deliberately outside schema version 1.
 
-For most repositories, the useful instruction should become:
+## Inspect, plan, apply, deploy
 
-> Read `lumic.yaml`, inspect this repository and prepare this Lumic node for production. Fill in safe obvious details from the repository, show the infrastructure plan before material changes, deploy the application and verify its health.
+Inspect parsing and schema validity without application state:
 
-The point of `lumic.yaml` is that the user should not have to explain "Node 24 + PostgreSQL + Redis + worker + scheduler + nginx + TLS" again every time an agent touches the server.
+```bash
+lumic app manifest inspect --repository-root .
+```
 
-## Status
+Resolve the contract against an existing application and its managed-service bindings:
 
-`lumic.yaml` is currently a planned application contract. The documentation is intentionally ahead of the implementation so real deployments have a clear starting point.
+```bash
+lumic app manifest plan billing-api --repository-root .
+```
 
-The format should stay pragmatic. When implementation details change, preserve the simple principle: **the repository describes what the application needs; Lumic decides how the server provides it.**
+Apply the reviewed intent, then deploy:
+
+```bash
+lumic app manifest apply billing-api --repository-root .
+lumic app deploy billing-api
+```
+
+Every deployment also reads `lumic.yaml` from the exact checked-out Git commit. A valid committed contract updates the deployment phases and application intent before build and activation, so a pushed revision carries its build, paths, workers, schedules, health gate, and migration behavior with it. Removing a previously applied contract blocks deployment instead of silently falling back.
+
+For a Lumic-hosted repository, configure the repository-to-application mapping once:
+
+```bash
+lumic git trigger billing-api billing-api --branch main
+```
+
+The fixed `post-receive` hook accepts Git's three-field update records through stdin, validates their size and object IDs, and deploys only the contract branch when `deploy_on_push` is enabled. A normal `git push` then enters the same locked, audited deployment state machine as CLI, UI, and MCP apply; it does not execute repository-provided shell.
+
+MCP exposes the same separation through `application_manifest_inspect`, `application_manifest_plan`, and approved `application_manifest_apply`. `application_deploy` remains the distinct mutation that fetches and activates a release.
+
+## Safety and recovery
+
+`lumic.yaml` must be a non-symlink regular file no larger than 256 KiB. Repository paths must be normalized relative paths without parent traversal. Commands must be non-empty argv arrays without control characters. Service bindings and runtime identity are validated before deployment work begins.
+
+Build and migration run in the selected source directory. Migration completes before atomic activation. After health succeeds, Lumic runs post-deploy commands and configures declared workers and schedules. A failed phase follows the normal deployment recovery path: the previous release and Node upstream are restored when available, and the rejected release is not retained as current.

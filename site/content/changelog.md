@@ -8,6 +8,11 @@ The changelog tracks shipped behavior, not every commit. Nightly entries are dat
 
 ## 2026-08-11 · 2.0.0-alpha.3
 
+- Added the strict, versioned [`lumic.yaml`](@/docs/lumic-yaml.md) repository contract for runtimes, source/public paths, builds, workers, cron, service requirements, health, migrations, and deployment behavior across CLI, MCP, and the contract-gated Git push release path.
+- Added serialized production deployments with explicit pre-deploy, build, database migration, activation, health, post-deploy and drain phases.
+- Added blue/green Node release units and atomic nginx upstream handoff, cooperative cancellation, pinned retry/redeploy, persistent log cursors, and Git commit provenance. See [Deployments](@/docs/deployments.md).
+- Added application-scoped encrypted environment values with masked inspection, controlled set/rotate/delete operations, deployment-time injection, and deployment-log redaction. See [Applications](@/docs/applications.md).
+- Turned the UI overview into an operations dashboard backed by the shared attention verdict, including certificate-expiry and latest-backup-age evidence.
 - Added first-class managed and external Git repositories with discovery, adoption, remotes, synchronization, authenticated Smart HTTP, and deployment configuration.
 - Added pinned, verified Gitea and Gogs managed-service drivers that share Lumic's configured repository root.
 - Added repository status and create/import workflows to CLI, UI, and MCP.

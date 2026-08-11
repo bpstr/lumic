@@ -1,3 +1,4 @@
+use crate::application_manifest::ResolvedApplicationManifest;
 use crate::{LumicError, Result};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
@@ -24,6 +25,72 @@ pub struct RepositoryConfig {
     pub url: String,
     pub branch: String,
     pub credential_reference: Option<String>,
+    #[serde(default)]
+    pub deployment: DeploymentWorkflow,
+    /// The validated repository-owned contract last applied to this application.
+    #[serde(default)]
+    pub contract: Option<ResolvedApplicationManifest>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeploymentWorkflow {
+    #[serde(default)]
+    pub pre_deploy: Vec<Vec<String>>,
+    pub build: Option<Vec<String>>,
+    pub migrate: Option<Vec<String>>,
+    #[serde(default)]
+    pub post_deploy: Vec<Vec<String>>,
+    pub node_handoff: Option<NodeHandoff>,
+}
+
+impl DeploymentWorkflow {
+    pub fn validate(&self) -> Result<()> {
+        for command in self
+            .pre_deploy
+            .iter()
+            .chain(self.build.iter())
+            .chain(self.migrate.iter())
+            .chain(self.post_deploy.iter())
+        {
+            validate_command(command)?;
+        }
+        if let Some(handoff) = &self.node_handoff {
+            handoff.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeHandoff {
+    pub command: Vec<String>,
+    pub primary_port: u16,
+    pub secondary_port: u16,
+    #[serde(default = "default_drain_seconds")]
+    pub drain_seconds: u64,
+}
+
+impl NodeHandoff {
+    pub fn validate(&self) -> Result<()> {
+        validate_command(&self.command)?;
+        if self.primary_port == 0
+            || self.secondary_port == 0
+            || self.primary_port == self.secondary_port
+            || self.drain_seconds > 300
+        {
+            return Err(LumicError::InvalidInput {
+                field: "node_handoff".into(),
+                message:
+                    "requires two distinct non-zero ports and a drain time of at most 300 seconds"
+                        .into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+const fn default_drain_seconds() -> u64 {
+    10
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +291,8 @@ pub struct Application {
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentStatus {
     Started,
+    Cancelling,
+    Cancelled,
     Completed,
     Failed,
     RolledBack,
@@ -233,6 +302,7 @@ pub enum DeploymentStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentPhaseStatus {
+    Running,
     Completed,
     Failed,
     Skipped,
@@ -243,6 +313,35 @@ pub struct DeploymentPhase {
     pub name: String,
     pub status: DeploymentPhaseStatus,
     pub message: String,
+    #[serde(default)]
+    pub started_at_unix_ms: u128,
+    pub finished_at_unix_ms: Option<u128>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitMetadata {
+    pub id: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub subject: String,
+    pub authored_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentLogStream {
+    System,
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeploymentLogEntry {
+    pub sequence: u64,
+    pub timestamp_unix_ms: u128,
+    pub phase: String,
+    pub stream: DeploymentLogStream,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +350,7 @@ pub struct Deployment {
     pub application_id: String,
     pub release_path: String,
     pub commit: String,
+    pub commit_metadata: Option<CommitMetadata>,
     pub status: DeploymentStatus,
     pub healthy: bool,
     pub message: String,
@@ -259,6 +359,9 @@ pub struct Deployment {
     pub phases: Vec<DeploymentPhase>,
     #[serde(default)]
     pub automatic_rollback: bool,
+    pub retry_of: Option<String>,
+    pub node_port: Option<u16>,
+    pub process_unit: Option<String>,
     pub started_at_unix_ms: u128,
     pub finished_at_unix_ms: Option<u128>,
 }
@@ -396,5 +499,23 @@ mod tests {
     fn interval_schedules_reject_zero_seconds() {
         assert!(ApplicationSchedule::interval(0).validate().is_err());
         assert!(ApplicationSchedule::interval(60).validate().is_ok());
+    }
+
+    #[test]
+    fn validates_typed_deployment_workflow_and_node_handoff() {
+        let workflow = DeploymentWorkflow {
+            migrate: Some(vec!["php".into(), "artisan".into(), "migrate".into()]),
+            node_handoff: Some(NodeHandoff {
+                command: vec!["node".into(), "server.js".into()],
+                primary_port: 3100,
+                secondary_port: 3101,
+                drain_seconds: 15,
+            }),
+            ..DeploymentWorkflow::default()
+        };
+        assert!(workflow.validate().is_ok());
+        let mut invalid = workflow;
+        invalid.node_handoff.as_mut().unwrap().secondary_port = 3100;
+        assert!(invalid.validate().is_err());
     }
 }

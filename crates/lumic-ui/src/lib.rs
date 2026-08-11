@@ -10,6 +10,7 @@ use axum::{
 use lumic_core::{
     HostFacts, LumicError, OperationContext, OperationInterface, Result,
     application::Deployment,
+    attention::AttentionSummary,
     pipeline::PipelineExecution,
     resource::{ResourceKind, ResourceRef},
     server::UpdateScope,
@@ -608,7 +609,48 @@ async fn overview(State(state): State<UiState>, headers: HeaderMap) -> Response 
     );
     let history = usage_history_charts();
     let status = dashboard_status(fact("hostname"), fact("operating_system"), &usage, history);
-    page("Overview", &format!("{status}<h2>Managed resources</h2><div class=grid><div class=card><h2>Applications</h2><p>{}</p><a href=/apps>Inspect applications</a></div><div class=card><h2>Services</h2><p>{}</p><a href=/services>Inspect services</a></div><div class=card><h2>Infrastructure</h2><p>{peer_count} trusted or revoked peers</p><a href=/infrastructure>Inspect topology</a></div></div><h2>Recent events</h2><table><tr><th>Time</th><th>Event</th><th>Entity</th></tr>{event_rows}</table>", apps.len(), services.len()), true).into_response()
+    let operations = operations_overview(&attention.summary);
+    page("Overview", &format!("{status}{operations}<h2>Managed resources</h2><div class=grid><div class=card><h2>Applications</h2><p>{}</p><a href=/apps>Inspect applications</a></div><div class=card><h2>Services</h2><p>{}</p><a href=/services>Inspect services</a></div><div class=card><h2>Infrastructure</h2><p>{peer_count} trusted or revoked peers</p><a href=/infrastructure>Inspect topology</a></div></div><h2>Recent events</h2><table><tr><th>Time</th><th>Event</th><th>Entity</th></tr>{event_rows}</table>", apps.len(), services.len()), true).into_response()
+}
+
+fn operations_overview(summary: &AttentionSummary) -> String {
+    let fact = |key: &str| {
+        summary
+            .facts
+            .iter()
+            .find(|fact| fact.key == key)
+            .map(|fact| fact.value.as_str())
+            .unwrap_or("unknown")
+    };
+    let attention = summary
+        .active_incidents
+        .iter()
+        .chain(summary.upcoming_attention.iter())
+        .take(6)
+        .map(|item| {
+            format!(
+                "<li><strong>{}</strong> {}</li>",
+                escape(item.severity.as_str()),
+                escape(&item.summary)
+            )
+        })
+        .collect::<String>();
+    let attention = if attention.is_empty() {
+        "<li>No active operational warnings.</li>".into()
+    } else {
+        attention
+    };
+    format!(
+        "<section aria-labelledby=operations-title><h2 id=operations-title>Operations</h2><div class=grid><div class=card><h2>Server</h2><p><strong>{}</strong></p><p>{} failed services · {} pending updates</p></div><div class=card><h2>Workloads</h2><p>{} applications · {} services · {} deployments</p></div><div class=card><h2>Protection</h2><p>{} certificates · {} recorded backups</p></div></div><h3>Attention</h3><ul>{attention}</ul></section>",
+        escape(summary.severity.as_str()),
+        escape(fact("failed_services")),
+        escape(fact("updates")),
+        escape(fact("applications")),
+        escape(fact("managed_services")),
+        escape(fact("deployments")),
+        escape(fact("certificates")),
+        escape(fact("backups")),
+    )
 }
 
 fn dashboard_status(hostname: &str, operating_system: &str, usage: &str, history: &str) -> String {
@@ -1691,7 +1733,13 @@ async fn deployment_detail(
         .ok()
         .and_then(|items| items.into_iter().find(|item| item.id == id));
     match deployment {
-        Some(item) => page("Deployment", &deployment_html(&item), true).into_response(),
+        Some(item) => {
+            let logs = state
+                .applications()
+                .deployment_logs(&app, &item.id, 0)
+                .unwrap_or_default();
+            page("Deployment", &deployment_html(&item, &logs), true).into_response()
+        }
         None => (
             StatusCode::NOT_FOUND,
             page("Not found", "<h1>Deployment not found</h1>", true),
@@ -1945,6 +1993,7 @@ async fn app_rollback(
     match state
         .applications()
         .rollback(&id, &ui_context("application_rollback"))
+        .await
     {
         Ok(result) => result_page("Rollback complete", &result.message),
         Err(error) => error_response(error),
@@ -2052,7 +2101,10 @@ fn error_response(error: LumicError) -> Response {
         .into_response()
 }
 
-fn deployment_html(item: &Deployment) -> String {
+fn deployment_html(
+    item: &Deployment,
+    logs: &[lumic_core::application::DeploymentLogEntry],
+) -> String {
     let phases = item
         .phases
         .iter()
@@ -2065,8 +2117,32 @@ fn deployment_html(item: &Deployment) -> String {
             )
         })
         .collect::<String>();
+    let provenance = item
+        .commit_metadata
+        .as_ref()
+        .map_or_else(String::new, |commit| {
+            format!(
+                "<p><strong>{}</strong> by {} &lt;{}&gt; · {}</p>",
+                escape(&commit.subject),
+                escape(&commit.author_name),
+                escape(&commit.author_email),
+                escape(&commit.authored_at),
+            )
+        });
+    let log_rows = logs
+        .iter()
+        .map(|entry| {
+            format!(
+                "<tr><td>{}</td><td>{}</td><td>{:?}</td><td class=mono>{}</td></tr>",
+                entry.sequence,
+                escape(&entry.phase),
+                entry.stream,
+                escape(&entry.message),
+            )
+        })
+        .collect::<String>();
     format!(
-        "<h1>Deployment {}</h1><p>{:?} · commit <span class=mono>{}</span></p><p>{}</p><table><tr><th>Phase</th><th>Status</th><th>Message</th></tr>{phases}</table>",
+        "<h1>Deployment {}</h1><p>{:?} · commit <span class=mono>{}</span></p>{provenance}<p>{}</p><table><tr><th>Phase</th><th>Status</th><th>Message</th></tr>{phases}</table><h2>Deployment log</h2><table><tr><th>Cursor</th><th>Phase</th><th>Stream</th><th>Message</th></tr>{log_rows}</table>",
         escape(&item.id),
         item.status,
         escape(&item.commit),
@@ -2545,10 +2621,38 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_status_omits_the_attention_diagnostic_card() {
-        let html = dashboard_status("node-01", "Ubuntu 24.04", "usage", "history");
-
-        assert!(!html.contains("How this node is doing"));
+    fn operations_overview_surfaces_health_workloads_and_protection() {
+        let summary = lumic_core::attention::AttentionSummary {
+            generated_at_unix_ms: 1,
+            period_start_unix_ms: 0,
+            period_end_unix_ms: 1,
+            severity: lumic_core::attention::AttentionSeverity::Warning,
+            facts: [
+                ("failed_services", "1"),
+                ("updates", "4 total, 2 security"),
+                ("applications", "3"),
+                ("managed_services", "2"),
+                ("deployments", "8"),
+                ("certificates", "3"),
+                ("backups", "12"),
+            ]
+            .into_iter()
+            .map(|(key, value)| lumic_core::attention::AttentionFact {
+                key: key.into(),
+                label: key.into(),
+                value: value.into(),
+                evidence: "test".into(),
+            })
+            .collect(),
+            changes: Vec::new(),
+            active_incidents: Vec::new(),
+            upcoming_attention: Vec::new(),
+            recommendations: Vec::new(),
+        };
+        let html = operations_overview(&summary);
+        assert!(html.contains("<strong>warning</strong>"));
+        assert!(html.contains("3 applications · 2 services · 8 deployments"));
+        assert!(html.contains("3 certificates · 12 recorded backups"));
     }
 
     #[tokio::test]

@@ -71,6 +71,8 @@ resource_operations            resource_operation_inspect
 software_catalog                software_status
 software_plan_setup             software_setup
 application_list                application_inspect
+application_manifest_inspect    application_manifest_plan
+application_manifest_apply
 application_plan_deployment     application_deployments
 application_create              application_configure_process
 application_set_repository      application_provision
@@ -107,6 +109,8 @@ repository_fetch                repository_push
 repository_plan_deployment      repository_configure_deployment
 git_push_deploy_configure       environment_secret_generate
 application_environment_reference_set
+application_environment_secret_rotate
+application_environment_secret_delete
 environment_export              environment_import
 environment_diff                resource_endpoint_register
 node_membership_configure       coordinated_deployment_begin
@@ -201,6 +205,6 @@ codex mcp add lumic-http --url http://127.0.0.1:10801/mcp \
 
 Do not bind the daemon listener publicly or send the bearer token over plaintext HTTP. A public URL must terminate TLS before forwarding to the loopback listener. The current token authenticates one node-level MCP policy; OAuth and per-identity grants remain future work.
 
-Tool descriptions identify read-only versus mutating behavior. Existing mutation tools use the `mutations` compatibility scope. Epic E operations are separated into `operations.signal`, `operations.configure`, `operations.automate` and `operations.run`; Epic F integration apply/rollback uses `application.integrate`, and external incident disclosure uses `incident.analyze`. `operations.*` grants that family and `*` grants all scopes. Apply operations use the same validated application, recipe, host-operator, apt, systemd, MySQL/PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Fingerprints, key-only configuration inspection, dependency graphs, integration plans, incident context, timeline, delivery history and backup verification are read-only. Analysis is advisory and its proposed remediations must be executed separately through ordinary typed tools. Actor/interface/correlation data is written to `audit.jsonl`; Git/database/recipe/notification/dotenv secret values are neither accepted by ordinary reads nor returned.
+Tool descriptions identify read-only versus mutating behavior. Existing mutation tools use the `mutations` compatibility scope. Epic E operations are separated into `operations.signal`, `operations.configure`, `operations.automate` and `operations.run`; Epic F integration apply/rollback uses `application.integrate`, and external incident disclosure uses `incident.analyze`. `operations.*` grants that family and `*` grants all scopes. Apply operations use the same validated application, recipe, host-operator, apt, systemd, MySQL/PostgreSQL/Redis, nginx, TLS, health and rollback services as the CLI and UI. Fingerprints, key-only configuration inspection, dependency graphs, integration plans, incident context, timeline, delivery history and backup verification are read-only. Application list/inspect and environment mutations mask secret references; rotate creates fresh random material without returning it, and delete is limited to the named application key. There is no ordinary MCP plaintext-secret read. Analysis is advisory and its proposed remediations must be executed separately through ordinary typed tools. Actor/interface/correlation data is written to `audit.jsonl`; Git/database/recipe/notification/dotenv secret values are neither accepted by ordinary reads nor returned.
 
 Node enrollment, trust and signed deploy/rollback envelopes are implemented independently of transport. An agent connected to two MCP endpoints can carry an envelope from `remote_operation_sign` to `remote_operation_apply`; expiry, target, trust, signature and replay protection are revalidated by the receiving node. Process scopes constrain the node-level server policy, not separate authenticated client identities. Import credentials locally with the CLI, then pass only their reference to MCP. Application process commands are accepted only as an executable/argument array; shell command strings are not a supported escape hatch.

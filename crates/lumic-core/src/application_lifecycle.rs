@@ -621,6 +621,8 @@ mod tests {
                 url: "https://example.com/shop.git".into(),
                 branch: "main".into(),
                 credential_reference: None,
+                deployment: Default::default(),
+                contract: None,
             }),
             components: vec!["curl".into(), "mysql".into()],
             databases: vec![ApplicationServiceReference {

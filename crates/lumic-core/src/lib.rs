@@ -4,6 +4,7 @@ use thiserror::Error;
 
 pub mod application;
 pub mod application_lifecycle;
+pub mod application_manifest;
 pub mod artifact;
 pub mod attention;
 pub mod binding;

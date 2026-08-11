@@ -78,6 +78,9 @@ lumic git trigger <repository> <application> [--branch main]
 
 lumic environment secret-generate <reference>
 lumic environment reference-set <application> <NAME> <reference>
+printf '%s' "$VALUE" | lumic environment secret-set <application> <NAME>
+lumic environment secret-rotate <application> <NAME>
+lumic environment secret-delete <application> <NAME>
 lumic environment export <application> <environment> --tier production|staging|development --output <file>
 lumic environment import <bundle> --target <application> --tier <tier> --domain <domain> [--env NAME=reference] [--service source=target]
 lumic environment diff <source-bundle> <target-bundle>
@@ -149,7 +152,7 @@ lumic status --json
 
 `lumic repo` is the provider-neutral Git repository surface. It includes `list`, `get`, `plan-create`, `create`, `import`, `register`, `discover`, `adopt`, `delete`, `status`, `branches`, `tags`, `remote-add`, `remote-remove`, `fetch`, `push`, `clone-url`, `plan-deployment`, and `configure-deployment`. Mutations use the shared repository locks, audit trail and dry-run context. See [Git repositories](@/docs/repositories.md) for storage, deployment configuration, authentication and recovery details.
 
-`lumic how-are-you` builds the canonical attention report from live diagnosis, managed application/service state, latest backups and recent durable events. `--period-hours` controls only the change-history window; it does not turn old failures into current incidents. Personality changes deterministic prose only. `--json` returns both the rendered text and authoritative factual fields. Personality state is private, atomic, audited and defaults to `professional`.
+`lumic how-are-you` builds the canonical attention report from live diagnosis, managed application/service/deployment state, certificate expiry evidence, latest backups and recent durable events. Backups older than 24 hours are flagged for services with backup history; certificates without expiry evidence or within the 30-day renewal window are visible, with expiry/7-day conditions critical. `--period-hours` controls only the change-history window; it does not turn old failures into current incidents. Personality changes deterministic prose only. `--json` returns both the rendered text and authoritative factual fields. Personality state is private, atomic, audited and defaults to `professional`.
 
 Package search is discovery only and never grants trust. Installation and removal require exact built-in policy entries, use direct argv invocation, are idempotent, and record events and audits. `LUMIC_STATE_DIR` and `LUMIC_APPS_ROOT` can relocate state for testing; production defaults are `/var/lib/lumic` and `/var/lib/lumic/apps`.
 
@@ -160,6 +163,8 @@ Package search is discovery only and never grants trust. Installation and remova
 nginx is installed and recorded independently, not as an implicit runtime dependency. Lumic writes the owned web host atomically, runs `nginx -t` before activation, binds PHP sites to the selected runtime's published FPM socket, and restores the prior configuration if validation, reload, or resource-state persistence fails. Node has a minimal package/build/proxy foundation; the two acceptance references are static and generic PHP Git applications.
 
 Deployment is a separate plan/apply flow. `app plan` shows the intended source change, risks, preconditions, validation and recovery. `app deploy` mirrors Git, checks out an isolated release, runs Composer or npm when the corresponding manifest/lock exists, validates the runtime entry point, switches `current` atomically, then runs the configured local HTTP health check. A failed health check automatically restores the previous release. Deployment phase results, source commits and rollback state remain in history.
+
+Repository-owned deployment intent lives in [`lumic.yaml`](@/docs/lumic-yaml.md). `app manifest inspect --repository-root <path>` validates it without application state, `app manifest plan <app> --repository-root <path>` resolves exact changes and risks, and `app manifest apply <app> --repository-root <path>` persists the approved contract. Deployments then resolve the file again from the exact checked-out commit before running its argv-only build, migration, health, worker, and schedule behavior.
 
 SSH keys are copied into Lumic's mode-`0600` credential store and application metadata retains only the named reference. Workers and schedules become validated systemd service/timer units; commands remain argv data and do not use `sh -c`. `app tls` uses the trusted Certbot/Let's Encrypt provider after web provisioning. Certbot obtains a named certificate with `certonly`; Lumic attaches it to the owned nginx resource, validates and reloads with rollback, and persists an explicit certificate binding. The contact email and private-key contents are not written to resource state.
 

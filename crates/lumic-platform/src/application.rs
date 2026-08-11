@@ -1,6 +1,6 @@
 use crate::{
     ProcessOutput, ProcessRunner, ProcessSpec,
-    app_process::{ApplicationProcessManager, ProcessConfigurationResult},
+    app_process::{ApplicationProcessManager, NodeReleaseStart, ProcessConfigurationResult},
     atomic_file::write_atomic,
     audit_store::AuditStore,
     certificate::{CertbotProvider, CertificateManager, NginxCertificateAttacher},
@@ -15,12 +15,16 @@ use lumic_core::{
     Capability, Change, LumicError, OperationContext, Plan, Result, Risk, RiskLevel,
     application::{
         Application, ApplicationProcess, ApplicationRuntime, ApplicationServiceReference,
-        Deployment, DeploymentPhase, DeploymentPhaseStatus, DeploymentStatus, RepositoryConfig,
-        TlsState, unix_time_ms, validate_branch, validate_command, validate_domain,
-        validate_repository_url, validate_slug,
+        CommitMetadata, Deployment, DeploymentLogEntry, DeploymentLogStream, DeploymentPhase,
+        DeploymentPhaseStatus, DeploymentStatus, DeploymentWorkflow, RepositoryConfig, TlsState,
+        unix_time_ms, validate_branch, validate_command, validate_domain, validate_repository_url,
+        validate_slug,
     },
     application_lifecycle::{
         ApplicationLifecycleOperation, ApplicationLifecyclePlan, GenericPhpApplicationSpec,
+    },
+    application_manifest::{
+        APPLICATION_MANIFEST_FILE, ApplicationManifest, ResolvedApplicationManifest,
     },
     binding::Binding,
     certificate::CertificateRequest,
@@ -43,7 +47,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    time::timeout,
+    time::{sleep, timeout},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +116,13 @@ pub struct ApplicationService {
     state_dir: PathBuf,
     apps_root: PathBuf,
     runner: ProcessRunner,
+}
+
+struct ReleasePreparation<'a> {
+    pinned_commit: Option<&'a str>,
+    previous_node_port: Option<u16>,
+    release: &'a Path,
+    context: &'a OperationContext,
 }
 
 impl ApplicationService {
@@ -317,6 +328,8 @@ impl ApplicationService {
             url: url.into(),
             branch: branch.into(),
             credential_reference: credential_reference.clone(),
+            deployment: Default::default(),
+            contract: None,
         });
         application.updated_at_unix_ms = unix_time_ms();
         let application = application.clone();
@@ -606,8 +619,10 @@ impl ApplicationService {
         validate_slug("process", &process.name)?;
         validate_command(&process.command)?;
         let application = self.inspect(id)?;
+        let environment = self.resolve_environment(&application)?;
+        let environment_file = self.materialize_environment(&application, &environment)?;
         let result = ApplicationProcessManager::system(&self.state_dir)
-            .configure(&application, &process, context)
+            .configure(&application, &process, environment_file.as_deref(), context)
             .await
             .inspect_err(|error| {
                 let _ = self.audit_failure(
@@ -705,6 +720,216 @@ impl ApplicationService {
         Ok(deployments)
     }
 
+    pub fn configure_deployment(
+        &self,
+        id: &str,
+        workflow: DeploymentWorkflow,
+        context: &OperationContext,
+    ) -> Result<Application> {
+        workflow.validate()?;
+        if self.inspect(id)?.repository.is_none() {
+            return Err(LumicError::InvalidInput {
+                field: "repository".into(),
+                message: "configure a repository before its deployment workflow".into(),
+            });
+        }
+        let application = self.update_application(id, |application| {
+            if let Some(repository) = &mut application.repository {
+                repository.deployment = workflow.clone();
+            }
+        })?;
+        self.emit(
+            "application.deployment_workflow_configured",
+            id,
+            context,
+            json!({
+                "pre_deploy_commands": workflow.pre_deploy.len(),
+                "custom_build": workflow.build.is_some(),
+                "migration": workflow.migrate.is_some(),
+                "post_deploy_commands": workflow.post_deploy.len(),
+                "node_handoff": workflow.node_handoff.is_some(),
+            }),
+        )?;
+        Ok(application)
+    }
+
+    /// Read and validate the repository-owned `lumic.yaml` contract without changing state.
+    pub fn inspect_manifest(&self, repository_root: &Path) -> Result<ApplicationManifest> {
+        read_application_manifest(repository_root)
+    }
+
+    /// Resolve a repository contract against an application's current repository configuration.
+    pub fn plan_manifest(&self, id: &str, repository_root: &Path) -> Result<Plan> {
+        let application = self.inspect(id)?;
+        let repository =
+            application
+                .repository
+                .as_ref()
+                .ok_or_else(|| LumicError::InvalidInput {
+                    field: "repository".into(),
+                    message: "configure a repository before planning lumic.yaml".into(),
+                })?;
+        let contract = read_application_manifest(repository_root)?.resolve(&repository.branch)?;
+        validate_manifest_application(&application, &contract)?;
+
+        let mut risks = Vec::new();
+        if contract.workflow.migrate.is_some() {
+            risks.push(Risk {
+                level: RiskLevel::High,
+                summary: "the repository requests a database migration that release rollback may not reverse".into(),
+                mitigation: Some("use backward-compatible expand/contract migrations and keep an operator recovery procedure".into()),
+            });
+        }
+        if !contract.service_requirements.is_empty() {
+            risks.push(Risk {
+                level: RiskLevel::Medium,
+                summary: "repository service requirements must resolve to managed service bindings before deployment".into(),
+                mitigation: Some("review and bind each typed service requirement before applying a deployment".into()),
+            });
+        }
+        Ok(Plan {
+            id: format!("application-manifest-{id}"),
+            summary: format!("Apply {} as the deployment contract for {id}", APPLICATION_MANIFEST_FILE),
+            changes: vec![Change {
+                capability: Capability::new("application.manifest.apply"),
+                summary: "persist the validated runtime, build, public path, processes, schedules, services, health check, migration, and deployment intent".into(),
+                before: repository.contract.as_ref().map(|value| format!("schema {} contract", value.manifest.schema_version)),
+                after: Some(format!("schema {} contract from {}", contract.manifest.schema_version, repository_root.display())),
+                reversible: true,
+            }],
+            risks,
+            preconditions: vec![
+                format!("{} is a regular file no larger than 256 KiB", repository_root.join(APPLICATION_MANIFEST_FILE).display()),
+                format!("manifest application name and runtime match {id}"),
+                "referenced runtime and managed services are available before deployment".into(),
+            ],
+            validation: vec![
+                "all executable fields are non-empty argv arrays".into(),
+                "all source and public paths remain relative to the repository".into(),
+                "workers and schedules compile to typed systemd process definitions".into(),
+            ],
+            recovery: vec![
+                "restore the previous lumic.yaml and apply its plan".into(),
+                format!("redeploy the last healthy release for {id}"),
+            ],
+        })
+    }
+
+    /// Apply a previously reviewable repository contract to application state.
+    pub fn apply_manifest(
+        &self,
+        id: &str,
+        repository_root: &Path,
+        context: &OperationContext,
+    ) -> Result<Application> {
+        if !context.approved {
+            return Err(LumicError::InvalidInput {
+                field: "approval".into(),
+                message: "applying lumic.yaml requires explicit approval".into(),
+            });
+        }
+        let before = self.inspect(id)?;
+        let repository = before
+            .repository
+            .as_ref()
+            .ok_or_else(|| LumicError::InvalidInput {
+                field: "repository".into(),
+                message: "configure a repository before applying lumic.yaml".into(),
+            })?;
+        let contract = read_application_manifest(repository_root)?.resolve(&repository.branch)?;
+        validate_manifest_application(&before, &contract)?;
+        if context.dry_run {
+            self.plan_manifest(id, repository_root)?;
+            return Ok(before);
+        }
+
+        let application = self.update_application(id, |application| {
+            application.health_check = contract.health.clone();
+            application.processes = contract.processes.clone();
+            application.release_retention = contract.manifest.deployment.retain_releases;
+            if let Some(repository) = &mut application.repository {
+                repository.branch = contract.branch.clone();
+                repository.deployment = contract.workflow.clone();
+                repository.contract = Some(contract.clone());
+            }
+        })?;
+        self.audit.append(&AuditRecord::now(
+            context,
+            "application.manifest.apply",
+            "apply_manifest",
+            "application",
+            id,
+            json!({"file": APPLICATION_MANIFEST_FILE, "schema_version": contract.manifest.schema_version}),
+            serde_json::to_value(&before).ok(),
+            serde_json::to_value(&application).ok(),
+            true,
+            "repository application contract applied",
+        ))?;
+        self.emit(
+            "application.manifest_applied",
+            id,
+            context,
+            json!({
+                "schema_version": contract.manifest.schema_version,
+                "deploy_on_push": contract.manifest.deployment.deploy_on_push,
+                "services": contract.service_requirements.len(),
+                "processes": contract.processes.len(),
+            }),
+        )?;
+        Ok(application)
+    }
+
+    pub fn deployment_logs(
+        &self,
+        id: &str,
+        deployment_id: &str,
+        after_sequence: u64,
+    ) -> Result<Vec<DeploymentLogEntry>> {
+        self.deployment(id, deployment_id)?;
+        let path = self.deployment_log_path(deployment_id)?;
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let bytes = fs::read(path).map_err(state_io_error)?;
+        let entries: Vec<DeploymentLogEntry> =
+            serde_json::from_slice(&bytes).map_err(|error| LumicError::Internal {
+                message: format!("deployment log is invalid: {error}"),
+            })?;
+        Ok(entries
+            .into_iter()
+            .filter(|entry| entry.sequence > after_sequence)
+            .collect())
+    }
+
+    pub fn cancel_deployment(
+        &self,
+        id: &str,
+        deployment_id: &str,
+        context: &OperationContext,
+    ) -> Result<Deployment> {
+        let mut deployment = self.deployment(id, deployment_id)?;
+        if deployment.status != DeploymentStatus::Started {
+            return Err(invalid(
+                "deployment",
+                "only an active deployment can be cancelled",
+            ));
+        }
+        let marker = self.cancellation_path(deployment_id)?;
+        fs::create_dir_all(marker.parent().unwrap_or(&self.state_dir)).map_err(state_io_error)?;
+        write_atomic(&marker, b"cancel\n", 0o600)?;
+        deployment.status = DeploymentStatus::Cancelling;
+        deployment.message =
+            "cancellation requested; waiting for the current command to finish".into();
+        self.upsert_deployment(&deployment)?;
+        self.emit(
+            "deployment.cancellation_requested",
+            id,
+            context,
+            json!({"deployment_id": deployment_id}),
+        )?;
+        Ok(deployment)
+    }
+
     pub fn plan_deployment(&self, id: &str) -> Result<Plan> {
         let application = self.inspect(id)?;
         let repository =
@@ -729,14 +954,24 @@ impl ApplicationService {
                 mitigation: Some("configure an HTTP health check before applying this plan".into()),
             });
         }
+        if repository.deployment.migrate.is_some() {
+            risks.push(Risk {
+                level: RiskLevel::High,
+                summary: "the configured database migration may not be reversible by a release rollback"
+                    .into(),
+                mitigation: Some(
+                    "use backward-compatible expand/contract migrations and keep an operator recovery procedure"
+                        .into(),
+                ),
+            });
+        }
         Ok(Plan {
             id: format!("deploy-{id}"),
             summary: format!("Deploy the latest {} revision for {id}", repository.branch),
             changes: vec![Change {
                 capability: Capability::new("application.deploy"),
-                summary:
-                    "create an isolated release, run the runtime build, and atomically activate it"
-                        .into(),
+                summary: "lock deployment, create an isolated release, run pre-deploy/build/migrate, atomically activate, health-check, then run post-deploy"
+                    .into(),
                 before: current,
                 after: Some(format!("latest {} revision", repository.branch)),
                 reversible: true,
@@ -746,6 +981,7 @@ impl ApplicationService {
                 format!("repository {} is reachable", repository.url),
                 "runtime build tools are installed".into(),
                 "the application root has sufficient free space".into(),
+                "no other deployment holds the application deployment lock".into(),
             ],
             validation: vec![
                 "runtime entry point exists".into(),
@@ -769,8 +1005,37 @@ impl ApplicationService {
     }
 
     pub async fn deploy(&self, id: &str, context: &OperationContext) -> Result<Deployment> {
-        let application = self.inspect(id)?;
-        let repository =
+        self.deploy_revision(id, None, None, context).await
+    }
+
+    pub async fn redeploy(
+        &self,
+        id: &str,
+        deployment_id: &str,
+        context: &OperationContext,
+    ) -> Result<Deployment> {
+        let prior = self.deployment(id, deployment_id)?;
+        if prior.commit.is_empty() || prior.status == DeploymentStatus::Started {
+            return Err(invalid(
+                "deployment",
+                "redeploy requires a prior deployment with a resolved commit",
+            ));
+        }
+        self.deploy_revision(id, Some(prior.id), Some(prior.commit), context)
+            .await
+    }
+
+    async fn deploy_revision(
+        &self,
+        id: &str,
+        retry_of: Option<String>,
+        pinned_commit: Option<String>,
+        context: &OperationContext,
+    ) -> Result<Deployment> {
+        let mut application = self.inspect(id)?;
+        let resource = ResourceRef::new(ResourceKind::Application, id)?;
+        let _deployment_lock = ResourceLock::try_acquire(&self.state_dir, &resource)?;
+        let mut repository =
             application
                 .repository
                 .clone()
@@ -778,22 +1043,41 @@ impl ApplicationService {
                     field: "repository".into(),
                     message: "configure a repository before deployment".into(),
                 })?;
+        repository.deployment.validate()?;
         let deployment_id = format!("{}-{}", unix_time_ms(), std::process::id());
         let release = PathBuf::from(&application.root)
             .join("releases")
             .join(&deployment_id);
         let previous_release = current_release(&application)?;
+        let previous_node = previous_release.as_deref().and_then(|release_path| {
+            self.store
+                .load()
+                .ok()?
+                .deployments
+                .into_iter()
+                .rev()
+                .find(|item| {
+                    item.application_id == id
+                        && item.status == DeploymentStatus::Completed
+                        && item.release_path == release_path
+                        && item.process_unit.is_some()
+                })
+        });
         let mut deployment = Deployment {
             id: deployment_id,
             application_id: id.into(),
             release_path: release.to_string_lossy().into_owned(),
             commit: String::new(),
+            commit_metadata: None,
             status: DeploymentStatus::Started,
             healthy: false,
             message: "preparing release".into(),
             previous_release,
             phases: Vec::new(),
             automatic_rollback: false,
+            retry_of,
+            node_port: None,
+            process_unit: None,
             started_at_unix_ms: unix_time_ms(),
             finished_at_unix_ms: None,
         };
@@ -804,20 +1088,72 @@ impl ApplicationService {
             context,
             json!({"deployment_id": deployment.id}),
         )?;
+        self.append_log(
+            &deployment.id,
+            "deployment",
+            DeploymentLogStream::System,
+            "deployment lock acquired",
+        )?;
 
         match self
-            .prepare_release(&application, &repository, &release, &mut deployment)
+            .prepare_release(
+                &mut application,
+                &mut repository,
+                &mut deployment,
+                ReleasePreparation {
+                    pinned_commit: pinned_commit.as_deref(),
+                    previous_node_port: previous_node.as_ref().and_then(|item| item.node_port),
+                    release: &release,
+                    context,
+                },
+            )
             .await
         {
             Ok(commit) => {
                 deployment.commit = commit;
-                match self.verify_health(&application).await {
+                let validation = match self.verify_health(&application).await {
                     Ok(message) => {
                         deployment.phases.push(phase(
                             "health",
                             DeploymentPhaseStatus::Completed,
                             message,
                         ));
+                        self.upsert_deployment(&deployment)?;
+                        match self.ensure_not_cancelled(&mut deployment) {
+                            Ok(()) => {
+                                let working_directory =
+                                    manifest_working_directory(&repository, &release);
+                                if let Err(error) = self
+                                    .run_workflow_commands(
+                                        "post_deploy",
+                                        &repository.deployment.post_deploy,
+                                        &working_directory,
+                                        &application,
+                                        &mut deployment,
+                                    )
+                                    .await
+                                {
+                                    Err(("post_deploy", error))
+                                } else {
+                                    let mut configured = Ok(());
+                                    for process in application.processes.clone() {
+                                        if let Err(error) =
+                                            self.add_process(id, process, context).await
+                                        {
+                                            configured = Err(("processes", error));
+                                            break;
+                                        }
+                                    }
+                                    configured
+                                }
+                            }
+                            Err(error) => Err(("cancellation", error)),
+                        }
+                    }
+                    Err(error) => Err(("health", error)),
+                };
+                match validation {
+                    Ok(()) => {
                         deployment.healthy = true;
                         deployment.status = DeploymentStatus::Completed;
                         deployment.message =
@@ -832,12 +1168,50 @@ impl ApplicationService {
                             context,
                             json!({"deployment_id": deployment.id, "commit": deployment.commit}),
                         )?;
+                        if let (Some(handoff), Some(previous)) =
+                            (&repository.deployment.node_handoff, previous_node.as_ref())
+                        {
+                            if handoff.drain_seconds > 0 {
+                                sleep(Duration::from_secs(handoff.drain_seconds)).await;
+                            }
+                            if let Some(unit) = &previous.process_unit {
+                                let drain_result =
+                                    ApplicationProcessManager::system(&self.state_dir)
+                                        .stop_node_release(unit, context)
+                                        .await;
+                                match drain_result {
+                                    Ok(()) => deployment.phases.push(phase(
+                                        "drain",
+                                        DeploymentPhaseStatus::Completed,
+                                        format!("old process {unit} drained and stopped"),
+                                    )),
+                                    Err(error) => {
+                                        deployment.phases.push(phase(
+                                            "drain",
+                                            DeploymentPhaseStatus::Failed,
+                                            format!("release is healthy, but {unit} could not be stopped: {error}"),
+                                        ));
+                                        deployment.message = format!(
+                                            "release activated and healthy; old process requires manual drain: {error}"
+                                        );
+                                    }
+                                }
+                                self.upsert_deployment(&deployment)?;
+                            }
+                        } else {
+                            deployment.phases.push(phase(
+                                "drain",
+                                DeploymentPhaseStatus::Skipped,
+                                "no previous blue-green Node process",
+                            ));
+                            self.upsert_deployment(&deployment)?;
+                        }
                         self.prune_releases(&application)?;
                         Ok(deployment)
                     }
-                    Err(error) => {
+                    Err((failed_phase, error)) => {
                         deployment.phases.push(phase(
-                            "health",
+                            failed_phase,
                             DeploymentPhaseStatus::Failed,
                             error.to_string(),
                         ));
@@ -851,17 +1225,33 @@ impl ApplicationService {
                         } else {
                             false
                         };
+                        if deployment.process_unit.is_some() {
+                            if let Some(port) =
+                                previous_node.as_ref().and_then(|item| item.node_port)
+                            {
+                                NginxManager::system(&self.state_dir)
+                                    .configure_node_upstream(&application, port, context)
+                                    .await?;
+                            }
+                            if let Some(unit) = &deployment.process_unit {
+                                ApplicationProcessManager::system(&self.state_dir)
+                                    .stop_node_release(unit, context)
+                                    .await?;
+                            }
+                        }
                         deployment.automatic_rollback = rolled_back;
-                        deployment.status = if rolled_back {
+                        deployment.status = if failed_phase == "cancellation" {
+                            DeploymentStatus::Cancelled
+                        } else if rolled_back {
                             DeploymentStatus::FailedRolledBack
                         } else {
                             DeploymentStatus::Failed
                         };
                         deployment.message = if rolled_back {
-                            format!("health check failed; previous release restored: {error}")
+                            format!("{failed_phase} failed; previous release restored: {error}")
                         } else {
                             format!(
-                                "health check failed and no previous release was available: {error}"
+                                "{failed_phase} failed and no previous release was available: {error}"
                             )
                         };
                         deployment.finished_at_unix_ms = Some(unix_time_ms());
@@ -895,10 +1285,47 @@ impl ApplicationService {
                 }
             }
             Err(error) => {
+                let activated = deployment.phases.iter().any(|item| {
+                    item.name == "activation" && item.status == DeploymentPhaseStatus::Completed
+                });
+                let restored = if activated {
+                    if let Some(previous) = &deployment.previous_release {
+                        if Path::new(previous).is_dir() {
+                            activate(&application, Path::new(previous), "automatic-rollback")?;
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if deployment.process_unit.is_some()
+                    && let Some(port) = previous_node.as_ref().and_then(|item| item.node_port)
+                {
+                    let _ = NginxManager::system(&self.state_dir)
+                        .configure_node_upstream(&application, port, context)
+                        .await;
+                }
+                if let Some(unit) = &deployment.process_unit {
+                    let _ = ApplicationProcessManager::system(&self.state_dir)
+                        .stop_node_release(unit, context)
+                        .await;
+                }
                 if release.exists() {
                     fs::remove_dir_all(&release).map_err(state_io_error)?;
                 }
-                deployment.status = DeploymentStatus::Failed;
+                let cancelled = self.cancellation_path(&deployment.id)?.exists();
+                deployment.automatic_rollback = restored;
+                deployment.status = if cancelled {
+                    DeploymentStatus::Cancelled
+                } else if restored {
+                    DeploymentStatus::FailedRolledBack
+                } else {
+                    DeploymentStatus::Failed
+                };
                 deployment.phases.push(phase(
                     "deployment",
                     DeploymentPhaseStatus::Failed,
@@ -907,10 +1334,21 @@ impl ApplicationService {
                 deployment.message = error.to_string();
                 deployment.finished_at_unix_ms = Some(unix_time_ms());
                 self.upsert_deployment(&deployment)?;
-                self.set_health(id, "deployment_failed")?;
+                self.set_health(
+                    id,
+                    if cancelled {
+                        "deployment_cancelled"
+                    } else {
+                        "deployment_failed"
+                    },
+                )?;
                 self.audit_deployment(&deployment, context, false)?;
                 self.emit(
-                    "deployment.failed",
+                    if cancelled {
+                        "deployment.cancelled"
+                    } else {
+                        "deployment.failed"
+                    },
                     id,
                     context,
                     json!({
@@ -923,11 +1361,22 @@ impl ApplicationService {
         }
     }
 
-    pub fn rollback(&self, id: &str, context: &OperationContext) -> Result<Deployment> {
+    pub async fn rollback(&self, id: &str, context: &OperationContext) -> Result<Deployment> {
         let application = self.inspect(id)?;
+        let resource = ResourceRef::new(ResourceKind::Application, id)?;
+        let _deployment_lock = ResourceLock::try_acquire(&self.state_dir, &resource)?;
         let current = current_release(&application);
         let current = current?;
         let state = self.store.load()?;
+        let active_node = current.as_ref().and_then(|release| {
+            state.deployments.iter().rev().find(|deployment| {
+                deployment.application_id == id
+                    && deployment.status == DeploymentStatus::Completed
+                    && Path::new(&deployment.release_path) == release
+                    && deployment.process_unit.is_some()
+                    && deployment.node_port.is_some()
+            })
+        });
         let target = state
             .deployments
             .iter()
@@ -943,7 +1392,54 @@ impl ApplicationService {
                 field: "deployment".into(),
                 message: "no previous known-good release is available".into(),
             })?;
-        activate(&application, Path::new(&target.release_path), &target.id)?;
+        if let (Some(unit), Some(port)) = (&target.process_unit, target.node_port) {
+            let processes = ApplicationProcessManager::system(&self.state_dir);
+            processes.start_existing_node_release(unit, context).await?;
+            if let Err(error) = self.verify_health_on_port(&application, port).await {
+                let _ = processes.stop_node_release(unit, context).await;
+                return Err(error);
+            }
+            activate(&application, Path::new(&target.release_path), &target.id)?;
+            if let Err(error) = NginxManager::system(&self.state_dir)
+                .configure_node_upstream(&application, port, context)
+                .await
+            {
+                if let Some(previous) = &current {
+                    activate(&application, Path::new(previous), "rollback-recovery")?;
+                }
+                let _ = processes.stop_node_release(unit, context).await;
+                return Err(error);
+            }
+            if let Err(error) = self.verify_health(&application).await {
+                if let Some(previous) = &current {
+                    activate(&application, Path::new(previous), "rollback-recovery")?;
+                }
+                if let Some(previous) = active_node
+                    && let Some(previous_port) = previous.node_port
+                {
+                    let _ = NginxManager::system(&self.state_dir)
+                        .configure_node_upstream(&application, previous_port, context)
+                        .await;
+                }
+                let _ = processes.stop_node_release(unit, context).await;
+                return Err(error);
+            }
+            if let Some(previous) = active_node
+                && let Some(previous_unit) = &previous.process_unit
+                && previous_unit != unit
+            {
+                if let Some(handoff) = application
+                    .repository
+                    .as_ref()
+                    .and_then(|repository| repository.deployment.node_handoff.as_ref())
+                {
+                    tokio::time::sleep(Duration::from_secs(handoff.drain_seconds)).await;
+                }
+                processes.stop_node_release(previous_unit, context).await?;
+            }
+        } else {
+            activate(&application, Path::new(&target.release_path), &target.id)?;
+        }
         let mut rollback = target;
         rollback.id = format!("rollback-{}-{}", unix_time_ms(), std::process::id());
         rollback.status = DeploymentStatus::RolledBack;
@@ -974,11 +1470,17 @@ impl ApplicationService {
 
     async fn prepare_release(
         &self,
-        application: &Application,
-        repository: &RepositoryConfig,
-        release: &Path,
+        application: &mut Application,
+        repository: &mut RepositoryConfig,
         deployment: &mut Deployment,
+        preparation: ReleasePreparation<'_>,
     ) -> Result<String> {
+        let ReleasePreparation {
+            pinned_commit,
+            previous_node_port,
+            release,
+            context,
+        } = preparation;
         let repository_path = PathBuf::from(&application.root).join("repository/source.git");
         let credential = self.credential_path(repository.credential_reference.as_deref())?;
         if repository_path.exists() {
@@ -1024,7 +1526,10 @@ impl ApplicationService {
             "Git mirror fetched",
         ));
         self.upsert_deployment(deployment)?;
-        let reference = format!("refs/heads/{}", repository.branch);
+        self.ensure_not_cancelled(deployment)?;
+        let reference = pinned_commit
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("refs/heads/{}", repository.branch));
         let commit_output = self
             .run_git(
                 [
@@ -1040,6 +1545,21 @@ impl ApplicationService {
         let commit = String::from_utf8_lossy(&commit_output.stdout)
             .trim()
             .to_owned();
+        let metadata_output = self
+            .run_git(
+                [
+                    "--git-dir",
+                    path_text(&repository_path)?,
+                    "show",
+                    "-s",
+                    "--format=%H%x00%an%x00%ae%x00%s%x00%aI",
+                    &commit,
+                ],
+                credential.as_deref(),
+            )
+            .await?;
+        deployment.commit_metadata = Some(parse_commit_metadata(&metadata_output.stdout)?);
+        deployment.commit = commit.clone();
         self.run_git(
             [
                 "clone",
@@ -1071,11 +1591,128 @@ impl ApplicationService {
         ));
         self.upsert_deployment(deployment)?;
 
-        if let Some((spec, message)) = dependency_install_spec(application.runtime, release) {
-            self.run(spec).await?;
-            deployment
-                .phases
-                .push(phase("build", DeploymentPhaseStatus::Completed, message));
+        let manifest_path = release.join(APPLICATION_MANIFEST_FILE);
+        if manifest_path.exists() {
+            let before_manifest_sync = application.clone();
+            let contract = read_application_manifest(release)?.resolve(&repository.branch)?;
+            validate_manifest_application(application, &contract)?;
+            if contract.branch != repository.branch {
+                return Err(invalid(
+                    "source.branch",
+                    "a branch change must be reviewed with application manifest plan/apply before deployment",
+                ));
+            }
+            validate_manifest_service_bindings(application, &contract)?;
+            application.health_check = contract.health.clone();
+            application.processes = contract.processes.clone();
+            application.release_retention = contract.manifest.deployment.retain_releases;
+            repository.deployment = contract.workflow.clone();
+            repository.contract = Some(contract);
+            application.repository = Some(repository.clone());
+            *application = self.update_application(&application.id, |stored| {
+                stored.health_check = application.health_check.clone();
+                stored.processes = application.processes.clone();
+                stored.release_retention = application.release_retention;
+                stored.repository = application.repository.clone();
+            })?;
+            self.audit.append(&AuditRecord::now(
+                context,
+                "application.manifest.sync",
+                "prepare_release",
+                "application",
+                &application.id,
+                json!({
+                    "deployment_id": deployment.id,
+                    "commit": commit,
+                    "schema_version": repository
+                        .contract
+                        .as_ref()
+                        .map(|contract| contract.manifest.schema_version),
+                }),
+                serde_json::to_value(&before_manifest_sync).ok(),
+                serde_json::to_value(&application).ok(),
+                true,
+                "repository contract resolved from checked-out deployment revision",
+            ))?;
+            self.emit(
+                "application.manifest_synced",
+                &application.id,
+                context,
+                json!({
+                    "deployment_id": deployment.id,
+                    "commit": commit,
+                }),
+            )?;
+            deployment.phases.push(phase(
+                "manifest",
+                DeploymentPhaseStatus::Completed,
+                "validated and resolved repository lumic.yaml",
+            ));
+            self.upsert_deployment(deployment)?;
+        } else if repository.contract.is_some() {
+            return Err(invalid(
+                APPLICATION_MANIFEST_FILE,
+                "the deployed revision removed its applied repository contract",
+            ));
+        }
+
+        let working_directory = manifest_working_directory(repository, release);
+        if !working_directory.is_dir() {
+            return Err(invalid(
+                "source.subdirectory",
+                "the configured source subdirectory is missing from the release",
+            ));
+        }
+        let environment = self.resolve_environment(application)?;
+        let environment_file = self.materialize_environment(application, &environment)?;
+
+        self.run_workflow_commands(
+            "pre_deploy",
+            &repository.deployment.pre_deploy,
+            &working_directory,
+            application,
+            deployment,
+        )
+        .await?;
+        self.ensure_not_cancelled(deployment)?;
+
+        if let Some(command) = &repository.deployment.build {
+            self.run_workflow_commands(
+                "build",
+                std::slice::from_ref(command),
+                &working_directory,
+                application,
+                deployment,
+            )
+            .await?;
+        } else if let Some((spec, message)) =
+            dependency_install_spec(application.runtime, &working_directory)
+        {
+            deployment.phases.push(phase(
+                "build",
+                DeploymentPhaseStatus::Running,
+                "running bounded runtime dependency build",
+            ));
+            self.upsert_deployment(deployment)?;
+            if let Err(error) = self
+                .run_deployment_process("build", spec, &environment, deployment)
+                .await
+            {
+                finish_running_phase(
+                    deployment,
+                    "build",
+                    DeploymentPhaseStatus::Failed,
+                    error.to_string(),
+                );
+                self.upsert_deployment(deployment)?;
+                return Err(error);
+            }
+            finish_running_phase(
+                deployment,
+                "build",
+                DeploymentPhaseStatus::Completed,
+                message,
+            );
         } else {
             deployment.phases.push(phase(
                 "build",
@@ -1083,10 +1720,31 @@ impl ApplicationService {
                 "runtime has no dependency build step",
             ));
         }
+        self.upsert_deployment(deployment)?;
+        self.ensure_not_cancelled(deployment)?;
+        if let Some(command) = &repository.deployment.migrate {
+            self.run_workflow_commands(
+                "migrate",
+                std::slice::from_ref(command),
+                &working_directory,
+                application,
+                deployment,
+            )
+            .await?;
+        } else {
+            deployment.phases.push(phase(
+                "migrate",
+                DeploymentPhaseStatus::Skipped,
+                "no database migration command configured",
+            ));
+            self.upsert_deployment(deployment)?;
+        }
+        self.ensure_not_cancelled(deployment)?;
+        let public_directory = manifest_public_directory(repository, &working_directory);
         let entry_point = match application.runtime {
-            ApplicationRuntime::Static => release.join("index.html"),
-            ApplicationRuntime::Php => release.join("index.php"),
-            ApplicationRuntime::Node => release.join("package.json"),
+            ApplicationRuntime::Static => public_directory.join("index.html"),
+            ApplicationRuntime::Php => public_directory.join("index.php"),
+            ApplicationRuntime::Node => working_directory.join("package.json"),
         };
         if !entry_point.is_file() {
             return Err(LumicError::InvalidInput {
@@ -1099,6 +1757,44 @@ impl ApplicationService {
             DeploymentPhaseStatus::Completed,
             format!("validated {}", entry_point.display()),
         ));
+        if let Some(handoff) = &repository.deployment.node_handoff {
+            if application.runtime != ApplicationRuntime::Node || !application.web_configured {
+                return Err(invalid(
+                    "node_handoff",
+                    "blue-green handoff requires a provisioned Node application web host",
+                ));
+            }
+            let port = if previous_node_port == Some(handoff.primary_port) {
+                handoff.secondary_port
+            } else {
+                handoff.primary_port
+            };
+            let unit = ApplicationProcessManager::system(&self.state_dir)
+                .start_node_release(NodeReleaseStart {
+                    application,
+                    handoff,
+                    release: &working_directory,
+                    deployment_id: &deployment.id,
+                    port,
+                    environment_file: environment_file.as_deref(),
+                    context,
+                })
+                .await?;
+            deployment.node_port = Some(port);
+            deployment.process_unit = Some(unit.clone());
+            deployment.phases.push(phase(
+                "node_start",
+                DeploymentPhaseStatus::Completed,
+                format!("started {unit} on loopback port {port}"),
+            ));
+            self.upsert_deployment(deployment)?;
+            self.verify_health_on_port(application, port).await?;
+            deployment.phases.push(phase(
+                "node_readiness",
+                DeploymentPhaseStatus::Completed,
+                format!("new Node process is ready on port {port}"),
+            ));
+        }
         activate(
             application,
             release,
@@ -1109,8 +1805,189 @@ impl ApplicationService {
             DeploymentPhaseStatus::Completed,
             "current symlink switched atomically",
         ));
+        if let Some(port) = deployment.node_port {
+            NginxManager::system(&self.state_dir)
+                .configure_node_upstream(application, port, context)
+                .await?;
+            deployment.phases.push(phase(
+                "node_handoff",
+                DeploymentPhaseStatus::Completed,
+                format!("nginx atomically switched to Node port {port}"),
+            ));
+        }
         self.upsert_deployment(deployment)?;
         Ok(commit)
+    }
+
+    fn ensure_not_cancelled(&self, deployment: &mut Deployment) -> Result<()> {
+        if self.cancellation_path(&deployment.id)?.exists() {
+            deployment.status = DeploymentStatus::Cancelled;
+            deployment.message = "deployment cancelled at a safe phase boundary".into();
+            deployment.finished_at_unix_ms = Some(unix_time_ms());
+            self.upsert_deployment(deployment)?;
+            self.append_log(
+                &deployment.id,
+                "deployment",
+                DeploymentLogStream::System,
+                &deployment.message,
+            )?;
+            return Err(invalid("deployment", &deployment.message));
+        }
+        Ok(())
+    }
+
+    async fn run_workflow_commands(
+        &self,
+        phase_name: &str,
+        commands: &[Vec<String>],
+        release: &Path,
+        application: &Application,
+        deployment: &mut Deployment,
+    ) -> Result<()> {
+        if commands.is_empty() {
+            deployment.phases.push(phase(
+                phase_name,
+                DeploymentPhaseStatus::Skipped,
+                "no commands configured",
+            ));
+            self.upsert_deployment(deployment)?;
+            return Ok(());
+        }
+        deployment.phases.push(phase(
+            phase_name,
+            DeploymentPhaseStatus::Running,
+            format!("running {} command(s)", commands.len()),
+        ));
+        self.upsert_deployment(deployment)?;
+        let environment = self.resolve_environment(application)?;
+        for command in commands {
+            self.ensure_not_cancelled(deployment)?;
+            validate_command(command)?;
+            let mut spec = ProcessSpec::new(&command[0])
+                .args(command.iter().skip(1))
+                .current_dir(release);
+            spec.environment.extend(environment.clone());
+            if let Err(error) = self
+                .run_deployment_process(phase_name, spec, &environment, deployment)
+                .await
+            {
+                finish_running_phase(
+                    deployment,
+                    phase_name,
+                    DeploymentPhaseStatus::Failed,
+                    error.to_string(),
+                );
+                self.upsert_deployment(deployment)?;
+                return Err(error);
+            }
+        }
+        finish_running_phase(
+            deployment,
+            phase_name,
+            DeploymentPhaseStatus::Completed,
+            format!("{} command(s) completed", commands.len()),
+        );
+        self.upsert_deployment(deployment)
+    }
+
+    async fn run_deployment_process(
+        &self,
+        phase_name: &str,
+        mut spec: ProcessSpec,
+        environment: &BTreeMap<String, String>,
+        deployment: &mut Deployment,
+    ) -> Result<ProcessOutput> {
+        spec.timeout = Duration::from_secs(1_800);
+        spec.environment.extend(environment.clone());
+        let executable = spec.executable.clone();
+        self.append_log(
+            &deployment.id,
+            phase_name,
+            DeploymentLogStream::System,
+            format!("starting {executable}"),
+        )?;
+        let output = self.runner.run(&spec).await?;
+        self.append_output(
+            &deployment.id,
+            phase_name,
+            DeploymentLogStream::Stdout,
+            &output.stdout,
+            environment,
+        )?;
+        self.append_output(
+            &deployment.id,
+            phase_name,
+            DeploymentLogStream::Stderr,
+            &output.stderr,
+            environment,
+        )?;
+        if output.success() {
+            Ok(output)
+        } else {
+            Err(LumicError::Process {
+                executable,
+                message: redact_environment(
+                    String::from_utf8_lossy(&output.stderr).trim(),
+                    environment,
+                ),
+            })
+        }
+    }
+
+    fn append_output(
+        &self,
+        deployment_id: &str,
+        phase_name: &str,
+        stream: DeploymentLogStream,
+        bytes: &[u8],
+        environment: &BTreeMap<String, String>,
+    ) -> Result<()> {
+        for line in String::from_utf8_lossy(bytes).lines() {
+            self.append_log(
+                deployment_id,
+                phase_name,
+                stream,
+                redact_environment(line, environment),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn resolve_environment(&self, application: &Application) -> Result<BTreeMap<String, String>> {
+        let store = SecretStore::at_state_dir(&self.state_dir);
+        application
+            .environment_references
+            .iter()
+            .map(|(name, reference)| {
+                let value = store.read(reference)?;
+                validate_application_environment_value(&value)?;
+                let value = String::from_utf8(value).map_err(|_| {
+                    invalid(
+                        "secret",
+                        "application environment value must be valid UTF-8",
+                    )
+                })?;
+                Ok((name.clone(), value))
+            })
+            .collect()
+    }
+
+    fn materialize_environment(
+        &self,
+        application: &Application,
+        environment: &BTreeMap<String, String>,
+    ) -> Result<Option<PathBuf>> {
+        if environment.is_empty() {
+            return Ok(None);
+        }
+        let path = PathBuf::from("/run/lumic/application-environments")
+            .join(format!("{}.env", application.id));
+        write_atomic(
+            &path,
+            render_environment_file(environment).as_bytes(),
+            0o600,
+        )?;
+        Ok(Some(path))
     }
 
     async fn run_git<const N: usize>(
@@ -1257,6 +2134,105 @@ impl ApplicationService {
         Ok(application)
     }
 
+    /// Stores an application-owned environment value and attaches only its stable reference.
+    /// The value is accepted only at this explicit mutation boundary and is never audited.
+    pub fn set_environment_secret(
+        &self,
+        id: &str,
+        name: &str,
+        value: &[u8],
+        context: &OperationContext,
+    ) -> Result<Application> {
+        validate_application_environment_value(value)?;
+        self.inspect(id)?;
+        let reference = application_environment_reference(id, name)?;
+        SecretStore::at_state_dir(&self.state_dir).put(&reference, value)?;
+        self.set_environment_reference(id, name, &reference, context)
+    }
+
+    /// Replaces an application-owned value with fresh random material without returning it.
+    pub fn rotate_environment_secret(
+        &self,
+        id: &str,
+        name: &str,
+        context: &OperationContext,
+    ) -> Result<Application> {
+        let application = self.inspect(id)?;
+        lumic_core::recipe::validate_environment_name(name)?;
+        let reference = application
+            .environment_references
+            .get(name)
+            .ok_or_else(|| invalid("environment", "environment key is not configured"))?;
+        let expected = application_environment_reference(id, name)?;
+        if reference != &expected {
+            return Err(invalid(
+                "environment",
+                "rotation is limited to application-owned secret references",
+            ));
+        }
+        SecretStore::at_state_dir(&self.state_dir).rotate(reference)?;
+        self.emit(
+            "application.environment_secret_rotated",
+            id,
+            context,
+            json!({"name": name}),
+        )?;
+        self.audit.append(&AuditRecord::now(
+            context,
+            "application.environment.rotate",
+            "rotate",
+            "application",
+            id,
+            json!({"name": name}),
+            None,
+            Some(json!({"configured": true})),
+            true,
+            "application environment secret rotated",
+        ))?;
+        Ok(application)
+    }
+
+    /// Detaches an environment key and removes its value only when Lumic owns that value.
+    pub fn delete_environment_secret(
+        &self,
+        id: &str,
+        name: &str,
+        context: &OperationContext,
+    ) -> Result<Application> {
+        lumic_core::recipe::validate_environment_name(name)?;
+        let before = self.inspect(id)?;
+        let reference = before
+            .environment_references
+            .get(name)
+            .cloned()
+            .ok_or_else(|| invalid("environment", "environment key is not configured"))?;
+        let application = self.update_application(id, |application| {
+            application.environment_references.remove(name);
+        })?;
+        if reference == application_environment_reference(id, name)? {
+            SecretStore::at_state_dir(&self.state_dir).delete(&reference)?;
+        }
+        self.emit(
+            "application.environment_secret_deleted",
+            id,
+            context,
+            json!({"name": name}),
+        )?;
+        self.audit.append(&AuditRecord::now(
+            context,
+            "application.environment.delete",
+            "delete",
+            "application",
+            id,
+            json!({"name": name}),
+            Some(json!({"configured": true})),
+            Some(json!({"configured": false})),
+            true,
+            "application environment secret deleted",
+        ))?;
+        Ok(application)
+    }
+
     pub fn apply_portable_configuration(
         &self,
         id: &str,
@@ -1393,6 +2369,7 @@ impl ApplicationService {
     }
 
     fn upsert_deployment(&self, deployment: &Deployment) -> Result<()> {
+        let _state_lock = ResourceLock::acquire_application_state(&self.state_dir)?;
         let mut state = self.store.load()?;
         if let Some(existing) = state
             .deployments
@@ -1404,6 +2381,70 @@ impl ApplicationService {
             state.deployments.push(deployment.clone());
         }
         self.store.save(&state)
+    }
+
+    fn deployment(&self, application_id: &str, deployment_id: &str) -> Result<Deployment> {
+        validate_slug("application", application_id)?;
+        validate_deployment_id(deployment_id)?;
+        self.store
+            .load()?
+            .deployments
+            .into_iter()
+            .find(|item| item.application_id == application_id && item.id == deployment_id)
+            .ok_or_else(|| {
+                invalid(
+                    "deployment",
+                    "deployment was not found for this application",
+                )
+            })
+    }
+
+    fn deployment_log_path(&self, deployment_id: &str) -> Result<PathBuf> {
+        validate_deployment_id(deployment_id)?;
+        Ok(self
+            .state_dir
+            .join("deployment-logs")
+            .join(format!("{deployment_id}.json")))
+    }
+
+    fn cancellation_path(&self, deployment_id: &str) -> Result<PathBuf> {
+        validate_deployment_id(deployment_id)?;
+        Ok(self
+            .state_dir
+            .join("deployment-cancellations")
+            .join(deployment_id))
+    }
+
+    fn append_log(
+        &self,
+        deployment_id: &str,
+        phase: &str,
+        stream: DeploymentLogStream,
+        message: impl Into<String>,
+    ) -> Result<()> {
+        let path = self.deployment_log_path(deployment_id)?;
+        let mut entries = if path.exists() {
+            serde_json::from_slice::<Vec<DeploymentLogEntry>>(
+                &fs::read(&path).map_err(state_io_error)?,
+            )
+            .map_err(|error| LumicError::Internal {
+                message: format!("deployment log is invalid: {error}"),
+            })?
+        } else {
+            Vec::new()
+        };
+        entries.push(DeploymentLogEntry {
+            sequence: entries.last().map_or(1, |entry| entry.sequence + 1),
+            timestamp_unix_ms: unix_time_ms(),
+            phase: phase.into(),
+            stream,
+            message: message.into(),
+        });
+        let bytes = serde_json::to_vec_pretty(&entries).map_err(|error| LumicError::Internal {
+            message: format!("could not serialize deployment log: {error}"),
+        })?;
+        write_atomic(&path, &bytes, 0o600)?;
+        Ok(())
     }
 
     fn set_health(&self, id: &str, health: &str) -> Result<()> {
@@ -1508,6 +2549,13 @@ impl ApplicationService {
             })?
     }
 
+    async fn verify_health_on_port(&self, application: &Application, port: u16) -> Result<String> {
+        let mut candidate = application.clone();
+        candidate.health_check.enabled = true;
+        candidate.health_check.port = port;
+        self.verify_health(&candidate).await
+    }
+
     pub async fn verify_application_health(&self, id: &str) -> Result<String> {
         let application = self.inspect(id)?;
         self.verify_health(&application).await
@@ -1570,6 +2618,62 @@ impl ApplicationService {
     }
 }
 
+fn application_environment_reference(id: &str, name: &str) -> Result<String> {
+    validate_slug("application", id)?;
+    lumic_core::recipe::validate_environment_name(name)?;
+    let key = name
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' => char::from(byte.to_ascii_lowercase()),
+            b'a'..=b'z' | b'0'..=b'9' => char::from(byte),
+            _ => '-',
+        })
+        .collect::<String>();
+    let reference = format!("application-{id}-environment-{key}");
+    lumic_core::managed_service::validate_resource_id("secret_reference", &reference)?;
+    Ok(reference)
+}
+
+fn validate_application_environment_value(value: &[u8]) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 16 * 1024
+        || value.contains(&0)
+        || value.contains(&b'\n')
+        || value.contains(&b'\r')
+        || std::str::from_utf8(value).is_err()
+    {
+        return Err(invalid(
+            "secret",
+            "application environment values must be non-empty single-line UTF-8, at most 16 KiB, with no NUL bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn render_environment_file(environment: &BTreeMap<String, String>) -> String {
+    let mut output = String::new();
+    for (name, value) in environment {
+        let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+        output.push_str(name);
+        output.push_str("=\"");
+        output.push_str(&escaped);
+        output.push_str("\"\n");
+    }
+    output
+}
+
+fn redact_environment(value: &str, environment: &BTreeMap<String, String>) -> String {
+    environment
+        .values()
+        .fold(value.to_owned(), |redacted, secret| {
+            if secret.is_empty() {
+                redacted
+            } else {
+                redacted.replace(secret, "[REDACTED]")
+            }
+        })
+}
+
 fn dependency_install_spec(
     runtime: ApplicationRuntime,
     release: &Path,
@@ -1610,6 +2714,26 @@ fn phase(
         name: name.into(),
         status,
         message: message.into(),
+        started_at_unix_ms: unix_time_ms(),
+        finished_at_unix_ms: (status != DeploymentPhaseStatus::Running).then(unix_time_ms),
+    }
+}
+
+fn finish_running_phase(
+    deployment: &mut Deployment,
+    name: &str,
+    status: DeploymentPhaseStatus,
+    message: impl Into<String>,
+) {
+    if let Some(phase) = deployment
+        .phases
+        .iter_mut()
+        .rev()
+        .find(|phase| phase.name == name && phase.status == DeploymentPhaseStatus::Running)
+    {
+        phase.status = status;
+        phase.message = message.into();
+        phase.finished_at_unix_ms = Some(unix_time_ms());
     }
 }
 
@@ -1620,6 +2744,104 @@ fn current_release(application: &Application) -> Result<Option<String>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(state_io_error(error)),
     }
+}
+
+fn read_application_manifest(repository_root: &Path) -> Result<ApplicationManifest> {
+    if !repository_root.is_dir() {
+        return Err(LumicError::InvalidInput {
+            field: "repository_root".into(),
+            message: "must be an existing repository directory".into(),
+        });
+    }
+    let path = repository_root.join(APPLICATION_MANIFEST_FILE);
+    let metadata = fs::symlink_metadata(&path).map_err(state_io_error)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 256 * 1024 {
+        return Err(LumicError::InvalidInput {
+            field: APPLICATION_MANIFEST_FILE.into(),
+            message: "must be a non-symlink regular file no larger than 256 KiB".into(),
+        });
+    }
+    let source = fs::read_to_string(path).map_err(state_io_error)?;
+    ApplicationManifest::parse(&source)
+}
+
+fn manifest_working_directory(repository: &RepositoryConfig, release: &Path) -> PathBuf {
+    repository
+        .contract
+        .as_ref()
+        .and_then(|contract| contract.source_subdirectory.as_ref())
+        .map_or_else(|| release.to_path_buf(), |path| release.join(path))
+}
+
+fn manifest_public_directory(repository: &RepositoryConfig, working_directory: &Path) -> PathBuf {
+    repository
+        .contract
+        .as_ref()
+        .and_then(|contract| contract.public_directory.as_ref())
+        .map_or_else(
+            || working_directory.to_path_buf(),
+            |path| working_directory.join(path),
+        )
+}
+
+fn validate_manifest_service_bindings(
+    application: &Application,
+    contract: &ResolvedApplicationManifest,
+) -> Result<()> {
+    for requirement in &contract.service_requirements {
+        let binding = application
+            .service_references
+            .iter()
+            .find(|binding| binding.role == requirement.role)
+            .ok_or_else(|| LumicError::InvalidInput {
+                field: format!("services.{}", requirement.role),
+                message: format!(
+                    "requires a bound {} managed service before deployment",
+                    requirement.service_type
+                ),
+            })?;
+        if requirement
+            .instance
+            .as_ref()
+            .is_some_and(|instance| instance != &binding.service_id)
+            || requirement
+                .database
+                .as_ref()
+                .is_some_and(|database| binding.database.as_ref() != Some(database))
+            || requirement
+                .user
+                .as_ref()
+                .is_some_and(|user| binding.user.as_ref() != Some(user))
+        {
+            return Err(LumicError::InvalidInput {
+                field: format!("services.{}", requirement.role),
+                message: "does not match the application's managed service binding".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_manifest_application(
+    application: &Application,
+    contract: &ResolvedApplicationManifest,
+) -> Result<()> {
+    if contract.manifest.name != application.id {
+        return Err(LumicError::InvalidInput {
+            field: "name".into(),
+            message: format!("must match application id {}", application.id),
+        });
+    }
+    if contract.runtime != application.runtime {
+        return Err(LumicError::InvalidInput {
+            field: "runtime".into(),
+            message: format!(
+                "must match the application's {:?} runtime",
+                application.runtime
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn persist_application_resource(state_dir: &Path, application: &Application) -> Result<()> {
@@ -1766,6 +2988,23 @@ fn path_text(path: &Path) -> Result<&str> {
     })
 }
 
+fn parse_commit_metadata(bytes: &[u8]) -> Result<CommitMetadata> {
+    let value = String::from_utf8_lossy(bytes);
+    let fields = value.trim_end().split('\0').collect::<Vec<_>>();
+    if fields.len() != 5 || fields[0].is_empty() {
+        return Err(LumicError::Internal {
+            message: "Git returned invalid commit metadata".into(),
+        });
+    }
+    Ok(CommitMetadata {
+        id: fields[0].into(),
+        author_name: fields[1].into(),
+        author_email: fields[2].into(),
+        subject: fields[3].into(),
+        authored_at: fields[4].into(),
+    })
+}
+
 fn state_io_error(error: std::io::Error) -> LumicError {
     LumicError::Internal {
         message: format!("application state I/O failed: {error}"),
@@ -1776,6 +3015,26 @@ fn not_found(id: &str) -> LumicError {
     LumicError::InvalidInput {
         field: "application".into(),
         message: format!("application '{id}' does not exist"),
+    }
+}
+
+fn invalid(field: &str, message: &str) -> LumicError {
+    LumicError::InvalidInput {
+        field: field.into(),
+        message: message.into(),
+    }
+}
+
+fn validate_deployment_id(value: &str) -> Result<()> {
+    if !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        Ok(())
+    } else {
+        Err(invalid("deployment", "deployment identifier is invalid"))
     }
 }
 
@@ -1811,6 +3070,8 @@ mod tests {
                 url: "https://example.com/php-app.git".into(),
                 branch: "main".into(),
                 credential_reference: None,
+                deployment: Default::default(),
+                contract: None,
             }),
             components: vec!["curl".into(), "mbstring".into()],
             databases: Vec::new(),
@@ -1829,6 +3090,84 @@ mod tests {
                 ..HealthCheck::default()
             },
         }
+    }
+
+    #[test]
+    fn plans_and_applies_a_repository_manifest_without_host_mutation() {
+        let base = std::env::temp_dir().join(format!(
+            "lumic-manifest-test-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let repository = base.join("repository");
+        fs::create_dir_all(&repository).unwrap();
+        fs::write(
+            repository.join(APPLICATION_MANIFEST_FILE),
+            r#"schema_version: 1
+name: manifest-app
+runtime:
+  static: true
+build:
+  - ["make", "site"]
+output: public
+workers:
+  indexer:
+    command: ["bin/indexer", "--watch"]
+cron:
+  cleanup:
+    command: ["bin/cleanup"]
+    schedule: "0 2 * * *"
+deployment:
+  deploy_on_push: true
+  retain_releases: 7
+health:
+  path: /health
+  expect: 204
+"#,
+        )
+        .unwrap();
+        let service = ApplicationService::new(base.join("state"), base.join("apps"));
+        service
+            .create(
+                "manifest-app",
+                "manifest.example.com",
+                ApplicationRuntime::Static,
+                false,
+                &context(),
+            )
+            .unwrap();
+        service
+            .set_repository(
+                "manifest-app",
+                "https://example.com/manifest.git",
+                "main",
+                None,
+                &context(),
+            )
+            .unwrap();
+
+        let plan = service.plan_manifest("manifest-app", &repository).unwrap();
+        assert_eq!(
+            plan.changes[0].capability.0.as_str(),
+            "application.manifest.apply"
+        );
+        let applied = service
+            .apply_manifest("manifest-app", &repository, &context())
+            .unwrap();
+        assert_eq!(applied.release_retention, 7);
+        assert_eq!(applied.processes.len(), 2);
+        assert_eq!(
+            applied
+                .repository
+                .as_ref()
+                .unwrap()
+                .contract
+                .as_ref()
+                .unwrap()
+                .public_directory,
+            Some(PathBuf::from("public"))
+        );
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -2022,7 +3361,7 @@ mod tests {
             "second"
         );
 
-        service.rollback("example", &context()).unwrap();
+        service.rollback("example", &context()).await.unwrap();
         assert_eq!(
             fs::read_to_string(apps.join("example/current/index.html")).unwrap(),
             "first"
@@ -2136,6 +3475,228 @@ mod tests {
         let deployment = service.deploy("php-demo", &context()).await.unwrap();
         assert_eq!(deployment.status, DeploymentStatus::Completed);
         assert!(base.join("apps/php-demo/current/index.php").is_file());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn runs_explicit_phases_records_provenance_logs_and_redeploys_exact_commit() {
+        let base = std::env::temp_dir().join(format!(
+            "lumic-workflow-test-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let source = base.join("source");
+        fs::create_dir_all(&source).unwrap();
+        git(&source, &["init", "--initial-branch=main"]);
+        git(&source, &["config", "user.email", "deploy@lumic.invalid"]);
+        git(&source, &["config", "user.name", "Deployment Test"]);
+        fs::write(source.join("index.html"), "first").unwrap();
+        git(&source, &["add", "index.html"]);
+        git(&source, &["commit", "-m", "first release"]);
+
+        let service = ApplicationService::new(base.join("state"), base.join("apps"));
+        service
+            .create(
+                "workflow",
+                "workflow.example.com",
+                ApplicationRuntime::Static,
+                false,
+                &context(),
+            )
+            .unwrap();
+        service
+            .set_repository(
+                "workflow",
+                &format!("file://{}", source.display()),
+                "main",
+                None,
+                &context(),
+            )
+            .unwrap();
+        service
+            .configure_deployment(
+                "workflow",
+                DeploymentWorkflow {
+                    pre_deploy: vec![vec!["touch".into(), "pre-ran".into()]],
+                    build: Some(vec!["touch".into(), "build-ran".into()]),
+                    migrate: Some(vec!["touch".into(), "migration-ran".into()]),
+                    post_deploy: vec![vec!["touch".into(), "post-ran".into()]],
+                    node_handoff: None,
+                },
+                &context(),
+            )
+            .unwrap();
+        let first = service.deploy("workflow", &context()).await.unwrap();
+        assert_eq!(
+            first.commit_metadata.as_ref().unwrap().subject,
+            "first release"
+        );
+        assert!(
+            Path::new(&first.release_path)
+                .join("migration-ran")
+                .is_file()
+        );
+        assert!(Path::new(&first.release_path).join("post-ran").is_file());
+        assert!(first.phases.iter().any(|phase| phase.name == "migrate"));
+        assert!(
+            !service
+                .deployment_logs("workflow", &first.id, 0)
+                .unwrap()
+                .is_empty()
+        );
+
+        fs::write(source.join("index.html"), "second").unwrap();
+        git(&source, &["add", "index.html"]);
+        git(&source, &["commit", "-m", "second release"]);
+        let repeated = service
+            .redeploy("workflow", &first.id, &context())
+            .await
+            .unwrap();
+        assert_eq!(repeated.commit, first.commit);
+        assert_eq!(repeated.retry_of.as_deref(), Some(first.id.as_str()));
+        assert_eq!(
+            fs::read_to_string(base.join("apps/workflow/current/index.html")).unwrap(),
+            "first"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn deployment_uses_the_committed_manifest_public_directory() {
+        let base = std::env::temp_dir().join(format!(
+            "lumic-manifest-deploy-test-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let source = base.join("source");
+        fs::create_dir_all(source.join("public")).unwrap();
+        git(&source, &["init", "--initial-branch=main"]);
+        git(&source, &["config", "user.email", "manifest@lumic.invalid"]);
+        git(&source, &["config", "user.name", "Manifest Test"]);
+        fs::write(source.join("public/index.html"), "manifest release").unwrap();
+        fs::write(
+            source.join(APPLICATION_MANIFEST_FILE),
+            r#"schema_version: 1
+name: manifest-deploy
+runtime:
+  static: true
+public: public
+deployment:
+  deploy_on_push: true
+"#,
+        )
+        .unwrap();
+        git(&source, &["add", "."]);
+        git(&source, &["commit", "-m", "manifest release"]);
+
+        let service = ApplicationService::new(base.join("state"), base.join("apps"));
+        service
+            .create(
+                "manifest-deploy",
+                "manifest-deploy.example.com",
+                ApplicationRuntime::Static,
+                false,
+                &context(),
+            )
+            .unwrap();
+        service
+            .set_repository(
+                "manifest-deploy",
+                &format!("file://{}", source.display()),
+                "main",
+                None,
+                &context(),
+            )
+            .unwrap();
+
+        let deployment = service.deploy("manifest-deploy", &context()).await.unwrap();
+        assert_eq!(deployment.status, DeploymentStatus::Completed);
+        assert!(
+            deployment
+                .phases
+                .iter()
+                .any(|phase| phase.name == "manifest")
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("apps/manifest-deploy/current/public/index.html"))
+                .unwrap(),
+            "manifest release"
+        );
+        assert!(
+            service
+                .inspect("manifest-deploy")
+                .unwrap()
+                .repository
+                .unwrap()
+                .contract
+                .is_some()
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn serializes_deployments_and_cancels_at_a_phase_boundary() {
+        let base = std::env::temp_dir().join(format!(
+            "lumic-cancel-test-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let source = base.join("source");
+        fs::create_dir_all(&source).unwrap();
+        git(&source, &["init", "--initial-branch=main"]);
+        git(&source, &["config", "user.email", "cancel@lumic.invalid"]);
+        git(&source, &["config", "user.name", "Cancellation Test"]);
+        fs::write(source.join("index.html"), "release").unwrap();
+        git(&source, &["add", "index.html"]);
+        git(&source, &["commit", "-m", "release"]);
+
+        let service = ApplicationService::new(base.join("state"), base.join("apps"));
+        service
+            .create(
+                "cancel-demo",
+                "cancel.example.com",
+                ApplicationRuntime::Static,
+                false,
+                &context(),
+            )
+            .unwrap();
+        service
+            .set_repository(
+                "cancel-demo",
+                &format!("file://{}", source.display()),
+                "main",
+                None,
+                &context(),
+            )
+            .unwrap();
+        service
+            .configure_deployment(
+                "cancel-demo",
+                DeploymentWorkflow {
+                    pre_deploy: vec![vec!["sleep".into(), "1".into()]],
+                    ..DeploymentWorkflow::default()
+                },
+                &context(),
+            )
+            .unwrap();
+
+        let deploying = service.clone();
+        let task = tokio::spawn(async move { deploying.deploy("cancel-demo", &context()).await });
+        let deployment_id = loop {
+            if let Some(item) = service.deployments("cancel-demo").unwrap().first() {
+                break item.id.clone();
+            }
+            sleep(Duration::from_millis(10)).await;
+        };
+        assert!(service.deploy("cancel-demo", &context()).await.is_err());
+        let requested = service
+            .cancel_deployment("cancel-demo", &deployment_id, &context())
+            .unwrap();
+        assert_eq!(requested.status, DeploymentStatus::Cancelling);
+        assert!(task.await.unwrap().is_err());
+        let cancelled = service.deployments("cancel-demo").unwrap().remove(0);
+        assert_eq!(cancelled.status, DeploymentStatus::Cancelled);
+        assert!(!base.join("apps/cancel-demo/current").exists());
         fs::remove_dir_all(base).unwrap();
     }
 }

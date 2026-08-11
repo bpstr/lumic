@@ -490,6 +490,12 @@ where
                     Value::String(certificate.private_key_path.clone()),
                 ),
                 (
+                    "expires_at_unix_seconds".into(),
+                    certificate
+                        .expires_at_unix_seconds
+                        .map_or(Value::Null, Value::from),
+                ),
+                (
                     "configuration_path".into(),
                     Value::String(configuration_path.to_string_lossy().into()),
                 ),
@@ -507,6 +513,7 @@ where
                         "domains": certificate.domains,
                         "fullchain_path": certificate.fullchain_path,
                         "private_key_path": certificate.private_key_path,
+                        "expires_at_unix_seconds": certificate.expires_at_unix_seconds,
                         "capability": "web.tls",
                     }),
                     sensitive: false,

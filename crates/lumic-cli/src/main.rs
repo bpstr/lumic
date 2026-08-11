@@ -39,7 +39,7 @@ use lumic_platform::{
     server::HostOperator,
     systemd::{ServiceAction, SystemdServiceManager},
 };
-use std::{collections::BTreeMap, fs, io::Read, path::PathBuf};
+use std::{collections::BTreeMap, fs, io::Read, path::PathBuf, time::Duration};
 
 #[derive(Parser)]
 #[command(
@@ -436,6 +436,21 @@ enum EnvironmentCommand {
         application: String,
         name: String,
         reference: String,
+    },
+    /// Read one application environment value from stdin and store it encrypted at rest.
+    SecretSet {
+        application: String,
+        name: String,
+    },
+    /// Replace an application-owned environment value with fresh random material.
+    SecretRotate {
+        application: String,
+        name: String,
+    },
+    /// Remove an application environment key and its application-owned value.
+    SecretDelete {
+        application: String,
+        name: String,
     },
     Export {
         application: String,
@@ -1144,6 +1159,11 @@ enum AppCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect, plan, or apply the repository-owned lumic.yaml contract.
+    Manifest {
+        #[command(subcommand)]
+        command: ManifestCommand,
+    },
     /// Configure the deployment repository.
     Repository {
         #[command(subcommand)]
@@ -1196,6 +1216,51 @@ enum AppCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Configure explicit argv-only pre/build/migrate/post deployment phases.
+    ConfigureDeployment {
+        app: String,
+        #[arg(long = "pre-deploy-command")]
+        pre_deploy_commands: Vec<String>,
+        #[arg(long = "build-command")]
+        build_command: Option<String>,
+        #[arg(long = "migrate-command")]
+        migrate_command: Option<String>,
+        #[arg(long = "post-deploy-command")]
+        post_deploy_commands: Vec<String>,
+        #[arg(long = "node-command", requires_all = ["primary_port", "secondary_port"])]
+        node_command: Option<String>,
+        #[arg(long)]
+        primary_port: Option<u16>,
+        #[arg(long)]
+        secondary_port: Option<u16>,
+        #[arg(long, default_value_t = 10)]
+        drain_seconds: u64,
+    },
+    /// Request cooperative cancellation at the next safe phase boundary.
+    Cancel {
+        app: String,
+        deployment: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Deploy the exact commit recorded by an earlier deployment.
+    Redeploy {
+        app: String,
+        deployment: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read persistent deployment output after a log cursor.
+    Logs {
+        app: String,
+        deployment: String,
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        follow: bool,
+    },
     /// List application deployment history.
     Deployments {
         app: String,
@@ -1210,6 +1275,33 @@ enum AppCommand {
     },
     /// Remove metadata and move application files into Lumic trash.
     Delete { app: String },
+}
+
+#[derive(Debug, Subcommand)]
+enum ManifestCommand {
+    /// Parse and validate lumic.yaml without server-state changes.
+    Inspect {
+        #[arg(long, default_value = ".")]
+        repository_root: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the exact state changes, risks, and preconditions.
+    Plan {
+        app: String,
+        #[arg(long, default_value = ".")]
+        repository_root: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply the validated contract to an existing application.
+    Apply {
+        app: String,
+        #[arg(long, default_value = ".")]
+        repository_root: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1938,6 +2030,33 @@ fn run_environment(command: EnvironmentCommand) -> Result<(), Box<dyn std::error
             )?;
             println!("{}", serde_json::to_string_pretty(&application)?);
         }
+        EnvironmentCommand::SecretSet { application, name } => {
+            let mut value = Vec::new();
+            std::io::stdin().read_to_end(&mut value)?;
+            if value.last() == Some(&b'\n') {
+                value.pop();
+                if value.last() == Some(&b'\r') {
+                    value.pop();
+                }
+            }
+            let application = application_service().set_environment_secret(
+                &application,
+                &name,
+                &value,
+                &context,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&application)?);
+        }
+        EnvironmentCommand::SecretRotate { application, name } => {
+            let application =
+                application_service().rotate_environment_secret(&application, &name, &context)?;
+            println!("{}", serde_json::to_string_pretty(&application)?);
+        }
+        EnvironmentCommand::SecretDelete { application, name } => {
+            let application =
+                application_service().delete_environment_secret(&application, &name, &context)?;
+            println!("{}", serde_json::to_string_pretty(&application)?);
+        }
         EnvironmentCommand::Export {
             application,
             environment,
@@ -2320,6 +2439,34 @@ fn parse_key_value(value: &str) -> Result<(String, String), String> {
         .ok_or_else(|| "environment values must use NAME=VALUE".into())
 }
 
+fn parse_argv_command(value: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let command: Vec<String> = serde_json::from_str(value)?;
+    lumic_core::application::validate_command(&command)?;
+    Ok(command)
+}
+
+fn parse_argv_commands(values: &[String]) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
+    values
+        .iter()
+        .map(|value| parse_argv_command(value))
+        .collect()
+}
+
+fn render_json_or_deployment(
+    deployment: &lumic_core::application::Deployment,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(deployment)?);
+    } else {
+        println!(
+            "{} {:?} {}",
+            deployment.id, deployment.status, deployment.commit
+        );
+    }
+    Ok(())
+}
+
 async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> {
     let service = application_service();
     match command {
@@ -2355,6 +2502,52 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
             render_json_or_app(&app, json)?;
         }
         AppCommand::Inspect { app, json } => render_json_or_app(&service.inspect(&app)?, json)?,
+        AppCommand::Manifest { command } => match command {
+            ManifestCommand::Inspect {
+                repository_root,
+                json,
+            } => {
+                let manifest = service.inspect_manifest(&repository_root)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&manifest)?);
+                } else {
+                    println!(
+                        "Valid lumic.yaml schema {} for {}.",
+                        manifest.schema_version, manifest.name
+                    );
+                }
+            }
+            ManifestCommand::Plan {
+                app,
+                repository_root,
+                json,
+            } => {
+                let plan = service.plan_manifest(&app, &repository_root)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&plan)?);
+                } else {
+                    println!("{}", plan.summary);
+                    for change in plan.changes {
+                        println!(
+                            "change: {} (reversible={})",
+                            change.summary, change.reversible
+                        );
+                    }
+                    for risk in plan.risks {
+                        println!("risk {:?}: {}", risk.level, risk.summary);
+                    }
+                }
+            }
+            ManifestCommand::Apply {
+                app,
+                repository_root,
+                json,
+            } => {
+                let application =
+                    service.apply_manifest(&app, &repository_root, &operation_context(false))?;
+                render_json_or_app(&application, json)?;
+            }
+        },
         AppCommand::Repository { command } => match command {
             RepositoryCommand::Set {
                 app,
@@ -2474,6 +2667,114 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
                 println!("Deployed {} at commit {}.", app, deployment.commit);
             }
         }
+        AppCommand::ConfigureDeployment {
+            app,
+            pre_deploy_commands,
+            build_command,
+            migrate_command,
+            post_deploy_commands,
+            node_command,
+            primary_port,
+            secondary_port,
+            drain_seconds,
+        } => {
+            use lumic_core::application::{DeploymentWorkflow, NodeHandoff};
+            let node_handoff = node_command
+                .as_deref()
+                .map(
+                    |command| -> Result<NodeHandoff, Box<dyn std::error::Error>> {
+                        Ok(NodeHandoff {
+                            command: parse_argv_command(command)?,
+                            primary_port: primary_port.ok_or_else(|| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidInput,
+                                    "--primary-port is required",
+                                )
+                            })?,
+                            secondary_port: secondary_port.ok_or_else(|| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidInput,
+                                    "--secondary-port is required",
+                                )
+                            })?,
+                            drain_seconds,
+                        })
+                    },
+                )
+                .transpose()?;
+            let workflow = DeploymentWorkflow {
+                pre_deploy: parse_argv_commands(&pre_deploy_commands)?,
+                build: build_command
+                    .as_deref()
+                    .map(parse_argv_command)
+                    .transpose()?,
+                migrate: migrate_command
+                    .as_deref()
+                    .map(parse_argv_command)
+                    .transpose()?,
+                post_deploy: parse_argv_commands(&post_deploy_commands)?,
+                node_handoff,
+            };
+            service.configure_deployment(&app, workflow, &operation_context(false))?;
+            println!("Deployment workflow configured for {app}.");
+        }
+        AppCommand::Cancel {
+            app,
+            deployment,
+            json,
+        } => {
+            let result = service.cancel_deployment(&app, &deployment, &operation_context(false))?;
+            render_json_or_deployment(&result, json)?;
+        }
+        AppCommand::Redeploy {
+            app,
+            deployment,
+            json,
+        } => {
+            let result = service
+                .redeploy(&app, &deployment, &operation_context(false))
+                .await?;
+            render_json_or_deployment(&result, json)?;
+        }
+        AppCommand::Logs {
+            app,
+            deployment,
+            after,
+            json,
+            follow,
+        } => {
+            let mut cursor = after;
+            loop {
+                let entries = service.deployment_logs(&app, &deployment, cursor)?;
+                if json {
+                    for entry in &entries {
+                        println!("{}", serde_json::to_string(entry)?);
+                    }
+                } else {
+                    for entry in &entries {
+                        println!("{} {:?} {}", entry.sequence, entry.stream, entry.message);
+                    }
+                }
+                if let Some(last) = entries.last() {
+                    cursor = last.sequence;
+                }
+                if !follow {
+                    break;
+                }
+                let active = service.deployments(&app)?.into_iter().any(|item| {
+                    item.id == deployment
+                        && matches!(
+                            item.status,
+                            lumic_core::application::DeploymentStatus::Started
+                                | lumic_core::application::DeploymentStatus::Cancelling
+                        )
+                });
+                if !active {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
         AppCommand::Deployments { app, json } => {
             let deployments = service.deployments(&app)?;
             if json {
@@ -2488,7 +2789,7 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
             }
         }
         AppCommand::Rollback { app, json } => {
-            let deployment = service.rollback(&app, &operation_context(false))?;
+            let deployment = service.rollback(&app, &operation_context(false)).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&deployment)?);
             } else {

@@ -17,6 +17,10 @@ See [Server intelligence](@/docs/server-intelligence.md) for fingerprint, plan/a
 
 Exports never include secret values. Before import creates or updates an application, Lumic verifies that every final environment, service and repository credential reference exists in private state on the target node. `lumic environment diff` redacts sensitive references while still showing whether the source and target are configured differently.
 
+Application environment values are deliberately not a general-purpose vault. `secret-set` accepts a single application key over stdin, encrypts it with authenticated encryption under a node-local mode-`0600` key, and stores only the typed reference in application state. `secret-rotate` replaces only application-owned values with fresh random material; `secret-delete` detaches the key and removes the value only when the application owns it. Ordinary UI and MCP application inspection masks references, environment comparison reports keys/configured state only, and no read capability returns plaintext.
+
+Deployment resolves references only at the apply boundary. Pre-deploy, build, migration and post-deploy commands receive values through a scoped process environment; output is redacted against the resolved values. Persistent application units load a root-readable environment file materialized under `/run/lumic/application-environments`, so values are not embedded in unit files or persistent application state. A missing runtime file fails closed rather than starting a process without its required environment; redeploy rematerializes it.
+
 Repository URLs must use HTTPS, SSH/Git scp syntax, or `file://`. HTTPS credentials embedded in URLs are rejected; metadata stores only an optional credential reference. `app credential import` copies a validated private key into the private state directory with mode `0600`; Git receives the resolved key path through a scoped process environment and status/audit output remains redacted.
 
 An application can own:
@@ -34,11 +38,9 @@ An application can own:
 
 ## Repository application intent with `lumic.yaml`
 
-Applications may include an optional [`lumic.yaml`](./lumic-yaml/) file at the repository root. It gives Lumic and coding agents durable context about the runtime, backing services, processes, build commands, domains, health checks and deployment needs of the application.
+Applications may include a versioned [`lumic.yaml`](@/docs/lumic-yaml.md) contract at the repository root. Schema version 1 strictly describes static/PHP/Node runtime intent, source and public paths, argv-only build and migration phases, Node web handoff, worker instances, cron schedules, managed-service requirements, health validation, release retention, and deployment hooks.
 
-The manifest is deliberately pragmatic rather than a rigid infrastructure DSL. Developers describe what the application needs and may omit obvious details that Lumic or a coding agent can safely infer from the repository. Lumic still inspects the application and target host and produces a plan before material changes.
-
-The goal is simple: describe a stack such as Node + PostgreSQL + Redis + workers once instead of explaining the full production environment every time an agent prepares a VPS.
+`lumic app manifest inspect` is read-only, `lumic app manifest plan` resolves changes and risks against the target application, and `lumic app manifest apply` is the approved state mutation. Every deployment also validates the manifest from the exact checked-out commit and uses its working/public directory and deployment behavior. Required services must already have matching typed application bindings; the manifest cannot silently install a package or introduce a secret.
 
 ## Runtimes
 

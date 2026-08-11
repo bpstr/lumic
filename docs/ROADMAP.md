@@ -22,6 +22,24 @@ Examples:
 
 Do not stall the fast track to achieve broad ecosystem coverage.
 
+### Nightly catalog expansion lane
+
+Once a reference mechanism satisfies its phase exit, additional ecosystem support enters the
+nightly backlog as small, independently reviewable catalog slices. Laravel, Drupal, Symfony,
+Forgejo, Ghost and Matomo belong in the application-recipe lane; combinations such as
+`laravel-typesense` belong in the framework/service integration lane. They are not candidates for
+another fast-track epic.
+
+Each slice must reuse the established recipe, resource, binding, lifecycle and adapter contracts.
+It may add the smallest missing shared primitive when a real integration proves that gap, but it
+must not redesign the mechanism around one framework or provider. Land and gate each slice with
+its catalog validation, plan/apply and recovery behavior, focused tests, supported-host coverage
+where host behavior changes, and matching documentation.
+
+Catalog breadth and core UX can therefore advance independently. A pending recipe or integration
+must not delay operator navigation, status clarity, plan review, progress/error feedback,
+accessibility, or other work that improves every supported resource.
+
 ---
 
 ## Phase 0 — Foundation
@@ -130,7 +148,7 @@ Build the Installatron-like application provisioning substrate.
 - versioned/signed recipe distribution design.
 - one simple reference recipe proving the mechanism.
 
-Nightly owns further breadth: Laravel, Symfony, Drupal, Forgejo, Ghost, Matomo, etc. Gitea and Gogs are implemented as artifact-backed managed services sharing Lumic's repository root.
+Nightly owns further breadth through the catalog expansion lane: Laravel, Symfony, Drupal, Forgejo, Ghost, Matomo, etc. Gitea and Gogs are implemented as artifact-backed managed services sharing Lumic's repository root.
 
 **Exit:** new application installers can usually be added as data/recipe work rather than core Rust changes.
 

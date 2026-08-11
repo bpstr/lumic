@@ -31,6 +31,7 @@ installer_report_error() {
     fi
     if [[ -f /etc/redis/lumic.conf ]]; then
       cp /etc/redis/lumic.conf "$INSTALLER_RESULTS_DIR/diagnostics/redis-lumic.conf"
+      chmod 0644 "$INSTALLER_RESULTS_DIR/diagnostics/redis-lumic.conf"
     fi
   fi
   return "$status"

@@ -17,6 +17,15 @@ CI is infrastructure product testing, not just Rust compilation.
 - package identifier/policy regression tests, durable event-store tests, and a real local-Git static deploy/persistence/rollback integration test
 - a live Ubuntu 24.04 WordPress golden gate covering pinned artifact verification, PHP/MySQL/nginx provisioning, WP-CLI and HTTP health, convergent second install, duplicate-resource rejection, and safe uninstall retention
 
+Installer coverage is organized into four explicit levels: catalog definition validation,
+plan/dry-run validation, live service lifecycle, and complete application golden tests.
+The reusable harness under `tests/installer/` validates every trusted managed-service
+definition and plan. PostgreSQL, MySQL and Redis additionally run on a real systemd host
+with health and loopback-port checks, a convergent second install, native client
+read/write probes, backup validation, secret-state checks and cleanup. CI uploads compact
+JSON result artifacts for the catalog and live-service suites so failures can be compared
+across future OS and architecture matrices.
+
 GitHub-hosted Ubuntu images include a password-initialized MySQL instance. Before live
 service and recipe gates, CI removes that preinitialized server and its data so Lumic is
 tested against the fresh-host installation contract used on a new VPS.

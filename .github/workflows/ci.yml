@@ -32,6 +32,12 @@ jobs:
       - run: tests/epic-b-smoke.sh
         env:
           LUMIC_TEST_BINARY: target/release/lumic
+          INSTALLER_RESULTS_DIR: ${{ runner.temp }}/installer-catalog-results
+      - name: Upload installer catalog results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer-catalog-results
+          path: ${{ runner.temp }}/installer-catalog-results
       - run: tests/epic-c-smoke.sh
         env:
           LUMIC_TEST_BINARY: target/release/lumic
@@ -116,7 +122,14 @@ jobs:
       - name: Reset runner MySQL for fresh-host coverage
         run: tests/reset-github-runner-mysql.sh
       - name: MySQL, PostgreSQL and Redis live lifecycle smoke test
-        run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_MANAGED_SERVICE_LIVE=1 "$PWD/tests/epic-b-smoke.sh"
+        run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_MANAGED_SERVICE_LIVE=1 INSTALLER_RESULTS_DIR="${{ runner.temp }}/managed-service-results" "$PWD/tests/epic-b-smoke.sh"
+      - name: Upload managed-service installer results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: managed-service-installer-results
+          path: ${{ runner.temp }}/managed-service-results
+          if-no-files-found: error
       - name: Laravel and Redis intelligence apply and rollback smoke test
         run: sudo -E env LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_EPIC_F_LIVE=1 "$PWD/tests/epic-f-smoke.sh"
 

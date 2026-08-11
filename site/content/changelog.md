@@ -6,7 +6,7 @@ template = "changelog.html"
 
 The changelog tracks shipped behavior, not every commit. Nightly entries are dated, concise, and linked to the documentation that defines the current contract.
 
-## 2026-08-11 · 2.0.0-alpha.2
+## 2026-08-11 · 2.0.0-alpha.3
 
 - Added first-class managed and external Git repositories with discovery, adoption, remotes, synchronization, authenticated Smart HTTP, and deployment configuration.
 - Added pinned, verified Gitea and Gogs managed-service drivers that share Lumic's configured repository root.

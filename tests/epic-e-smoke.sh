@@ -15,10 +15,10 @@ export LUMIC_APPS_ROOT="$TEST_ROOT/apps"
 "$LUMIC_BIN" environment secret-generate incident-key > "$TEST_ROOT/secret.json"
 SECRET_VALUE="$(sed -n '1p' "$LUMIC_STATE_DIR/secrets/incident-key")"
 "$LUMIC_BIN" operations webhook-plan local-hook \
-  http://127.0.0.1:9321/hook incident-key > "$TEST_ROOT/webhook-plan.json"
+  https://hooks.example.test/hook incident-key > "$TEST_ROOT/webhook-plan.json"
 grep -q 'operations.configuration.apply' "$TEST_ROOT/webhook-plan.json"
 "$LUMIC_BIN" operations webhook-apply local-hook \
-  http://127.0.0.1:9321/hook incident-key > "$TEST_ROOT/webhook.json"
+  https://hooks.example.test/hook incident-key > "$TEST_ROOT/webhook.json"
 "$LUMIC_BIN" operations subscribe failures local-hook \
   --event provider.failed > "$TEST_ROOT/subscription.json"
 

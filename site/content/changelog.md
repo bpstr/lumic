@@ -11,6 +11,7 @@ The changelog tracks shipped behavior, not every commit. Nightly entries are dat
 - Required release candidates to pass all GitHub push workflows before receiving a version tag; individual repair commits are no longer treated as releases.
 - Resolved Node blue/green systemd startup by rendering the managed runtime executable as an absolute path.
 - Expanded installer validation across every managed-service definition and plan, plus reusable live PostgreSQL, MySQL, and Redis lifecycle checks with machine-readable CI results.
+- Corrected Redis eviction-policy rendering so managed `maxmemory_policy` updates restart cleanly with Redis's native `maxmemory-policy` directive.
 - Kept ordinary application deployments independent of the root-only runtime environment directory; protected environment files are now materialized only for persistent processes and blue/green Node handoffs that consume them.
 - Made nginx validation independent of an interactive root `PATH`, including application provisioning and certificate attachment.
 - Enforced the exact [`lumic.yaml`](@/docs/lumic-yaml.md) Node/PHP version, PHP extension, package-manager, and typed managed-service intent during apply and deployment; added persistent shared release paths and richer supervised worker configuration.

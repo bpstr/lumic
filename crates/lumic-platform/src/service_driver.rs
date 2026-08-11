@@ -690,7 +690,7 @@ impl ServiceDriver for RedisDriver {
             service.configuration.bind_address, service.configuration.port
         );
         for (key, value) in &service.configuration.settings {
-            content.push_str(&format!("{key} {value}\n"));
+            content.push_str(&format!("{} {value}\n", redis_directive_name(key)));
         }
         files.push(DriverConfigurationFile {
             path: PathBuf::from("/etc/redis/lumic.conf"),
@@ -1712,6 +1712,13 @@ fn driver_io(error: std::io::Error) -> LumicError {
     }
 }
 
+fn redis_directive_name(setting: &str) -> &str {
+    match setting {
+        "maxmemory_policy" => "maxmemory-policy",
+        setting => setting,
+    }
+}
+
 fn validate_settings(
     driver: &str,
     configuration: &ServiceConfiguration,
@@ -1789,6 +1796,11 @@ mod tests {
             assert_eq!(registry.driver(&definition.driver).unwrap().id(), id);
         }
         assert!(registry.driver("community-shell-plugin").is_err());
+    }
+
+    #[test]
+    fn redis_policy_setting_uses_native_directive_name() {
+        assert_eq!(redis_directive_name("maxmemory_policy"), "maxmemory-policy");
     }
 
     #[test]

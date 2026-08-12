@@ -95,6 +95,8 @@ sudo lumic managed-service update primary-db --dry-run
 sudo lumic managed-service remove primary-db --dry-run
 ```
 
+An explicit restart clears systemd's failed/start-rate counter for that unit before requesting the restart. This keeps repeated, successful configuration reconciliations from making the next operator-approved restart fail with `start-limit-hit`.
+
 The definition argument is a stable catalog ID, not a closed CLI enum. Adding a reviewed compiled
 driver and catalog definition therefore does not require a new CLI command shape. The existing
 provider-specific configure and data commands remain available where the selected definition

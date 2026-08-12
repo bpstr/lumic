@@ -106,12 +106,11 @@ impl SystemdServiceManager {
                 changed: false,
             });
         }
-        if let Err(error) = self
-            .run(ProcessSpec::new("systemctl").args([action.argument(), "--", unit]))
-            .await
-        {
-            self.record_failure(unit, action, &before, context, &error)?;
-            return Err(error);
+        for spec in action_specs(unit, action) {
+            if let Err(error) = self.run(spec).await {
+                self.record_failure(unit, action, &before, context, &error)?;
+                return Err(error);
+            }
         }
         let after = match self.inspect(unit).await {
             Ok(after) => after,
@@ -199,6 +198,19 @@ impl SystemdServiceManager {
     }
 }
 
+fn action_specs(unit: &str, action: ServiceAction) -> Vec<ProcessSpec> {
+    let mut specs = Vec::with_capacity(if action == ServiceAction::Restart {
+        2
+    } else {
+        1
+    });
+    if action == ServiceAction::Restart {
+        specs.push(ProcessSpec::new("systemctl").args(["reset-failed", "--", unit]));
+    }
+    specs.push(ProcessSpec::new("systemctl").args([action.argument(), "--", unit]));
+    specs
+}
+
 pub fn validate_unit(unit: &str) -> Result<()> {
     let valid = !unit.is_empty()
         && unit.len() <= 255
@@ -254,5 +266,17 @@ mod tests {
         assert_eq!(status.active_state, "active");
         assert!(validate_unit("nginx.service").is_ok());
         assert!(validate_unit("--root=/tmp").is_err());
+    }
+
+    #[test]
+    fn restart_clears_systemd_start_limit_before_restarting() {
+        let specs = action_specs("redis-server.service", ServiceAction::Restart);
+
+        assert_eq!(specs.len(), 2);
+        assert_eq!(
+            specs[0].args,
+            ["reset-failed", "--", "redis-server.service"]
+        );
+        assert_eq!(specs[1].args, ["restart", "--", "redis-server.service"]);
     }
 }

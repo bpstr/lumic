@@ -10,7 +10,10 @@ use lumic_core::{
     },
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::Write as _,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessConfigurationResult {
@@ -232,13 +235,13 @@ fn render_node_release_service(
     let environment = environment_file.map_or_else(String::new, |path| {
         format!(
             "EnvironmentFile={}\n",
-            systemd_quote(&path.to_string_lossy())
+            systemd_path_value(&path.to_string_lossy())
         )
     });
     format!(
         "# Managed by Lumic\n[Unit]\nDescription=Lumic {} blue-green web process\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=www-data\nWorkingDirectory={}\nEnvironment=PORT={}\n{}ExecStart={}\nRestart=on-failure\nRestartSec=2s\n\n[Install]\nWantedBy=multi-user.target\n",
         application.id,
-        systemd_quote(&release.to_string_lossy()),
+        systemd_path_value(&release.to_string_lossy()),
         port,
         environment,
         command,
@@ -272,7 +275,7 @@ fn render_service(
     let environment = environment_file.map_or_else(String::new, |path| {
         format!(
             "EnvironmentFile={}\n",
-            systemd_quote(&path.to_string_lossy())
+            systemd_path_value(&path.to_string_lossy())
         )
     });
     let explicit_environment = process
@@ -296,7 +299,7 @@ fn render_service(
         application.id,
         process.name,
         service_type,
-        systemd_quote(&working_directory.to_string_lossy()),
+        systemd_path_value(&working_directory.to_string_lossy()),
         environment,
         explicit_environment,
         command,
@@ -327,7 +330,7 @@ fn render_health_service(
         application.id,
         process.name,
         process_unit,
-        systemd_quote(&format!("{}/current", application.root)),
+        systemd_path_value(&format!("{}/current", application.root)),
         health.timeout_seconds,
         command,
     ))
@@ -379,6 +382,25 @@ fn systemd_quote(value: &str) -> String {
             .replace('\\', "\\\\")
             .replace('"', "\\\"")
     )
+}
+
+fn systemd_path_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'/' | b'.' | b'_' | b'-' | b'@' | b':' | b'+' | b',' | b'='
+            )
+        {
+            escaped.push(char::from(byte));
+        } else if byte == b'%' {
+            escaped.push_str("%%");
+        } else {
+            write!(escaped, "\\x{byte:02x}").expect("writing to a string cannot fail");
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
@@ -447,7 +469,7 @@ mod tests {
         };
 
         let unit = render_service(&app(), &process, None).unwrap();
-        assert!(unit.contains("WorkingDirectory=\"/var/lib/lumic/apps/demo/current/worker\""));
+        assert!(unit.contains("WorkingDirectory=/var/lib/lumic/apps/demo/current/worker"));
         assert!(unit.contains("Environment=\"QUEUE=priority\""));
         assert!(unit.contains("Restart=always"));
 
@@ -507,7 +529,7 @@ mod tests {
         };
         let release = Path::new("/var/lib/lumic/apps/demo/releases/123");
         let unit = render_node_release_service(&app(), &handoff, release, 3101, None);
-        assert!(unit.contains("WorkingDirectory=\"/var/lib/lumic/apps/demo/releases/123\""));
+        assert!(unit.contains("WorkingDirectory=/var/lib/lumic/apps/demo/releases/123"));
         assert!(unit.contains("Environment=PORT=3101"));
         assert!(unit.contains("ExecStart=\"/usr/bin/node\" \"server.js\""));
         assert!(!unit.contains("sh -c"));
@@ -532,6 +554,14 @@ mod tests {
     }
 
     #[test]
+    fn escapes_systemd_scalar_paths_without_quoting_them() {
+        assert_eq!(
+            systemd_path_value("/srv/Lumic App/%release"),
+            "/srv/Lumic\\x20App/%%release"
+        );
+    }
+
+    #[test]
     fn release_process_uses_a_root_loaded_runtime_environment_file() {
         let handoff = NodeHandoff {
             command: vec!["npm".into(), "start".into()],
@@ -546,7 +576,7 @@ mod tests {
             3101,
             Some(Path::new("/run/lumic/application-environments/demo.env")),
         );
-        assert!(unit.contains("EnvironmentFile=\"/run/lumic/application-environments/demo.env\""));
+        assert!(unit.contains("EnvironmentFile=/run/lumic/application-environments/demo.env"));
         assert!(!unit.contains("SECRET="));
     }
 }

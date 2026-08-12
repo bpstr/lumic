@@ -9,7 +9,7 @@ The changelog tracks shipped behavior, not every commit. Nightly entries are dat
 ## 2026-08-12 · 2.0.0-alpha.10
 
 - Required release candidates to pass all GitHub push workflows before receiving a version tag; individual repair commits are no longer treated as releases.
-- Resolved Node blue/green systemd startup by rendering the managed runtime executable as an absolute path.
+- Resolved Node blue/green systemd startup by rendering the managed runtime executable as an absolute path and path-valued unit directives without invalid scalar quoting.
 - Expanded installer validation across every managed-service definition and plan, plus reusable live PostgreSQL, MySQL, and Redis lifecycle checks with machine-readable CI results.
 - Corrected Redis eviction-policy rendering so managed `maxmemory_policy` updates restart cleanly with Redis's native `maxmemory-policy` directive.
 - Cleared systemd's per-unit start-rate counter before explicit restarts so rapid, successful configuration reconciliation cannot block the next lifecycle action.

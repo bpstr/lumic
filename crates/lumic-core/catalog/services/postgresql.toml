@@ -30,6 +30,26 @@ type = "address"
 default = "127.0.0.1"
 apply = "restart"
 
+[[resources]]
+type = "database"
+capability = "database.postgresql.database"
+
+[[resources.configuration]]
+key = "name"
+label = "Database name"
+type = "string"
+required = true
+
+[[resources]]
+type = "user"
+capability = "database.postgresql.user"
+
+[[resources.configuration]]
+key = "name"
+label = "User name"
+type = "string"
+required = true
+
 [[configuration]]
 key = "port"
 label = "Port"

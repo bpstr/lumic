@@ -79,7 +79,7 @@ struct ApplicationId {
 struct ApplicationManifestRequest {
     /// Stable Lumic application identifier.
     app: String,
-    /// Absolute or working-directory-relative repository checkout containing lumic.yaml.
+    /// Repository checkout containing lumic.toml or legacy lumic.yaml.
     repository_root: String,
 }
 
@@ -87,14 +87,14 @@ struct ApplicationManifestRequest {
 struct ApprovedApplicationManifestRequest {
     /// Stable Lumic application identifier.
     app: String,
-    /// Absolute or working-directory-relative repository checkout containing lumic.yaml.
+    /// Repository checkout containing lumic.toml or legacy lumic.yaml.
     repository_root: String,
     approved: bool,
 }
 
 #[derive(Debug, Deserialize, rmcp::schemars::JsonSchema)]
 struct ManifestInspectRequest {
-    /// Absolute or working-directory-relative repository checkout containing lumic.yaml.
+    /// Repository checkout containing lumic.toml or legacy lumic.yaml.
     repository_root: String,
 }
 
@@ -1222,7 +1222,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "application_manifest_inspect",
-        description = "Parse and strictly validate a repository's versioned lumic.yaml contract. Read-only; returns declared intent without changing application or host state."
+        description = "Parse and strictly validate a repository's versioned lumic.toml contract (or legacy lumic.yaml). Read-only; returns declared intent without changing application or host state."
     )]
     fn application_manifest_inspect(
         &self,
@@ -1237,7 +1237,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "application_manifest_plan",
-        description = "Resolve lumic.yaml against an existing application and return exact changes, risks, preconditions, validation and recovery. Read-only; call before application_manifest_apply."
+        description = "Resolve lumic.toml (or legacy lumic.yaml) against an existing application and return exact changes, risks, preconditions, validation and recovery. Read-only; call before application_manifest_apply."
     )]
     fn application_manifest_plan(
         &self,
@@ -1252,7 +1252,7 @@ impl LumicMcpServer {
 
     #[tool(
         name = "application_manifest_apply",
-        description = "Apply a validated lumic.yaml repository contract to application state. Mutating: requires node mutation policy, the mutations scope, and approved=true. It records runtime/build/public paths, workers, schedules, services, health, migration and deployment intent; it does not provision unresolved services."
+        description = "Apply a validated lumic.toml repository contract (or legacy lumic.yaml) to application state. Mutating: requires node mutation policy, the mutations scope, and approved=true. It records runtime/build/public paths, workers, schedules, services, health, migration and deployment intent; it does not provision unresolved services."
     )]
     async fn application_manifest_apply(
         &self,

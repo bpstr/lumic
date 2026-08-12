@@ -1159,7 +1159,7 @@ enum AppCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Inspect, plan, or apply the repository-owned lumic.yaml contract.
+    /// Inspect, plan, or apply the repository-owned lumic.toml contract.
     Manifest {
         #[command(subcommand)]
         command: ManifestCommand,
@@ -1279,7 +1279,7 @@ enum AppCommand {
 
 #[derive(Debug, Subcommand)]
 enum ManifestCommand {
-    /// Parse and validate lumic.yaml without server-state changes.
+    /// Parse and validate lumic.toml without server-state changes.
     Inspect {
         #[arg(long, default_value = ".")]
         repository_root: PathBuf,
@@ -2512,7 +2512,7 @@ async fn run_app(command: AppCommand) -> Result<(), Box<dyn std::error::Error>> 
                     println!("{}", serde_json::to_string_pretty(&manifest)?);
                 } else {
                     println!(
-                        "Valid lumic.yaml schema {} for {}.",
+                        "Valid repository application schema {} for {}.",
                         manifest.schema_version, manifest.name
                     );
                 }

@@ -6,6 +6,13 @@ template = "changelog.html"
 
 The changelog tracks shipped behavior, not every commit. Nightly entries are dated, concise, and linked to the documentation that defines the current contract.
 
+## 2026-08-12 · 2.0.0-alpha.11
+
+- Unified built-in and repository applications around the [`lumic.toml`](@/docs/lumic-toml.md) schema version 2 capability, typed configuration, service-resource, runtime-extension, process, schedule, deployment, and health vocabulary.
+- Added trusted declarative INI/directive file targets and validated command-target contracts to service definitions; repository manifests can consume those typed interfaces but cannot introduce privileged implementation paths or arbitrary root commands.
+- Made the WordPress catalog definition declare its PHP extensions, web behavior, database, and database-user resources while retaining Rust only for application-specific installation behavior.
+- Preserved bounded reads of legacy `lumic.yaml` schema version 1 during migration and rejected repositories containing both manifest files.
+
 ## 2026-08-12 · 2.0.0-alpha.10
 
 - Required release candidates to pass all GitHub push workflows before receiving a version tag; individual repair commits are no longer treated as releases.
@@ -16,13 +23,13 @@ The changelog tracks shipped behavior, not every commit. Nightly entries are dat
 - Cleared systemd's per-unit start-rate counter before explicit restarts so rapid, successful configuration reconciliation cannot block the next lifecycle action.
 - Kept ordinary application deployments independent of the root-only runtime environment directory; protected environment files are now materialized only for persistent processes and blue/green Node handoffs that consume them.
 - Made nginx validation independent of an interactive root `PATH`, including application provisioning and certificate attachment.
-- Enforced the exact [`lumic.yaml`](@/docs/lumic-yaml.md) Node/PHP version, PHP extension, package-manager, and typed managed-service intent during apply and deployment; added persistent shared release paths and richer supervised worker configuration.
+- Enforced the exact legacy `lumic.yaml` Node/PHP version, PHP extension, package-manager, and typed managed-service intent during apply and deployment; added persistent shared release paths and richer supervised worker configuration.
 - Expanded the built-in application catalog with Laravel, Drupal, Symfony, Forgejo, Ghost, Matomo, and framework/service combinations, and completed recipe lifecycle actions in the operator UI alongside CLI and MCP.
 - Added SSH private-key authentication to managed repository import/fetch/push with operation-scoped decrypted identity files and isolated OpenSSH configuration.
 
 ## 2026-08-11 · 2.0.0-alpha.3
 
-- Added the strict, versioned [`lumic.yaml`](@/docs/lumic-yaml.md) repository contract for runtimes, source/public paths, builds, workers, cron, service requirements, health, migrations, and deployment behavior across CLI, MCP, and the contract-gated Git push release path.
+- Added the strict, versioned legacy `lumic.yaml` repository contract for runtimes, source/public paths, builds, workers, cron, service requirements, health, migrations, and deployment behavior across CLI, MCP, and the contract-gated Git push release path.
 - Added serialized production deployments with explicit pre-deploy, build, database migration, activation, health, post-deploy and drain phases.
 - Added blue/green Node release units and atomic nginx upstream handoff, cooperative cancellation, pinned retry/redeploy, persistent log cursors, and Git commit provenance. See [Deployments](@/docs/deployments.md).
 - Added application-scoped encrypted environment values with masked inspection, controlled set/rotate/delete operations, deployment-time injection, and deployment-log redaction. See [Applications](@/docs/applications.md).

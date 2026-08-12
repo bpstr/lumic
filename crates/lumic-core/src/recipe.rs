@@ -2,6 +2,7 @@ pub use crate::artifact::ArtifactDefinition as RecipeArtifact;
 use crate::{
     Capability, Change, LumicError, Plan, Result, Risk, RiskLevel,
     application::{ApplicationProcess, ApplicationRuntime, validate_domain, validate_slug},
+    catalog::{Catalog, ServiceCategory},
     managed_service::{ManagedServiceKind, validate_resource_id},
 };
 use serde::{Deserialize, Serialize};
@@ -338,6 +339,38 @@ pub fn reference_recipes() -> Vec<RecipeDefinition> {
 }
 
 pub fn wordpress_recipe() -> RecipeDefinition {
+    let catalog = Catalog::built_in().expect("embedded catalog must be valid");
+    let application = catalog
+        .application("wordpress")
+        .expect("embedded WordPress application definition must exist");
+    let runtime_requirement = application
+        .runtime_requirements
+        .iter()
+        .find(|requirement| requirement.role == "runtime")
+        .expect("WordPress runtime requirement must exist");
+    let runtime = match runtime_requirement.runtime.as_str() {
+        "php" => ApplicationRuntime::Php,
+        "node" => ApplicationRuntime::Node,
+        _ => ApplicationRuntime::Static,
+    };
+    let services = application
+        .requirements
+        .iter()
+        .filter_map(|requirement| {
+            let service = catalog
+                .service_for_capability(&requirement.capability)
+                .ok()??;
+            (service.category != ServiceCategory::Web).then(|| RecipeServiceRequirement {
+                id_suffix: service.id.clone(),
+                kind: match service.id.as_str() {
+                    "mysql" => ManagedServiceKind::Mysql,
+                    _ => unreachable!("WordPress uses only reviewed recipe service drivers"),
+                },
+                role: requirement.role.clone(),
+                required: !requirement.optional,
+            })
+        })
+        .collect();
     RecipeDefinition {
         metadata: RecipeMetadata {
             id: "wordpress".into(),
@@ -345,18 +378,11 @@ pub fn wordpress_recipe() -> RecipeDefinition {
             name: "WordPress".into(),
             description: "A checksum-verified WordPress application with PHP-FPM, nginx and MySQL.".into(),
         },
-        runtime: ApplicationRuntime::Php,
-        runtime_version: Some("8.3".into()),
+        runtime,
+        runtime_version: runtime_requirement.version.clone(),
         repository_required: false,
-        components: ["curl", "mbstring", "mysql", "xml", "zip"]
-            .map(str::to_owned)
-            .to_vec(),
-        services: vec![RecipeServiceRequirement {
-            id_suffix: "mysql".into(),
-            kind: ManagedServiceKind::Mysql,
-            role: "database".into(),
-            required: true,
-        }],
+        components: runtime_requirement.extensions.clone(),
+        services,
         environment: vec![
             input("WORDPRESS_SITE_TITLE"),
             input("WORDPRESS_ADMIN_USER"),

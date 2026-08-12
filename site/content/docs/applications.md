@@ -36,9 +36,9 @@ An application can own:
 - deployments, health checks and rollback history;
 - application logs and events.
 
-## Repository application intent with `lumic.yaml`
+## Repository application intent with `lumic.toml`
 
-Applications may include a versioned [`lumic.yaml`](@/docs/lumic-yaml.md) contract at the repository root. Schema version 1 strictly describes static/PHP/Node runtime intent, source and public paths, argv-only build and migration phases, Node web handoff, worker instances, cron schedules, managed-service requirements, health validation, release retention, and deployment hooks.
+Applications may include a versioned [`lumic.toml`](@/docs/lumic-toml.md) contract at the repository root. Schema version 2 uses the same capability requirements, typed service configuration, service resources, runtime extensions, processes, schedules, deployment, and health vocabulary as built-in application definitions. Lumic resolves capabilities through the trusted catalog; repository files cannot introduce privileged paths or arbitrary root commands. Legacy `lumic.yaml` schema version 1 remains readable during migration, but it cannot coexist with `lumic.toml`.
 
 `lumic app manifest inspect` is read-only, `lumic app manifest plan` resolves changes and risks against the target application, and `lumic app manifest apply` is the approved state mutation. Every deployment also validates the manifest from the exact checked-out commit and uses its working/public directory and deployment behavior. Required services must already have matching typed application bindings; the manifest cannot silently install a package or introduce a secret.
 
@@ -60,7 +60,7 @@ The certificate is persisted as `certificate.<application>` and bound to `nginx.
 
 ## Peripheral dependencies
 
-Runtime components are first-class. The current deliberately small PHP catalog is `curl`, `intl`, `mbstring`, `mysql`, `xml`, and `zip`. Lumic resolves each to the selected version-qualified native package (for example, `php8.3-intl`); unknown component names and unsupported versions are denied before apt runs.
+Runtime components are first-class. The PHP catalog includes `curl`, `intl`, `mbstring`, `mysql`, `xml`, and `zip`; application definitions may use the native aliases `dom`, `exif`, `fileinfo`, `mysqli`, and `openssl`, which resolve to the reviewed XML, MySQL, or PHP core packages as appropriate. Lumic resolves each to the selected version-qualified native package (for example, `php8.3-intl`); unknown component names and unsupported versions are denied before apt runs.
 
 ## Safe activation and recovery
 
@@ -70,6 +70,6 @@ nginx files use atomic sibling writes and retain a `.lumic-backup`. Lumic restor
 
 ## Application recipes
 
-Installatron-style recipes provide modern stack installation without hard-coding applications into core. The built-in WordPress proof composes pinned WordPress and WP-CLI artifacts, PHP 8.3, an isolated MySQL database and credential, an owned nginx site, optional TLS, generated administrator credentials and HTTP health through the same resource contracts. It journals durable steps, converges repeated install requests, restores the previous release when setup fails, and removes only recipe-owned application state. Shared runtimes, packages, services and database data survive uninstall.
+Installatron-style recipes provide modern stack installation without hard-coding applications into core. The built-in WordPress definition declares PHP 8.3 and its required extensions, web capability, MySQL capability, database, and database-user resources. Its reduced Rust driver handles the pinned WordPress/WP-CLI artifacts and application-specific configuration and installation. The shared framework owns runtime/service/web composition, TLS, generated credentials, health, durable steps, convergence, rollback, and safe removal. Shared runtimes, packages, services and database data survive uninstall.
 
 Recipes compose existing runtimes, components, services and setup actions and remain declarative wherever possible. Laravel, Drupal, Ghost, Forgejo and other self-hosted software remain catalog-expansion work.

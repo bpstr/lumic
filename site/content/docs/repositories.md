@@ -68,7 +68,7 @@ sudo lumic repo configure-deployment default/api api /var/lib/lumic/apps/api \
 
 Strategies are `atomic` and `in_place`. Destinations must be absolute and normalized; `/`, core system directories, and Lumic's state root cannot be targeted directly. Commands are stored as argv vectors rather than shell strings, shared paths must be relative and traversal-free, retention is bounded to 1–100 releases, and HTTP health checks are restricted to the local server.
 
-This repository configuration records provider-neutral deployment intent. Release execution, history, rollback, pruning, and health-driven automatic rollback remain provided by the application deployment surface (`lumic app deploy`, `deployments`, and `rollback`). For Lumic-hosted Git, `lumic git trigger` installs the fixed repository-to-application receive mapping. When that application has an applied [`lumic.yaml`](@/docs/lumic-yaml.md), the receiver honors the manifest's branch and `deploy_on_push` gate; configuring repository metadata alone does not install a hook or mutate an application.
+This repository configuration records provider-neutral deployment intent. Release execution, history, rollback, pruning, and health-driven automatic rollback remain provided by the application deployment surface (`lumic app deploy`, `deployments`, and `rollback`). For Lumic-hosted Git, `lumic git trigger` installs the fixed repository-to-application receive mapping. When that application has an applied [`lumic.toml`](@/docs/lumic-toml.md), the receiver honors the manifest's branch and `deploy_on_push` gate; configuring repository metadata alone does not install a hook or mutate an application.
 
 ## Smart HTTP
 

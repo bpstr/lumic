@@ -2,7 +2,7 @@
 
 use lumic_core::{
     LumicError, Result,
-    catalog::{Catalog, ServiceDefinition},
+    catalog::{Catalog, Configuration, ConfigurationFieldType, ServiceDefinition},
     managed_service::{ManagedService, ManagedServiceKind, ServiceConfiguration, ServicePaths},
 };
 use std::{
@@ -378,16 +378,16 @@ impl ServiceDriver for MysqlDriver {
         _discovered_config: Option<PathBuf>,
         _secrets: &BTreeMap<String, String>,
     ) -> Result<Vec<DriverConfigurationFile>> {
-        let mut content = format!(
-            "# Managed by Lumic\n[mysqld]\nbind-address = {}\nport = {}\n",
-            service.configuration.bind_address, service.configuration.port
-        );
+        let mut files = render_catalog_configuration(service)?;
+        let mut rendered = files
+            .pop()
+            .ok_or_else(|| invalid("configuration", "MySQL catalog has no file target"))?;
         for (key, value) in &service.configuration.settings {
-            content.push_str(&format!("{key} = {value}\n"));
+            rendered.content.push_str(&format!("{key} = {value}\n"));
         }
         Ok(vec![DriverConfigurationFile {
-            path: PathBuf::from("/etc/mysql/mysql.conf.d/99-lumic.cnf"),
-            content,
+            path: rendered.path.into(),
+            content: rendered.content,
             mode: 0o640,
             owner: "root:root",
         }])
@@ -685,16 +685,13 @@ impl ServiceDriver for RedisDriver {
                 owner: "root:redis",
             });
         }
-        let mut content = format!(
-            "# Managed by Lumic\nbind {}\nport {}\n",
-            service.configuration.bind_address, service.configuration.port
-        );
-        for (key, value) in &service.configuration.settings {
-            content.push_str(&format!("{} {value}\n", redis_directive_name(key)));
-        }
+        let rendered = render_catalog_configuration(service)?
+            .pop()
+            .ok_or_else(|| invalid("configuration", "Redis catalog has no file target"))?;
+        debug_assert_eq!(rendered.path, PathBuf::from("/etc/redis/lumic.conf"));
         files.push(DriverConfigurationFile {
-            path: PathBuf::from("/etc/redis/lumic.conf"),
-            content,
+            path: rendered.path.into(),
+            content: rendered.content,
             mode: 0o640,
             owner: "root:redis",
         });
@@ -754,6 +751,44 @@ impl ServiceDriver for RedisDriver {
     fn grant_database_command(&self, _database: &str, _user: &str) -> Result<ProcessSpec> {
         Err(unsupported_resource(self.id()))
     }
+}
+
+fn render_catalog_configuration(
+    service: &ManagedService,
+) -> Result<Vec<lumic_core::catalog::RenderedConfigurationFile>> {
+    let catalog = Catalog::built_in()?;
+    let definition = catalog
+        .service(service.kind.id())
+        .ok_or_else(|| invalid("service", "missing built-in catalog definition"))?;
+    let mut supplied = Configuration::from([
+        (
+            "bind".into(),
+            serde_json::Value::String(service.configuration.bind_address.clone()),
+        ),
+        (
+            "port".into(),
+            serde_json::Value::from(service.configuration.port),
+        ),
+    ]);
+    for field in &definition.configuration.0 {
+        let Some(value) = service.configuration.settings.get(&field.key) else {
+            continue;
+        };
+        let value =
+            match field.field_type {
+                ConfigurationFieldType::Integer | ConfigurationFieldType::Bytes => value
+                    .parse::<i64>()
+                    .map(serde_json::Value::from)
+                    .map_err(|_| invalid("configuration", "numeric setting is invalid"))?,
+                ConfigurationFieldType::Boolean => value
+                    .parse::<bool>()
+                    .map(serde_json::Value::from)
+                    .map_err(|_| invalid("configuration", "boolean setting is invalid"))?,
+                _ => serde_json::Value::String(value.clone()),
+            };
+        supplied.insert(field.key.clone(), value);
+    }
+    definition.render_configuration_files(&supplied)
 }
 
 #[derive(Debug)]
@@ -1712,13 +1747,6 @@ fn driver_io(error: std::io::Error) -> LumicError {
     }
 }
 
-fn redis_directive_name(setting: &str) -> &str {
-    match setting {
-        "maxmemory_policy" => "maxmemory-policy",
-        setting => setting,
-    }
-}
-
 fn validate_settings(
     driver: &str,
     configuration: &ServiceConfiguration,
@@ -1800,7 +1828,18 @@ mod tests {
 
     #[test]
     fn redis_policy_setting_uses_native_directive_name() {
-        assert_eq!(redis_directive_name("maxmemory_policy"), "maxmemory-policy");
+        let definition = Catalog::built_in()
+            .unwrap()
+            .service("redis")
+            .unwrap()
+            .clone();
+        let files = definition
+            .render_configuration_files(&Configuration::from([(
+                "maxmemory_policy".into(),
+                serde_json::Value::String("allkeys-lru".into()),
+            )]))
+            .unwrap();
+        assert!(files[0].content.contains("maxmemory-policy allkeys-lru"));
     }
 
     #[test]

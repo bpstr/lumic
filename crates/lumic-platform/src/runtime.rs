@@ -462,12 +462,17 @@ fn component_package(
     version: Option<&str>,
     component: &str,
 ) -> Result<String> {
-    let trusted = matches!(
-        component,
-        "curl" | "intl" | "mbstring" | "mysql" | "xml" | "zip"
-    );
-    match (runtime, version, trusted) {
-        (ApplicationRuntime::Php, Some(version), true) => Ok(format!("php{version}-{component}")),
+    let package_component = match component {
+        "curl" | "intl" | "mbstring" | "mysql" | "xml" | "zip" => Some(component),
+        "mysqli" | "pdo_mysql" => Some("mysql"),
+        "dom" => Some("xml"),
+        "exif" | "fileinfo" | "openssl" => Some("fpm"),
+        _ => None,
+    };
+    match (runtime, version, package_component) {
+        (ApplicationRuntime::Php, Some(version), Some(package_component)) => {
+            Ok(format!("php{version}-{package_component}"))
+        }
         _ => Err(LumicError::InvalidInput {
             field: "component".into(),
             message: format!("{component} is not in the trusted catalog for {runtime:?}"),

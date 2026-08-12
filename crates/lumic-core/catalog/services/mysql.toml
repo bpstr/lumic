@@ -7,6 +7,12 @@ description = "MySQL-compatible relational database server"
 driver = "mysql"
 instance_policy = "singleton"
 
+[[config_files]]
+id = "main"
+path = "/etc/mysql/mysql.conf.d/99-lumic.cnf"
+format = "ini"
+section = "mysqld"
+
 [capabilities]
 configure = true
 start = true
@@ -28,6 +34,10 @@ label = "Bind address"
 type = "address"
 default = "127.0.0.1"
 apply = "restart"
+[configuration.target]
+type = "file"
+file = "main"
+key = "bind-address"
 
 [[configuration]]
 key = "port"
@@ -35,6 +45,30 @@ label = "Port"
 type = "port"
 default = 3306
 apply = "restart"
+[configuration.target]
+type = "file"
+file = "main"
+key = "port"
+
+[[resources]]
+type = "database"
+capability = "database.mysql.database"
+
+[[resources.configuration]]
+key = "name"
+label = "Database name"
+type = "string"
+required = true
+
+[[resources]]
+type = "user"
+capability = "database.mysql.user"
+
+[[resources.configuration]]
+key = "name"
+label = "User name"
+type = "string"
+required = true
 
 [[outputs]]
 key = "connection"

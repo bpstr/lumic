@@ -61,6 +61,47 @@ pub enum ApplyBehavior {
     Recreate,
 }
 
+/// Reviewed transport used by a built-in definition to apply one typed value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ConfigurationTarget {
+    File { file: String, key: String },
+    Command { command: Vec<String> },
+}
+
+/// File formats supported by the generic configuration writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigurationFileFormat {
+    Ini,
+    Directives,
+}
+
+/// A trusted file destination. Repository manifests cannot declare these paths.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigurationFileDefinition {
+    pub id: String,
+    pub path: String,
+    pub format: ConfigurationFileFormat,
+    #[serde(default)]
+    pub section: Option<String>,
+}
+
+/// Fully rendered content for one reviewed destination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedConfigurationFile {
+    pub path: String,
+    pub content: String,
+}
+
+/// A reviewed direct argv command with one typed value substituted as one argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedConfigurationCommand {
+    pub field: String,
+    pub command: Vec<String>,
+}
+
 /// One reusable field in a catalog-driven configuration form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -87,6 +128,8 @@ pub struct ConfigurationField {
     pub sensitive: bool,
     #[serde(default)]
     pub apply: ApplyBehavior,
+    #[serde(default)]
+    pub target: Option<ConfigurationTarget>,
 }
 
 impl ConfigurationField {
@@ -122,6 +165,41 @@ impl ConfigurationField {
         }
         if let Some(default) = &self.default {
             self.validate_value(default)?;
+        }
+        if let Some(target) = &self.target {
+            match target {
+                ConfigurationTarget::File { file, key } => {
+                    validate_catalog_key("configuration.target.file", file)?;
+                    let valid_key = !key.is_empty()
+                        && key.len() <= 128
+                        && key.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'_' | b'-' | b'.')
+                        });
+                    if !valid_key {
+                        return Err(invalid(
+                            "configuration.target.key",
+                            "must be a bounded directive key",
+                        ));
+                    }
+                }
+                ConfigurationTarget::Command { command } => {
+                    if command.is_empty()
+                        || command.iter().any(|part| {
+                            part.is_empty() || part.bytes().any(|byte| byte.is_ascii_control())
+                        })
+                        || matches!(command.first().map(String::as_str), Some("sh" | "bash"))
+                        || command.iter().any(|part| part == "-c")
+                        || command.iter().filter(|part| *part == "{{ value }}").count() != 1
+                    {
+                        return Err(invalid(
+                            "configuration.target.command",
+                            "must be direct argv without a shell and contain one '{{ value }}' argument",
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -305,6 +383,10 @@ pub struct ServiceDefinition {
     #[serde(default)]
     pub configuration: ConfigurationSchema,
     #[serde(default)]
+    pub config_files: Vec<ConfigurationFileDefinition>,
+    #[serde(default)]
+    pub resources: Vec<ServiceResourceDefinition>,
+    #[serde(default)]
     pub outputs: Vec<OutputDefinition>,
     #[serde(default)]
     pub platforms: Vec<PlatformMapping>,
@@ -321,6 +403,46 @@ impl ServiceDefinition {
             &self.driver,
         )?;
         self.configuration.validate()?;
+        let mut config_files = BTreeSet::new();
+        for file in &self.config_files {
+            validate_catalog_key("config_files.id", &file.id)?;
+            let path = Path::new(&file.path);
+            if !path.is_absolute()
+                || file.path.bytes().any(|byte| byte.is_ascii_control())
+                || !config_files.insert(file.id.as_str())
+            {
+                return Err(invalid(
+                    "config_files",
+                    "IDs must be unique and paths must be safe absolute paths",
+                ));
+            }
+            if file.format != ConfigurationFileFormat::Ini && file.section.is_some() {
+                return Err(invalid(
+                    "config_files.section",
+                    "sections are supported only for ini files",
+                ));
+            }
+        }
+        for field in &self.configuration.0 {
+            if let Some(ConfigurationTarget::File { file, .. }) = &field.target
+                && !config_files.contains(file.as_str())
+            {
+                return Err(invalid(
+                    "configuration.target.file",
+                    &format!("references unknown config file '{file}'"),
+                ));
+            }
+        }
+        let mut resource_kinds = BTreeSet::new();
+        for resource in &self.resources {
+            resource.validate()?;
+            if !resource_kinds.insert(resource.kind.as_str()) {
+                return Err(invalid(
+                    "resources.kind",
+                    &format!("duplicate resource kind '{}'", resource.kind),
+                ));
+            }
+        }
         let mut outputs = BTreeSet::new();
         for output in &self.outputs {
             validate_catalog_key("outputs.key", &output.key)?;
@@ -349,6 +471,109 @@ impl ServiceDefinition {
             return Err(invalid("platforms", "at least one mapping is required"));
         }
         Ok(())
+    }
+
+    /// Renders known file formats from validated typed values.
+    ///
+    /// Paths and keys come only from the embedded trusted service definition.
+    pub fn render_configuration_files(
+        &self,
+        supplied: &Configuration,
+    ) -> Result<Vec<RenderedConfigurationFile>> {
+        let configuration = self.configuration.resolve(supplied)?;
+        let mut entries: BTreeMap<&str, Vec<(&str, String)>> = BTreeMap::new();
+        for field in &self.configuration.0 {
+            if let Some(ConfigurationTarget::File { file, key }) = &field.target
+                && let Some(value) = configuration.get(&field.key)
+            {
+                entries
+                    .entry(file)
+                    .or_default()
+                    .push((key, render_configuration_value(value)?));
+            }
+        }
+        self.config_files
+            .iter()
+            .filter(|file| entries.contains_key(file.id.as_str()))
+            .map(|file| {
+                let mut content = String::from("# Managed by Lumic\n");
+                if let Some(section) = &file.section {
+                    content.push_str(&format!("[{section}]\n"));
+                }
+                for (key, value) in &entries[file.id.as_str()] {
+                    match file.format {
+                        ConfigurationFileFormat::Ini => {
+                            content.push_str(&format!("{key} = {value}\n"));
+                        }
+                        ConfigurationFileFormat::Directives => {
+                            content.push_str(&format!("{key} {value}\n"));
+                        }
+                    }
+                }
+                Ok(RenderedConfigurationFile {
+                    path: file.path.clone(),
+                    content,
+                })
+            })
+            .collect()
+    }
+
+    /// Renders reviewed command targets without invoking a shell.
+    pub fn render_configuration_commands(
+        &self,
+        supplied: &Configuration,
+    ) -> Result<Vec<RenderedConfigurationCommand>> {
+        let configuration = self.configuration.resolve(supplied)?;
+        self.configuration
+            .0
+            .iter()
+            .filter_map(
+                |field| match (&field.target, configuration.get(&field.key)) {
+                    (Some(ConfigurationTarget::Command { command }), Some(value)) => {
+                        Some((field, command, value))
+                    }
+                    _ => None,
+                },
+            )
+            .map(|(field, command, value)| {
+                let value = render_configuration_value(value)?;
+                Ok(RenderedConfigurationCommand {
+                    field: field.key.clone(),
+                    command: command
+                        .iter()
+                        .map(|part| {
+                            if part == "{{ value }}" {
+                                value.clone()
+                            } else {
+                                part.clone()
+                            }
+                        })
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+}
+
+/// Declarative schema for a child resource implemented by a trusted service driver.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceResourceDefinition {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub capability: String,
+    #[serde(default)]
+    pub configuration: ConfigurationSchema,
+    #[serde(default)]
+    pub outputs: Vec<OutputDefinition>,
+}
+
+impl ServiceResourceDefinition {
+    fn validate(&self) -> Result<()> {
+        validate_catalog_key("resources.type", &self.kind)?;
+        validate_capability("resources.capability", &self.capability)?;
+        self.configuration.validate()?;
+        validate_outputs(&self.outputs)
     }
 }
 
@@ -413,6 +638,22 @@ pub struct ApplicationRequirement {
     pub role: String,
     #[serde(default)]
     pub optional: bool,
+    #[serde(default)]
+    pub configuration: Configuration,
+    #[serde(default)]
+    pub resources: BTreeMap<String, Configuration>,
+}
+
+/// Runtime components required by an application definition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRequirement {
+    pub role: String,
+    pub runtime: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub extensions: Vec<String>,
 }
 
 /// Declarative portion of a known application installation.
@@ -429,6 +670,8 @@ pub struct ApplicationDefinition {
     pub configuration: ConfigurationSchema,
     #[serde(default)]
     pub requirements: Vec<ApplicationRequirement>,
+    #[serde(default)]
+    pub runtime_requirements: Vec<RuntimeRequirement>,
 }
 
 impl ApplicationDefinition {
@@ -451,6 +694,31 @@ impl ApplicationDefinition {
                     "requirements.role",
                     &format!("duplicate role '{}'", requirement.role),
                 ));
+            }
+            for resource in requirement.resources.keys() {
+                validate_catalog_key("requirements.resources", resource)?;
+            }
+        }
+        for requirement in &self.runtime_requirements {
+            validate_catalog_key("runtime_requirements.role", &requirement.role)?;
+            validate_catalog_id("runtime_requirements.runtime", &requirement.runtime)?;
+            if let Some(version) = &requirement.version
+                && !valid_version(version)
+            {
+                return Err(invalid(
+                    "runtime_requirements.version",
+                    "must be a valid runtime version",
+                ));
+            }
+            let mut extensions = BTreeSet::new();
+            for extension in &requirement.extensions {
+                validate_catalog_key("runtime_requirements.extensions", extension)?;
+                if !extensions.insert(extension.as_str()) {
+                    return Err(invalid(
+                        "runtime_requirements.extensions",
+                        &format!("duplicate extension '{extension}'"),
+                    ));
+                }
             }
         }
         Ok(())
@@ -518,6 +786,25 @@ impl Catalog {
 
     pub fn application(&self, id: &str) -> Option<&ApplicationDefinition> {
         self.applications.get(id)
+    }
+
+    /// Resolves a service capability to exactly one reviewed provider.
+    pub fn service_for_capability(&self, capability: &str) -> Result<Option<&ServiceDefinition>> {
+        validate_capability("requirements.capability", capability)?;
+        let mut providers = self.services.values().filter(|service| {
+            service
+                .outputs
+                .iter()
+                .any(|output| output.capability == capability)
+        });
+        let provider = providers.next();
+        if providers.next().is_some() {
+            return Err(invalid(
+                "requirements.capability",
+                &format!("capability '{capability}' has multiple providers; select one explicitly"),
+            ));
+        }
+        Ok(provider)
     }
 }
 
@@ -620,7 +907,7 @@ fn validate_catalog_key(field: &str, value: &str) -> Result<()> {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
     valid
         .then_some(())
-        .ok_or_else(|| invalid(field, "must be a lowercase data key"))
+        .ok_or_else(|| invalid(field, &format!("'{value}' must be a lowercase data key")))
 }
 
 fn validate_capability(field: &str, value: &str) -> Result<()> {
@@ -643,6 +930,31 @@ fn bounded_string(value: &Value, allow_empty: bool) -> bool {
             && text.len() <= 4096
             && !text.bytes().any(|byte| byte.is_ascii_control())
     })
+}
+
+fn render_configuration_value(value: &Value) -> Result<String> {
+    let rendered = match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        _ => {
+            return Err(invalid(
+                "configuration",
+                "file targets support only scalar values",
+            ));
+        }
+    };
+    if rendered.is_empty()
+        || !rendered.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':')
+        })
+    {
+        return Err(invalid(
+            "configuration",
+            "rendered target values must be safe single-token scalars",
+        ));
+    }
+    Ok(rendered)
 }
 
 fn integer_in_range(value: &Value, minimum: Option<i64>, maximum: Option<i64>) -> bool {
@@ -755,5 +1067,47 @@ mod tests {
             definition.configuration.apply_behavior(&before, &after),
             ApplyBehavior::Restart
         );
+    }
+
+    #[test]
+    fn command_targets_render_values_as_single_argv_arguments() {
+        let definition: ServiceDefinition = toml::from_str(
+            r#"schema_version = 1
+definition_version = 1
+id = "example"
+name = "Example"
+category = "other"
+description = "Example"
+driver = "example"
+instance_policy = "singleton"
+
+[[configuration]]
+key = "limit"
+label = "Limit"
+type = "integer"
+required = true
+[configuration.target]
+type = "command"
+command = ["examplectl", "set", "limit", "{{ value }}"]
+
+[[platforms]]
+distribution = "debian"
+package = "example"
+unit = "example.service"
+"#,
+        )
+        .unwrap();
+        definition.validate().unwrap();
+        let commands = definition
+            .render_configuration_commands(&BTreeMap::from([("limit".into(), Value::from(42))]))
+            .unwrap();
+        assert_eq!(commands[0].command, ["examplectl", "set", "limit", "42"]);
+
+        let unsafe_definition = toml::to_string(&definition)
+            .unwrap()
+            .replace("examplectl", "bash")
+            .replace(", \"{{ value }}\"", "");
+        let unsafe_definition: ServiceDefinition = toml::from_str(&unsafe_definition).unwrap();
+        assert!(unsafe_definition.validate().is_err());
     }
 }

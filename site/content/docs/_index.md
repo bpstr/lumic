@@ -38,11 +38,11 @@ Browse the dedicated [Features](@/features/_index.md) catalog for supported appl
 
 ## Describe the application once
 
-Repositories can include an optional [`lumic.yaml`](./lumic-yaml/) with runtime, service, process, domain, secret-reference, health, and deployment intent. Lumic combines that intent with repository evidence and live node state before proposing a plan.
+Repositories can include an optional [`lumic.toml`](./lumic-toml/) with runtime extensions, capability requirements, typed service resources, processes, domain, health, and deployment intent. Lumic combines that intent with repository evidence and live node state before proposing a plan.
 
 A typical request can therefore be short:
 
-> Read `lumic.yaml`, inspect this repository and prepare this Lumic node for production. Fill in safe obvious details from the repository, show the infrastructure plan before material changes, deploy the application and verify its health.
+> Read `lumic.toml`, inspect this repository and prepare this Lumic node for production. Fill in safe obvious details from the repository, show the infrastructure plan before material changes, deploy the application and verify its health.
 
 ## Give Codex a complete VPS task
 

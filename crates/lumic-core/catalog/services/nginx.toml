@@ -31,6 +31,28 @@ default = 1024
 advanced = true
 apply = "reload"
 
+[[resources]]
+type = "virtual_host"
+capability = "web.http.virtual_host"
+
+[[resources.configuration]]
+key = "domain"
+label = "Domain"
+type = "string"
+required = true
+
+[[resources.configuration]]
+key = "document_root"
+label = "Document root"
+type = "path"
+required = true
+
+[[resources.configuration]]
+key = "tls"
+label = "Enable TLS"
+type = "boolean"
+default = false
+
 [[outputs]]
 key = "http"
 type = "http_endpoint"

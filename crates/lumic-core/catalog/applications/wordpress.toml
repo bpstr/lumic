@@ -1,5 +1,5 @@
 schema_version = 1
-definition_version = 1
+definition_version = 2
 id = "wordpress"
 name = "WordPress"
 description = "WordPress content management application"
@@ -57,11 +57,30 @@ default = false
 [[requirements]]
 capability = "web.http"
 role = "web"
-
-[[requirements]]
-capability = "runtime.php_fpm"
-role = "runtime"
+[requirements.configuration]
+index = "index.php"
+try_files = "$uri $uri/ /index.php?$args"
 
 [[requirements]]
 capability = "database.mysql_compatible"
 role = "database"
+[requirements.resources.database]
+name = "{{ application.id }}"
+[requirements.resources.user]
+name = "{{ application.id }}"
+
+[[runtime_requirements]]
+role = "runtime"
+runtime = "php"
+version = "8.3"
+extensions = [
+  "curl",
+  "dom",
+  "exif",
+  "fileinfo",
+  "mbstring",
+  "mysqli",
+  "openssl",
+  "xml",
+  "zip",
+]

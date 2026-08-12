@@ -24,7 +24,8 @@ use lumic_core::{
         ApplicationLifecycleOperation, ApplicationLifecyclePlan, GenericPhpApplicationSpec,
     },
     application_manifest::{
-        APPLICATION_MANIFEST_FILE, ApplicationManifest, ResolvedApplicationManifest,
+        APPLICATION_MANIFEST_FILE, ApplicationManifest, LEGACY_APPLICATION_MANIFEST_FILE,
+        ResolvedApplicationManifest,
     },
     binding::Binding,
     certificate::CertificateRequest,
@@ -757,7 +758,7 @@ impl ApplicationService {
         Ok(application)
     }
 
-    /// Read and validate the repository-owned `lumic.yaml` contract without changing state.
+    /// Read and validate the repository-owned `lumic.toml` contract without changing state.
     pub fn inspect_manifest(&self, repository_root: &Path) -> Result<ApplicationManifest> {
         read_application_manifest(repository_root)
     }
@@ -771,8 +772,9 @@ impl ApplicationService {
                 .as_ref()
                 .ok_or_else(|| LumicError::InvalidInput {
                     field: "repository".into(),
-                    message: "configure a repository before planning lumic.yaml".into(),
+                    message: "configure a repository before planning lumic.toml".into(),
                 })?;
+        let (_, manifest_file) = application_manifest_location(repository_root)?;
         let contract = read_application_manifest(repository_root)?.resolve(&repository.branch)?;
         validate_manifest_application(&application, &contract)?;
 
@@ -793,7 +795,7 @@ impl ApplicationService {
         }
         Ok(Plan {
             id: format!("application-manifest-{id}"),
-            summary: format!("Apply {} as the deployment contract for {id}", APPLICATION_MANIFEST_FILE),
+            summary: format!("Apply {manifest_file} as the deployment contract for {id}"),
             changes: vec![Change {
                 capability: Capability::new("application.manifest.apply"),
                 summary: "persist the validated runtime, build, public path, processes, schedules, services, health check, migration, and deployment intent".into(),
@@ -803,7 +805,7 @@ impl ApplicationService {
             }],
             risks,
             preconditions: vec![
-                format!("{} is a regular file no larger than 256 KiB", repository_root.join(APPLICATION_MANIFEST_FILE).display()),
+                format!("{} is a regular file no larger than 256 KiB", repository_root.join(manifest_file).display()),
                 format!("manifest application name and runtime match {id}"),
                 "referenced runtime and managed services are available before deployment".into(),
             ],
@@ -813,7 +815,7 @@ impl ApplicationService {
                 "workers and schedules compile to typed systemd process definitions".into(),
             ],
             recovery: vec![
-                "restore the previous lumic.yaml and apply its plan".into(),
+                format!("restore the previous {manifest_file} and apply its plan"),
                 format!("redeploy the last healthy release for {id}"),
             ],
         })
@@ -829,7 +831,7 @@ impl ApplicationService {
         if !context.approved {
             return Err(LumicError::InvalidInput {
                 field: "approval".into(),
-                message: "applying lumic.yaml requires explicit approval".into(),
+                message: "applying lumic.toml requires explicit approval".into(),
             });
         }
         let before = self.inspect(id)?;
@@ -838,8 +840,9 @@ impl ApplicationService {
             .as_ref()
             .ok_or_else(|| LumicError::InvalidInput {
                 field: "repository".into(),
-                message: "configure a repository before applying lumic.yaml".into(),
+                message: "configure a repository before applying lumic.toml".into(),
             })?;
+        let (_, manifest_file) = application_manifest_location(repository_root)?;
         let contract = read_application_manifest(repository_root)?.resolve(&repository.branch)?;
         validate_manifest_application(&before, &contract)?;
         if context.dry_run {
@@ -873,7 +876,7 @@ impl ApplicationService {
             "apply_manifest",
             "application",
             id,
-            json!({"file": APPLICATION_MANIFEST_FILE, "schema_version": contract.manifest.schema_version}),
+            json!({"file": manifest_file, "schema_version": contract.manifest.schema_version}),
             serde_json::to_value(&before).ok(),
             serde_json::to_value(&application).ok(),
             true,
@@ -1605,8 +1608,7 @@ impl ApplicationService {
         ));
         self.upsert_deployment(deployment)?;
 
-        let manifest_path = release.join(APPLICATION_MANIFEST_FILE);
-        if manifest_path.exists() {
+        if application_manifest_exists(release)? {
             let before_manifest_sync = application.clone();
             let contract = read_application_manifest(release)?.resolve(&repository.branch)?;
             validate_manifest_application(application, &contract)?;
@@ -1670,7 +1672,7 @@ impl ApplicationService {
             deployment.phases.push(phase(
                 "manifest",
                 DeploymentPhaseStatus::Completed,
-                "validated and resolved repository lumic.yaml",
+                "validated and resolved repository lumic.toml",
             ));
             self.upsert_deployment(deployment)?;
         } else if repository.contract.is_some() {
@@ -2835,22 +2837,66 @@ fn current_release(application: &Application) -> Result<Option<String>> {
 }
 
 fn read_application_manifest(repository_root: &Path) -> Result<ApplicationManifest> {
+    let (path, file) = application_manifest_location(repository_root)?;
+    let metadata = fs::symlink_metadata(&path).map_err(state_io_error)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 256 * 1024 {
+        return Err(LumicError::InvalidInput {
+            field: file.into(),
+            message: "must be a non-symlink regular file no larger than 256 KiB".into(),
+        });
+    }
+    let source = fs::read_to_string(path).map_err(state_io_error)?;
+    if file == APPLICATION_MANIFEST_FILE {
+        ApplicationManifest::parse(&source)
+    } else {
+        ApplicationManifest::parse_legacy_yaml(&source)
+    }
+}
+
+fn application_manifest_location(repository_root: &Path) -> Result<(PathBuf, &'static str)> {
     if !repository_root.is_dir() {
         return Err(LumicError::InvalidInput {
             field: "repository_root".into(),
             message: "must be an existing repository directory".into(),
         });
     }
-    let path = repository_root.join(APPLICATION_MANIFEST_FILE);
-    let metadata = fs::symlink_metadata(&path).map_err(state_io_error)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 256 * 1024 {
+    let current = repository_root.join(APPLICATION_MANIFEST_FILE);
+    let legacy = repository_root.join(LEGACY_APPLICATION_MANIFEST_FILE);
+    if current.exists() && legacy.exists() {
         return Err(LumicError::InvalidInput {
             field: APPLICATION_MANIFEST_FILE.into(),
-            message: "must be a non-symlink regular file no larger than 256 KiB".into(),
+            message: format!(
+                "cannot coexist with deprecated {LEGACY_APPLICATION_MANIFEST_FILE}; migrate and remove the legacy file"
+            ),
         });
     }
-    let source = fs::read_to_string(path).map_err(state_io_error)?;
-    ApplicationManifest::parse(&source)
+    let (path, file) = if current.exists() {
+        (current, APPLICATION_MANIFEST_FILE)
+    } else if legacy.exists() {
+        (legacy, LEGACY_APPLICATION_MANIFEST_FILE)
+    } else {
+        return Err(LumicError::InvalidInput {
+            field: APPLICATION_MANIFEST_FILE.into(),
+            message: format!(
+                "repository must contain {APPLICATION_MANIFEST_FILE} or legacy {LEGACY_APPLICATION_MANIFEST_FILE}"
+            ),
+        });
+    };
+    Ok((path, file))
+}
+
+fn application_manifest_exists(repository_root: &Path) -> Result<bool> {
+    let current = repository_root.join(APPLICATION_MANIFEST_FILE).exists();
+    let legacy = repository_root
+        .join(LEGACY_APPLICATION_MANIFEST_FILE)
+        .exists();
+    if current && legacy {
+        return Err(invalid(
+            APPLICATION_MANIFEST_FILE,
+            &format!("cannot coexist with deprecated {LEGACY_APPLICATION_MANIFEST_FILE}"),
+        ));
+    }
+    Ok(current || legacy)
 }
 
 fn manifest_working_directory(repository: &RepositoryConfig, release: &Path) -> PathBuf {
@@ -2949,14 +2995,19 @@ fn validate_manifest_service_bindings(
         let binding = application
             .service_references
             .iter()
-            .find(|binding| binding.role == requirement.role)
-            .ok_or_else(|| LumicError::InvalidInput {
+            .find(|binding| binding.role == requirement.role);
+        let Some(binding) = binding else {
+            if requirement.optional {
+                continue;
+            }
+            return Err(LumicError::InvalidInput {
                 field: format!("services.{}", requirement.role),
                 message: format!(
                     "requires a bound {} managed service before deployment",
                     requirement.service_type
                 ),
-            })?;
+            });
+        };
         if binding.service_type.as_deref() != Some(requirement.service_type.as_str())
             || requirement
                 .instance
@@ -3014,7 +3065,7 @@ fn validate_reconciled_runtime_intent(
     if application.runtime_intent != expected {
         return Err(LumicError::InvalidInput {
             field: "runtime".into(),
-            message: "lumic.yaml runtime intent has not been applied; review and apply the manifest before deployment".into(),
+            message: "lumic.toml runtime intent has not been applied; review and apply the manifest before deployment".into(),
         });
     }
     Ok(expected)
@@ -3283,26 +3334,32 @@ mod tests {
         fs::create_dir_all(&repository).unwrap();
         fs::write(
             repository.join(APPLICATION_MANIFEST_FILE),
-            r#"schema_version: 1
-name: manifest-app
-runtime:
-  static: true
-build:
-  - ["make", "site"]
-output: public
-workers:
-  indexer:
-    command: ["bin/indexer", "--watch"]
-cron:
-  cleanup:
-    command: ["bin/cleanup"]
-    schedule: "0 2 * * *"
-deployment:
-  deploy_on_push: true
-  retain_releases: 7
-health:
-  path: /health
-  expect: 204
+            r#"schema_version = 2
+output = "public"
+
+[application]
+name = "manifest-app"
+
+[runtime]
+type = "static"
+
+[processes.indexer]
+type = "worker"
+command = ["bin/indexer", "--watch"]
+
+[[schedules]]
+name = "cleanup"
+command = ["bin/cleanup"]
+schedule = "0 2 * * *"
+
+[deployment]
+build = ["make", "site"]
+deploy_on_push = true
+retain_releases = 7
+
+[health]
+path = "/health"
+expect = 204
 "#,
         )
         .unwrap();
@@ -3325,6 +3382,20 @@ health:
                 &context(),
             )
             .unwrap();
+
+        fs::write(
+            repository.join(LEGACY_APPLICATION_MANIFEST_FILE),
+            "schema_version: 1\nname: manifest-app\nruntime:\n  static: true\n",
+        )
+        .unwrap();
+        assert!(
+            service
+                .plan_manifest("manifest-app", &repository)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot coexist")
+        );
+        fs::remove_file(repository.join(LEGACY_APPLICATION_MANIFEST_FILE)).unwrap();
 
         let plan = service.plan_manifest("manifest-app", &repository).unwrap();
         assert_eq!(
@@ -3418,7 +3489,7 @@ health:
                 user: None,
                 secret_reference: None,
             });
-        let contract = ApplicationManifest::parse(
+        let contract = ApplicationManifest::parse_legacy_yaml(
             "schema_version: 1\nname: typed-service\nruntime:\n  static: true\nservices:\n  cache: redis\n",
         )
         .unwrap()
@@ -3868,7 +3939,7 @@ health:
         git(&source, &["config", "user.name", "Manifest Test"]);
         fs::write(source.join("public/index.html"), "manifest release").unwrap();
         fs::write(
-            source.join(APPLICATION_MANIFEST_FILE),
+            source.join(LEGACY_APPLICATION_MANIFEST_FILE),
             r#"schema_version: 1
 name: manifest-deploy
 runtime:

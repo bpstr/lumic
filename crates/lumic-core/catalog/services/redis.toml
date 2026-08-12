@@ -7,6 +7,11 @@ description = "In-memory data store and cache"
 driver = "redis"
 instance_policy = "singleton"
 
+[[config_files]]
+id = "main"
+path = "/etc/redis/lumic.conf"
+format = "directives"
+
 [capabilities]
 configure = true
 start = true
@@ -27,6 +32,10 @@ label = "Bind address"
 type = "address"
 default = "127.0.0.1"
 apply = "restart"
+[configuration.target]
+type = "file"
+file = "main"
+key = "bind"
 
 [[configuration]]
 key = "port"
@@ -34,6 +43,10 @@ label = "Port"
 type = "port"
 default = 6379
 apply = "restart"
+[configuration.target]
+type = "file"
+file = "main"
+key = "port"
 
 [[configuration]]
 key = "maxmemory"
@@ -42,6 +55,10 @@ type = "bytes"
 minimum = 0
 default = 0
 apply = "reload"
+[configuration.target]
+type = "file"
+file = "main"
+key = "maxmemory"
 
 [[configuration]]
 key = "maxmemory_policy"
@@ -50,6 +67,10 @@ type = "enum"
 values = ["noeviction", "allkeys-lru", "allkeys-lfu", "volatile-lru"]
 default = "noeviction"
 apply = "reload"
+[configuration.target]
+type = "file"
+file = "main"
+key = "maxmemory-policy"
 
 [[configuration]]
 key = "timeout"
@@ -60,6 +81,10 @@ maximum = 86400
 default = 0
 advanced = true
 apply = "reload"
+[configuration.target]
+type = "file"
+file = "main"
+key = "timeout"
 
 [[outputs]]
 key = "connection"

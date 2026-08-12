@@ -34,7 +34,7 @@ Static, generic PHP and Node applications use the same immutable release state m
 
 `lumic app plan <app>` resolves the repository branch, active release, health gate, risks, preconditions, validation and recovery steps without changing the host. `lumic app deploy <app>` is the separate mutation boundary.
 
-When the repository contains [`lumic.yaml`](@/docs/lumic-yaml.md), inspect and review its repository-to-server contract first:
+When the repository contains [`lumic.toml`](@/docs/lumic-toml.md), inspect and review its repository-to-server contract first:
 
 ```bash
 lumic app manifest inspect --repository-root .

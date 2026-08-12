@@ -17,4 +17,4 @@ Lumic treats an application as a lifecycle boundary: source, runtime, environmen
 | Laravel | Repository and deployed-state fingerprinting, configuration evidence, dependency graphs, incident context, and the `laravel-redis@1` integration. A complete Laravel recipe remains planned. |
 | Node.js applications | Runtime and application-model foundation. General production build and server handoff workflows remain planned. |
 
-Repositories may add [`lumic.yaml`](@/docs/lumic-yaml.md) to record production intent. See [Applications](@/docs/applications.md), [Recipes](@/docs/recipes.md), and [Deployments](@/docs/deployments.md) for the complete contracts and limitations.
+Repositories may add [`lumic.toml`](@/docs/lumic-toml.md) to record production intent with the same capability and resource vocabulary as built-in applications. See [Applications](@/docs/applications.md), [Recipes](@/docs/recipes.md), and [Deployments](@/docs/deployments.md) for the complete contracts and limitations.

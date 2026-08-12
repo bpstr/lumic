@@ -66,34 +66,45 @@ EOF
 
 write_manifest() {
   before="$1"
-  cat > "$SOURCE/lumic.yaml" <<EOF
-schema_version: 1
-name: $APP
-runtime:
-  node: 22
-  package_manager: npm
-web:
-  command: ["node", "server.js"]
-  port: 3310
-workers:
-  queue:
-    command: ["node", "worker.js"]
-    restart: on_failure
-    health:
-      command: ["node", "worker-health.js"]
-      interval_seconds: 5
-cron:
-  heartbeat:
-    command: ["/usr/bin/touch", "$TIMER_OUTPUT"]
-    schedule: "* * * * *"
-deployment:
-  before: $before
-  drain_seconds: 1
-  retain_releases: 3
-health:
-  path: /health
-  expect: 200
-  timeout_seconds: 15
+  cat > "$SOURCE/lumic.toml" <<EOF
+schema_version = 2
+
+[application]
+name = "$APP"
+
+[runtime]
+type = "node"
+version = 22
+package_manager = "npm"
+
+[processes.web]
+type = "web"
+command = ["node", "server.js"]
+port = 3310
+
+[processes.queue]
+type = "worker"
+command = ["node", "worker.js"]
+restart = "on_failure"
+
+[processes.queue.health]
+command = ["node", "worker-health.js"]
+interval_seconds = 5
+
+[[schedules]]
+name = "heartbeat"
+command = ["/usr/bin/touch", "$TIMER_OUTPUT"]
+schedule = "* * * * *"
+
+[deployment]
+before = $before
+drain_seconds = 1
+retain_releases = 3
+
+[health]
+path = "/health"
+expect = 200
+timeout_seconds = 15
 EOF
 }
 

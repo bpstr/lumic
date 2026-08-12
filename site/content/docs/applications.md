@@ -64,7 +64,7 @@ Runtime components are first-class. The current deliberately small PHP catalog i
 
 ## Safe activation and recovery
 
-Each deployment records source, checkout, build, pre-activation, activation and health phases. Activation is an atomic symlink replacement. When an enabled local HTTP health check does not return the configured successful status range, Lumic immediately restores the previous release, records `failed_rolled_back`, emits deployment events and retains the evidence in the audit trail. Manual rollback uses the same activation primitive.
+Each deployment records source, checkout, build, pre-activation, activation and health phases. Activation is an atomic symlink replacement. An enabled local HTTP health check retries within its configured readiness timeout. If it never returns the configured successful status range, Lumic restores the previous release, records `failed_rolled_back`, emits deployment events and retains the evidence in the audit trail. Manual rollback uses the same activation primitive.
 
 nginx files use atomic sibling writes and retain a `.lumic-backup`. Lumic restores the previous file/link if validation, service activation, certificate attachment, or framework-state persistence fails, and reloads the restored known-good configuration where applicable. A web-host or certificate binding is committed only after native validation and activation succeed. Workers run direct argument vectors as systemd services with restart-on-failure. Scheduled-job intent supports calendar or interval timing, missed-run behavior and optional jitter without exposing a systemd-specific domain contract; the Linux adapter renders it as a timer. Disabled process definitions are stopped and disabled.
 

@@ -47,7 +47,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    time::{sleep, timeout},
+    time::{Instant, sleep, sleep_until, timeout_at},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2522,7 +2522,8 @@ impl ApplicationService {
             return Ok("HTTP health check disabled; entry point validation passed".into());
         }
         let duration = Duration::from_secs(health.timeout_seconds.max(1));
-        let check = async {
+        let deadline = Instant::now() + duration;
+        let check = || async {
             let mut stream = TcpStream::connect(("127.0.0.1", health.port))
                 .await
                 .map_err(|error| LumicError::Inspection {
@@ -2573,12 +2574,24 @@ impl ApplicationService {
                 })
             }
         };
-        timeout(duration, check)
-            .await
-            .map_err(|_| LumicError::Timeout {
-                executable: "application-health".into(),
-                timeout_ms: duration.as_millis() as u64,
-            })?
+        loop {
+            match timeout_at(deadline, check()).await {
+                Ok(Ok(message)) => return Ok(message),
+                Ok(Err(_)) if Instant::now() < deadline => {
+                    sleep_until(std::cmp::min(
+                        deadline,
+                        Instant::now() + Duration::from_millis(100),
+                    ))
+                    .await;
+                }
+                Ok(Err(_)) | Err(_) => {
+                    return Err(LumicError::Timeout {
+                        executable: "application-health".into(),
+                        timeout_ms: duration.as_millis() as u64,
+                    });
+                }
+            }
+        }
     }
 
     async fn verify_health_on_port(&self, application: &Application, port: u16) -> Result<String> {
@@ -3649,6 +3662,9 @@ health:
         service
             .set_health_check("health-demo", "/health", port, &context())
             .unwrap();
+        let mut state = service.store.load().unwrap();
+        state.applications[0].health_check.timeout_seconds = 1;
+        service.store.save(&state).unwrap();
         let responder = tokio::spawn(async move {
             let (mut connection, _) = listener.accept().await.unwrap();
             connection
@@ -3666,6 +3682,51 @@ health:
         let deployments = service.deployments("health-demo").unwrap();
         assert_eq!(deployments[0].status, DeploymentStatus::FailedRolledBack);
         assert!(deployments[0].automatic_rollback);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_check_retries_until_the_application_is_ready() {
+        let base = std::env::temp_dir().join(format!(
+            "lumic-health-retry-test-{}-{}",
+            std::process::id(),
+            unix_time_ms()
+        ));
+        let service = ApplicationService::new(base.join("state"), base.join("apps"));
+        service
+            .create(
+                "delayed-health",
+                "delayed.example.com",
+                ApplicationRuntime::Node,
+                false,
+                &context(),
+            )
+            .unwrap();
+
+        let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+        let responder = tokio::spawn(async move {
+            sleep(Duration::from_millis(250)).await;
+            let listener = TcpListener::bind(address).await.unwrap();
+            let (mut connection, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let bytes_read = connection.read(&mut request).await.unwrap();
+            assert!(bytes_read > 0);
+            connection
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let mut application = service.inspect("delayed-health").unwrap();
+        application.health_check.enabled = true;
+        application.health_check.port = address.port();
+        application.health_check.timeout_seconds = 2;
+        let result = service.verify_health(&application).await.unwrap();
+        assert!(result.starts_with("HTTP 200"));
+
+        responder.await.unwrap();
         fs::remove_dir_all(base).unwrap();
     }
 

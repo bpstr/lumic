@@ -9,6 +9,7 @@ TEST_ROOT="$(mktemp -d /var/tmp/lumic-application-live.XXXXXX)"
 APP="node-live-$$"
 DOMAIN="$APP.example.test"
 SOURCE="$TEST_ROOT/source"
+TIMER_OUTPUT="/tmp/lumic-$APP-timer-ran"
 export LUMIC_STATE_DIR="$TEST_ROOT/state"
 export LUMIC_APPS_ROOT="$TEST_ROOT/apps"
 export GIT_AUTHOR_NAME="Lumic CI"
@@ -22,14 +23,18 @@ cleanup() {
     [ -n "$unit" ] && systemctl disable --now "$unit" >/dev/null 2>&1 || true
   done < <(systemctl list-unit-files "lumic-app-$APP-*" --no-legend 2>/dev/null || true)
   rm -f "/etc/nginx/sites-enabled/lumic-$APP.conf" "/etc/nginx/sites-available/lumic-$APP.conf"
+  rm -f "$TIMER_OUTPUT"
   nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
   rm -rf "$TEST_ROOT"
 }
 
 report_error() {
   local status="$?"
+  local line="${1:-unknown}"
+  local command="${2:-unknown}"
   trap - ERR
-  echo "application lifecycle test failed; collecting Lumic unit diagnostics" >&2
+  echo "application lifecycle test failed at line $line: $command" >&2
+  echo "collecting Lumic unit diagnostics" >&2
   while read -r unit _; do
     [ -n "$unit" ] || continue
     echo "===== $unit =====" >&2
@@ -41,7 +46,7 @@ report_error() {
 }
 
 trap cleanup EXIT INT TERM
-trap report_error ERR
+trap 'report_error "$LINENO" "$BASH_COMMAND"' ERR
 
 mkdir -p "$SOURCE"
 chmod 0755 "$TEST_ROOT" "$SOURCE"
@@ -79,7 +84,7 @@ workers:
       interval_seconds: 5
 cron:
   heartbeat:
-    command: ["/usr/bin/touch", "$TEST_ROOT/timer-ran"]
+    command: ["/usr/bin/touch", "$TIMER_OUTPUT"]
     schedule: "* * * * *"
 deployment:
   before: $before
@@ -116,6 +121,8 @@ grep -q '"status": "completed"' "$TEST_ROOT/first.json"
 systemctl is-active --quiet "lumic-app-$APP-queue.service"
 systemctl is-active --quiet "lumic-app-$APP-heartbeat.timer"
 systemctl is-active --quiet "lumic-app-$APP-queue-health.timer"
+systemctl start "lumic-app-$APP-heartbeat.service"
+test -f "$TIMER_OUTPUT"
 grep -q '3310' "/etc/nginx/sites-available/lumic-$APP.conf"
 test "$(curl -fsS -H "Host: $DOMAIN" http://127.0.0.1/health)" = release-one
 
@@ -146,7 +153,7 @@ git -C "$SOURCE" commit -q -m cancellable
 deploy_pid=$!
 deployment_id=""
 for _ in $(seq 1 50); do
-  deployment_id="$("$LUMIC_BIN" app deployments "$APP" --json | jq -r '.[0] | select(.status == "running") | .id' 2>/dev/null || true)"
+  deployment_id="$("$LUMIC_BIN" app deployments "$APP" --json | jq -r '.[0] | select(.status == "started") | .id' 2>/dev/null || true)"
   [ -n "$deployment_id" ] && break
   sleep 0.2
 done

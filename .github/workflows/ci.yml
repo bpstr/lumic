@@ -156,8 +156,8 @@ jobs:
       - run: cargo build --locked -p lumic-cli --release
       - name: Expose the pinned Node runtime to systemd services
         run: |
-          sudo ln -sf "$(command -v node)" /usr/local/bin/node
-          sudo ln -sf "$(command -v npm)" /usr/local/bin/npm
+          sudo ln -sf "$(command -v node)" /usr/bin/node
+          sudo ln -sf "$(command -v npm)" /usr/bin/npm
       - run: sudo apt-get update && sudo apt-get install -y nginx jq
       - name: Clean-host application lifecycle acceptance test
         run: sudo -E env PATH="/usr/local/bin:/usr/bin:/bin" LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_APPLICATION_LIVE=1 "$PWD/tests/application-lifecycle-live.sh"

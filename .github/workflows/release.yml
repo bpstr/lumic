@@ -60,8 +60,8 @@ jobs:
       - name: Run clean-host application lifecycle gate
         run: |
           sudo apt-get install -y nginx jq
-          sudo ln -sf "$(command -v node)" /usr/local/bin/node
-          sudo ln -sf "$(command -v npm)" /usr/local/bin/npm
+          sudo ln -sf "$(command -v node)" /usr/bin/node
+          sudo ln -sf "$(command -v npm)" /usr/bin/npm
           sudo -E env PATH="/usr/local/bin:/usr/bin:/bin" LUMIC_TEST_BINARY="$PWD/target/release/lumic" LUMIC_APPLICATION_LIVE=1 "$PWD/tests/application-lifecycle-live.sh"
       - name: Build release assets
         run: |

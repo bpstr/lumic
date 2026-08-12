@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 : "${LUMIC_TEST_BINARY:?set LUMIC_TEST_BINARY to the built lumic CLI}"
 : "${LUMIC_APPLICATION_LIVE:?set LUMIC_APPLICATION_LIVE=1 on a clean systemd host}"
@@ -25,7 +25,23 @@ cleanup() {
   nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
   rm -rf "$TEST_ROOT"
 }
+
+report_error() {
+  local status="$?"
+  trap - ERR
+  echo "application lifecycle test failed; collecting Lumic unit diagnostics" >&2
+  while read -r unit _; do
+    [ -n "$unit" ] || continue
+    echo "===== $unit =====" >&2
+    systemctl cat "$unit" >&2 || true
+    systemctl status --no-pager --full "$unit" >&2 || true
+    journalctl --no-pager --unit "$unit" --lines 100 >&2 || true
+  done < <(systemctl list-unit-files "lumic-app-$APP-*" --no-legend 2>/dev/null || true)
+  return "$status"
+}
+
 trap cleanup EXIT INT TERM
+trap report_error ERR
 
 mkdir -p "$SOURCE"
 chmod 0755 "$TEST_ROOT" "$SOURCE"
